@@ -1,13 +1,13 @@
 # Merlion Tracker
 
-Last updated: 2026-04-11T20:05:00+08:00
+Last updated: 2026-04-11T20:20:00+08:00
 
 ## Active Sprint
 
 - Sprint: `Phase1-Context-Engine`
-- Focus: tool-result budget truncation
+- Focus: compact summary
 - Exit criteria:
-  - tool 输出预算截断可运行
+  - compact summary 可运行
   - `npm run test:all` 和 `npm run typecheck` 通过
 
 ## Task Board
@@ -42,7 +42,8 @@ Last updated: 2026-04-11T20:05:00+08:00
 | M9-01 | cost baseline schema | done | codex | `docs/cost-baseline.json` |
 | M9-02 | cost gate checker | done | codex | `src/runtime/cost_gate.ts` |
 | M9-03 | cost gate warn/fail mode | done | codex | `MERLION_COST_GATE` |
-| M4-01 | tool-result budget truncation | in_progress | codex | next feature |
+| M4-01 | tool-result budget truncation | done | codex | `src/runtime/budget.ts` |
+| M4-02 | compact summary | in_progress | codex | next |
 | M4-03 | AGENTS loader | done | codex | `src/artifacts/agents.ts` |
 | M4-04 | progress artifact | done | codex | `src/artifacts/progress.ts` |
 | M4-05 | codebase index loader | done | codex | `src/artifacts/codebase_index.ts` |

@@ -1,6 +1,7 @@
 import type { ChatMessage, ToolCall } from '../types.js'
 import type { ToolContext } from '../tools/types.js'
 import { ToolRegistry } from '../tools/registry.ts'
+import { applyToolResultBudget, resolveToolResultBudgetFromEnv } from './budget.ts'
 
 function parseToolArgs(raw: string): Record<string, unknown> {
   try {
@@ -56,11 +57,17 @@ async function runToolCall(
   }
   const args = parseToolArgs(call.function.arguments)
   const result = await tool.execute(args, toolContext)
+  const budget = resolveToolResultBudgetFromEnv()
+  const budgeted = applyToolResultBudget(result.content, budget)
+  const content =
+    budgeted.truncated
+      ? `${budgeted.content}\n[tool result truncated by budget]`
+      : budgeted.content
   return {
     message: {
       role: 'tool',
       tool_call_id: call.id,
-      content: result.content && result.content.trim() !== '' ? result.content : '(no output)'
+      content: content && content.trim() !== '' ? content : '(no output)'
     },
     isError: result.isError
   }

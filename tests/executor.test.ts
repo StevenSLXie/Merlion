@@ -110,3 +110,26 @@ test('execute emits tool start/result hooks', async () => {
   assert.equal(events.some((e) => e.startsWith('done:1/2:echo_a:')), true)
   assert.equal(events.some((e) => e.startsWith('done:2/2:echo_b:')), true)
 })
+
+test('execute applies tool result budget truncation', async () => {
+  const registry = new ToolRegistry()
+  registry.register({
+    name: 'huge_output',
+    description: 'returns huge text',
+    parameters: { type: 'object', properties: {} },
+    concurrencySafe: true,
+    async execute() {
+      return { content: 'x'.repeat(15000), isError: false }
+    }
+  })
+
+  const result = await executeToolCalls({
+    toolCalls: [call('h1', 'huge_output')],
+    registry,
+    toolContext: { cwd: process.cwd() },
+    maxConcurrency: 2,
+  })
+
+  assert.equal(result.length, 1)
+  assert.match(result[0]?.content ?? '', /tool result truncated by budget/)
+})
