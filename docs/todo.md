@@ -44,7 +44,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 
 ## Milestone 5: Verification Loop (P1)
 
-- [ ] `M5-01` Check discovery
+- [x] `M5-01` Check discovery
 - [ ] `M5-02` Verification runner
 - [ ] `M5-03` Fix-round integration
 

@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-11T20:38:00+08:00
+Last updated: 2026-04-11T20:52:00+08:00
 
 ## Active Sprint
 
@@ -44,7 +44,8 @@ Last updated: 2026-04-11T20:38:00+08:00
 | M9-03 | cost gate warn/fail mode | done | codex | `MERLION_COST_GATE` |
 | M4-01 | tool-result budget truncation | done | codex | `src/runtime/budget.ts` |
 | M4-02 | compact summary | done | codex | `src/context/compact.ts` |
-| M5-01 | check discovery | in_progress | codex | next |
+| M5-01 | check discovery | done | codex | `src/verification/checks.ts` |
+| M5-02 | verification runner | in_progress | codex | next |
 | M4-03 | AGENTS loader | done | codex | `src/artifacts/agents.ts` |
 | M4-04 | progress artifact | done | codex | `src/artifacts/progress.ts` |
 | M4-05 | codebase index loader | done | codex | `src/artifacts/codebase_index.ts` |
