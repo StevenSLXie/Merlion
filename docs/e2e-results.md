@@ -9,6 +9,7 @@ After every run, append a row and fill in the per-scenario token column from the
 |------|-------|------|------|-------|
 | 2026-04-11 | qwen/qwen3-coder | 11/12 | 1 | `e2e-edit` max_turns_exceeded (30 turns, 86k tokens — known edit_file retry loop) |
 | 2026-04-11 | moonshotai/kimi-k2.5 | 12/12 | 0 | First full-pass run. Sequential mode established. |
+| 2026-04-11 | moonshotai/kimi-k2.5 | 18/18 | 0 | M4 features added: budget truncation, compact, orientation inject (LLM); orientation assembly, progress lifecycle, codebase index lifecycle (no-LLM). |
 
 ---
 
@@ -32,6 +33,28 @@ After every run, append a row and fill in the per-scenario token column from the
 | e2e-context-caching | ✅ | 3 | ~2,000 est | 832 (provider cache hit confirmed) |
 | e2e-max-turns | ✅ | 1 | ~500 est | — |
 | e2e-session-resume | ✅ | ~4 | ~3,000 est | — |
+
+## 2026-04-11 — moonshotai/kimi-k2.5 (sequential, M4 feature additions)
+
+**Command:** `MERLION_E2E_MODEL=moonshotai/kimi-k2.5 npm run test:e2e` (18 tests total)
+
+| Scenario | Status | Turns | Total tokens | Notes |
+|----------|--------|-------|-------------|-------|
+| e2e-budget-truncation | ✅ | 2 | 2,258 | Truncation marker present; sentinels in head+tail visible |
+| e2e-compact | ✅ | 2 | — | hasAttemptedReactiveCompact=true; loop completed after compaction |
+| e2e-orientation-inject | ✅ | 1 | — | Agent recalled AGENTS.md rule from system context, no tools needed |
+| e2e-orientation-assembly | ✅ | n/a | — | No LLM; all 3 sections assembled, artifacts created on disk |
+| e2e-progress-lifecycle | ✅ | n/a | — | No LLM; create/update/dedup/budget all verified |
+| e2e-codebase-index-lifecycle | ✅ | n/a | — | No LLM; generate/track/dedup/budget all verified |
+
+**Observations:**
+- compact test fires correctly on pre-populated 7-msg history (trigger=100, keepRecent=3)
+- orientation inject completes in 1 turn with no tool calls — model reads context directly
+- No-LLM tests run in < 60ms each (pure filesystem I/O)
+
+---
+
+## 2026-04-11 — moonshotai/kimi-k2.5 (sequential, original 12 tests)
 
 **Observations:**
 - kimi-k2.5 completes every task in 2–3 turns vs qwen3-coder's 30-turn retry loops on edit_file
