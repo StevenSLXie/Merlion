@@ -3,6 +3,7 @@ import type { PermissionStore, ToolContext } from '../tools/types.js'
 import { executeToolCalls, type ToolCallResultEvent, type ToolCallStartEvent } from './executor.ts'
 import { withRetry } from './retry.ts'
 import { ToolRegistry } from '../tools/registry.ts'
+import { compactMessages, estimateMessagesChars } from '../context/compact.ts'
 
 export interface RunLoopOptions {
   provider: ModelProvider
@@ -82,8 +83,17 @@ function createState(
     messages,
     turnCount: 0,
     maxOutputTokensRecoveryCount: 0,
+    hasAttemptedReactiveCompact: false,
     nudgeCount: 0,
   }
+}
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed)) return fallback
+  const value = Math.floor(parsed)
+  return value > 0 ? value : fallback
 }
 
 export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
@@ -110,6 +120,16 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
 
     let assistant
     try {
+      const compactTriggerChars = parsePositiveInt(process.env.MERLION_COMPACT_TRIGGER_CHARS, 60_000)
+      const keepRecent = parsePositiveInt(process.env.MERLION_COMPACT_KEEP_RECENT, 10)
+      const chars = estimateMessagesChars(state.messages)
+      if (chars > compactTriggerChars && !state.hasAttemptedReactiveCompact) {
+        const compacted = compactMessages(state.messages, { keepRecent })
+        if (compacted.compacted) {
+          state.messages = compacted.messages
+          state.hasAttemptedReactiveCompact = true
+        }
+      }
       await options.onTurnStart?.({ turn: state.turnCount + 1 })
       assistant = await withRetry(
         () => options.provider.complete(state.messages, options.registry.getAll()),

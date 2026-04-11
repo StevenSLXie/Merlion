@@ -36,7 +36,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 ## Milestone 4: Context + Artifacts (P0/P1)
 
 - [x] `M4-01` Tool-result budget truncation
-- [ ] `M4-02` Compact summary
+- [x] `M4-02` Compact summary
 - [x] `M4-03` AGENTS loader
 - [x] `M4-04` Progress artifact
 - [x] `M4-05` Codebase index loader

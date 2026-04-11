@@ -165,7 +165,13 @@ test('loop accepts initial messages', async () => {
 // ── shouldNudge unit tests ─────────────────────────────────────────────────
 
 test('shouldNudge: never nudges short conversational text', () => {
-  const baseState = { messages: [], turnCount: 0, maxOutputTokensRecoveryCount: 0, nudgeCount: 0 }
+  const baseState = {
+    messages: [],
+    turnCount: 0,
+    maxOutputTokensRecoveryCount: 0,
+    hasAttemptedReactiveCompact: false,
+    nudgeCount: 0
+  }
   assert.equal(shouldNudge('在', baseState), false)
   assert.equal(shouldNudge('yes', baseState), false)
   assert.equal(shouldNudge('done', baseState), false)
@@ -174,13 +180,25 @@ test('shouldNudge: never nudges short conversational text', () => {
 })
 
 test('shouldNudge: detects false start with I will/I\'ll pattern', () => {
-  const baseState = { messages: [], turnCount: 0, maxOutputTokensRecoveryCount: 0, nudgeCount: 0 }
+  const baseState = {
+    messages: [],
+    turnCount: 0,
+    maxOutputTokensRecoveryCount: 0,
+    hasAttemptedReactiveCompact: false,
+    nudgeCount: 0
+  }
   const longEnough = "I'll start by reading the auth file and understanding the current session management approach."
   assert.equal(shouldNudge(longEnough, baseState), true)
 })
 
 test('shouldNudge: detects "let me" false start', () => {
-  const baseState = { messages: [], turnCount: 0, maxOutputTokensRecoveryCount: 0, nudgeCount: 0 }
+  const baseState = {
+    messages: [],
+    turnCount: 0,
+    maxOutputTokensRecoveryCount: 0,
+    hasAttemptedReactiveCompact: false,
+    nudgeCount: 0
+  }
   assert.equal(
     shouldNudge('Let me read the configuration file to understand the current setup.', baseState),
     true,
@@ -188,7 +206,13 @@ test('shouldNudge: detects "let me" false start', () => {
 })
 
 test('shouldNudge: does not nudge genuine past-tense completion', () => {
-  const baseState = { messages: [], turnCount: 0, maxOutputTokensRecoveryCount: 0, nudgeCount: 0 }
+  const baseState = {
+    messages: [],
+    turnCount: 0,
+    maxOutputTokensRecoveryCount: 0,
+    hasAttemptedReactiveCompact: false,
+    nudgeCount: 0
+  }
   assert.equal(
     shouldNudge('The function has been updated successfully. The type error on line 42 is fixed.', baseState),
     false,
@@ -196,7 +220,13 @@ test('shouldNudge: does not nudge genuine past-tense completion', () => {
 })
 
 test('shouldNudge: cap at 2 nudges prevents infinite nudge loop', () => {
-  const cappedState = { messages: [], turnCount: 0, maxOutputTokensRecoveryCount: 0, nudgeCount: 2 }
+  const cappedState = {
+    messages: [],
+    turnCount: 0,
+    maxOutputTokensRecoveryCount: 0,
+    hasAttemptedReactiveCompact: false,
+    nudgeCount: 2
+  }
   const text = "Let me read the configuration file to understand the current setup."
   assert.equal(shouldNudge(text, cappedState), false)
 })
@@ -334,4 +364,53 @@ test('loop emits turn/assistant/tool hooks for cli rendering', async () => {
   assert.equal(events.includes('tool_done:echo_tool'), true)
   assert.equal(events.includes('turn:2'), true)
   assert.equal(events.includes('assistant:2:stop:0'), true)
+})
+
+test('loop compacts oversized context once before provider call', async () => {
+  const previous = process.env.MERLION_COMPACT_TRIGGER_CHARS
+  process.env.MERLION_COMPACT_TRIGGER_CHARS = '300'
+  process.env.MERLION_COMPACT_KEEP_RECENT = '4'
+
+  try {
+    const longHistory: ChatMessage[] = [
+      { role: 'system', content: 'system' },
+      ...Array.from({ length: 16 }, (_, i) => ({
+        role: i % 2 === 0 ? 'user' as const : 'assistant' as const,
+        content: `message-${i}-${'x'.repeat(120)}`,
+      })),
+    ]
+    const provider = new StubProvider([
+      {
+        role: 'assistant',
+        content: 'done',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+
+    const result = await runLoop({
+      provider,
+      registry: new ToolRegistry(),
+      systemPrompt: 'unused',
+      userPrompt: 'go',
+      cwd: process.cwd(),
+      maxTurns: 5,
+      initialMessages: longHistory,
+      persistInitialMessages: false,
+    })
+
+    assert.equal(result.terminal, 'completed')
+    assert.equal(result.state.hasAttemptedReactiveCompact, true)
+    const summaryCount = result.state.messages.filter(
+      (m) => typeof m.content === 'string' && m.content.includes('Conversation compact summary')
+    ).length
+    assert.equal(summaryCount, 1)
+  } finally {
+    if (previous === undefined) {
+      delete process.env.MERLION_COMPACT_TRIGGER_CHARS
+    } else {
+      process.env.MERLION_COMPACT_TRIGGER_CHARS = previous
+    }
+    delete process.env.MERLION_COMPACT_KEEP_RECENT
+  }
 })

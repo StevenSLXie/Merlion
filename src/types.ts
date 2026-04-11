@@ -42,6 +42,7 @@ export interface LoopState {
   messages: ChatMessage[]
   turnCount: number
   maxOutputTokensRecoveryCount: number
+  hasAttemptedReactiveCompact: boolean
   // Times a nudge was injected this session. Capped at 2 to prevent nudge loops.
   nudgeCount: number
 }
