@@ -9,6 +9,7 @@ import {
   formatTurnStartEvent,
   summarizeToolArguments
 } from './cli/render.ts'
+import { sanitizeRenderableText } from './cli/sanitize.ts'
 import { runReplSession } from './cli/repl.ts'
 import { createPermissionStore } from './permissions/store.ts'
 import { OpenAICompatProvider } from './providers/openai.ts'
@@ -200,7 +201,7 @@ async function main(): Promise<void> {
         })
         const snapshot = usageTracker.record(usage)
         const estimatedCost = usageRates ? calculateUsageCostUsd(snapshot.totals, usageRates) : undefined
-        process.stdout.write(`${formatUsageProgressLine(snapshot, estimatedCost)}\n`)
+        process.stdout.write(`${sanitizeRenderableText(formatUsageProgressLine(snapshot, estimatedCost))}\n`)
       },
       onTurnStart: ({ turn }) => {
         process.stdout.write(`${formatTurnStartEvent({ turn })}\n`)
@@ -250,7 +251,7 @@ async function main(): Promise<void> {
       },
       runTurn: async (prompt) => {
         const result = await runTurn(prompt)
-        return { output: result.finalText, terminal: result.terminal }
+        return { output: sanitizeRenderableText(result.finalText), terminal: result.terminal }
       },
       promptLabel: 'merlion> '
     })
@@ -259,7 +260,7 @@ async function main(): Promise<void> {
   }
 
   const result = await runTurn(options.task)
-  process.stdout.write(`${result.finalText}\n`)
+  process.stdout.write(`${sanitizeRenderableText(result.finalText)}\n`)
   if (result.terminal !== 'completed') {
     process.stderr.write(`Terminal state: ${result.terminal}\n`)
     process.exitCode = 1

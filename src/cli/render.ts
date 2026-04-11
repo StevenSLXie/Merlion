@@ -1,5 +1,7 @@
+import { sanitizeRenderableText } from './sanitize.ts'
+
 export function formatTurnStartEvent(event: { turn: number }): string {
-  return `[turn ${event.turn}] requesting model...`
+  return sanitizeRenderableText(`[turn ${event.turn}] requesting model...`)
 }
 
 export function formatAssistantResponseEvent(event: {
@@ -8,9 +10,9 @@ export function formatAssistantResponseEvent(event: {
   tool_calls_count: number
 }): string {
   if (event.finish_reason === 'tool_calls') {
-    return `[turn ${event.turn}] assistant requested ${event.tool_calls_count} tool call(s)`
+    return sanitizeRenderableText(`[turn ${event.turn}] assistant requested ${event.tool_calls_count} tool call(s)`)
   }
-  return `[turn ${event.turn}] assistant finish=${event.finish_reason}`
+  return sanitizeRenderableText(`[turn ${event.turn}] assistant finish=${event.finish_reason}`)
 }
 
 export function summarizeToolArguments(raw: string, maxLen = 80): string {
@@ -30,7 +32,8 @@ export function summarizeToolArguments(raw: string, maxLen = 80): string {
       return `${key}=...`
     })
     const joined = parts.join(', ')
-    return joined.length > maxLen ? `${joined.slice(0, maxLen)}...` : joined
+    const output = joined.length > maxLen ? `${joined.slice(0, maxLen)}...` : joined
+    return sanitizeRenderableText(output)
   } catch {
     return ''
   }
@@ -43,7 +46,7 @@ export function formatToolStartEvent(event: {
   summary?: string
 }): string {
   const suffix = event.summary && event.summary.trim() !== '' ? ` (${event.summary})` : ''
-  return `[tool ${event.index}/${event.total}] start ${event.name}${suffix}`
+  return sanitizeRenderableText(`[tool ${event.index}/${event.total}] start ${event.name}${suffix}`)
 }
 
 export function formatToolResultEvent(event: {
@@ -54,5 +57,5 @@ export function formatToolResultEvent(event: {
   durationMs: number
 }): string {
   const status = event.isError ? 'error' : 'ok'
-  return `[tool ${event.index}/${event.total}] ${status} ${event.name} (${event.durationMs}ms)`
+  return sanitizeRenderableText(`[tool ${event.index}/${event.total}] ${status} ${event.name} (${event.durationMs}ms)`)
 }
