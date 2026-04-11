@@ -180,3 +180,4 @@ test('execute forwards tool ui payload to result hook', async () => {
 
   assert.equal(seenPayloadKind, 'edit_diff')
 })
+

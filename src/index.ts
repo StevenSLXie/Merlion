@@ -53,7 +53,7 @@ interface CliOptions {
   verify: boolean
 }
 
-function parseArgs(argv: string[]): CliFlags | null | 'help' {
+function parseArgs(argv: string[]): CliFlags | null | 'help' | 'version' {
   const args = [...argv]
   let modelFlag: string | undefined
   let baseURLFlag: string | undefined
@@ -109,6 +109,9 @@ function parseArgs(argv: string[]): CliFlags | null | 'help' {
     if (arg === '--config' || arg === 'config') {
       configMode = true
       continue
+    }
+    if (arg === '--version' || arg === '-v') {
+      return 'version'
     }
     taskParts.push(arg)
   }
@@ -194,6 +197,13 @@ function extractPathArg(raw: string): string | null {
 
 async function main(): Promise<void> {
   const flags = parseArgs(process.argv.slice(2))
+  if (flags === 'version') {
+    const { createRequire } = await import('node:module')
+    const require = createRequire(import.meta.url)
+    const pkg = require('../package.json') as { version: string }
+    process.stdout.write(`${pkg.version}\n`)
+    return
+  }
   if (flags === 'help') {
     printUsage()
     return
