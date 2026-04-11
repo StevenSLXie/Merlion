@@ -1,5 +1,6 @@
 import type { ChatMessage, LoopState, LoopTerminal, ModelProvider } from '../types.js'
 import type { PermissionStore, ToolContext } from '../tools/types.js'
+import { executeToolCalls } from './executor.ts'
 import { ToolRegistry } from '../tools/registry.ts'
 
 export interface RunLoopOptions {
@@ -38,14 +39,6 @@ function createState(systemPrompt: string, userPrompt: string, initialMessages?:
     messages,
     turnCount: 0,
     maxOutputTokensRecoveryCount: 0
-  }
-}
-
-function parseToolArgs(raw: string): Record<string, unknown> {
-  try {
-    return JSON.parse(raw) as Record<string, unknown>
-  } catch {
-    return {}
   }
 }
 
@@ -89,26 +82,15 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     await options.onUsage?.(assistant.usage)
 
     if (assistant.finish_reason === 'tool_calls' && assistant.tool_calls && assistant.tool_calls.length > 0) {
-      for (const call of assistant.tool_calls) {
-        const tool = options.registry.get(call.function.name)
-        if (!tool) {
-          const toolMsg: ChatMessage = {
-            role: 'tool',
-            tool_call_id: call.id,
-            content: `Unknown tool: ${call.function.name}`
-          }
-          state.messages.push(toolMsg)
-          await options.onMessageAppended?.(toolMsg)
-          continue
-        }
+      const maxConcurrency = Number(process.env.MERLION_MAX_TOOL_CONCURRENCY ?? '10')
+      const toolMessages = await executeToolCalls({
+        toolCalls: assistant.tool_calls,
+        registry: options.registry,
+        toolContext,
+        maxConcurrency: Number.isFinite(maxConcurrency) ? Math.max(1, Math.floor(maxConcurrency)) : 10
+      })
 
-        const args = parseToolArgs(call.function.arguments)
-        const result = await tool.execute(args, toolContext)
-        const toolMsg: ChatMessage = {
-          role: 'tool',
-          tool_call_id: call.id,
-          content: result.content && result.content.trim() !== '' ? result.content : '(no output)'
-        }
+      for (const toolMsg of toolMessages) {
         state.messages.push(toolMsg)
         await options.onMessageAppended?.(toolMsg)
       }

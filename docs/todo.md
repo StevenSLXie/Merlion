@@ -27,7 +27,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 
 - [x] `M3-01` Provider wrapper with non-stream completion (MVP)
 - [ ] `M3-02` Retry strategy
-- [ ] `M3-03` Tool executor + batching
+- [x] `M3-03` Tool executor + batching
 - [x] `M3-04` ReAct loop skeleton
 - [x] `M3-05` Transcript persistence (redaction included)
 - [x] `M3-06` Resume reconstruction
