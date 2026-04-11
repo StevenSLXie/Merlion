@@ -39,7 +39,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [ ] `M4-02` Compact summary
 - [x] `M4-03` AGENTS loader
 - [x] `M4-04` Progress artifact
-- [ ] `M4-05` Codebase index loader
+- [x] `M4-05` Codebase index loader
 - [ ] `M4-06` Orientation context assembly
 
 ## Milestone 5: Verification Loop (P1)

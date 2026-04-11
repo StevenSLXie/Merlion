@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-11T19:32:00+08:00
+Last updated: 2026-04-11T19:45:00+08:00
 
 ## Active Sprint
 
@@ -45,8 +45,8 @@ Last updated: 2026-04-11T19:32:00+08:00
 | M4-01 | tool-result budget truncation | todo | codex | next feature |
 | M4-03 | AGENTS loader | done | codex | `src/artifacts/agents.ts` |
 | M4-04 | progress artifact | done | codex | `src/artifacts/progress.ts` |
-| M4-05 | codebase index loader | in_progress | codex | next |
-| M4-06 | orientation context assembly | todo | codex | pending |
+| M4-05 | codebase index loader | done | codex | `src/artifacts/codebase_index.ts` |
+| M4-06 | orientation context assembly | in_progress | codex | next |
 
 ## Commit Log
 

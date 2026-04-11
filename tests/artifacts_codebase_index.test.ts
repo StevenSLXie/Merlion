@@ -1,0 +1,56 @@
+import assert from 'node:assert/strict'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+
+import {
+  ensureCodebaseIndex,
+  readCodebaseIndex,
+  updateCodebaseIndexWithChangedFiles,
+} from '../src/artifacts/codebase_index.ts'
+
+async function makeRepo(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'merlion-index-'))
+  await mkdir(join(root, '.git'))
+  await mkdir(join(root, 'src'), { recursive: true })
+  await mkdir(join(root, 'tests'), { recursive: true })
+  await mkdir(join(root, 'docs'), { recursive: true })
+  await writeFile(join(root, 'src', 'index.ts'), 'export const x = 1\n', 'utf8')
+  await writeFile(join(root, 'tests', 'a.test.ts'), 'test("x", ()=>{})\n', 'utf8')
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({ scripts: { test: 'node --test', merlion: 'node src/index.ts' } }, null, 2),
+    'utf8'
+  )
+  return root
+}
+
+test('ensureCodebaseIndex creates docs/codebase_index.md', async () => {
+  const repo = await makeRepo()
+  const artifact = await ensureCodebaseIndex(repo)
+  assert.match(artifact.path, /docs\/codebase_index\.md$/)
+  assert.match(artifact.content, /# Codebase Index/)
+  assert.match(artifact.content, /## Dev Scripts/)
+  assert.match(artifact.content, /src\/index\.ts/)
+})
+
+test('updateCodebaseIndexWithChangedFiles records unique recent files', async () => {
+  const repo = await makeRepo()
+  await ensureCodebaseIndex(repo)
+
+  await updateCodebaseIndexWithChangedFiles(repo, ['src/index.ts', 'tests/a.test.ts', 'src/index.ts'])
+  const text = await readFile(join(repo, 'docs', 'codebase_index.md'), 'utf8')
+  assert.match(text, /## Recent Changed Files/)
+  const count = (text.match(/- changed: src\/index\.ts/g) ?? []).length
+  assert.equal(count, 1)
+})
+
+test('readCodebaseIndex truncates by token budget', async () => {
+  const repo = await makeRepo()
+  await writeFile(join(repo, 'docs', 'codebase_index.md'), `# Codebase Index\n\n${'x'.repeat(6000)}\n`, 'utf8')
+  const out = await readCodebaseIndex(repo, { maxTokens: 120 })
+  assert.equal(out.truncated, true)
+  assert.match(out.text, /truncated/)
+  assert.equal(out.tokensEstimate <= 140, true)
+})
