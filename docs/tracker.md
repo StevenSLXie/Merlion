@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-11T23:35:00+08:00
+Last updated: 2026-04-11T23:58:00+08:00
 
 ## Active Sprint
 
@@ -48,6 +48,7 @@ Last updated: 2026-04-11T23:35:00+08:00
 | M5-01 | check discovery | done | codex | `src/verification/checks.ts` |
 | M5-02 | verification runner | done | codex | `src/verification/runner.ts` |
 | M5-03 | fix-round integration | done | codex | `src/verification/fix_round.ts` + `src/index.ts` |
+| M5-04 | multi-language discovery + requiresCommands skip | done | codex | feature 031; custom verify config supported |
 | M4-03 | AGENTS loader | done | codex | `src/artifacts/agents.ts` |
 | M4-04 | progress artifact | done | codex | `src/artifacts/progress.ts` |
 | M4-05 | codebase index loader | done | codex | `src/artifacts/codebase_index.ts` |

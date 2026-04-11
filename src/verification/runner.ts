@@ -36,6 +36,27 @@ function envMissing(vars?: string[]): string[] {
   })
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+async function commandExists(command: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn('bash', ['-lc', `command -v ${shellQuote(command)} >/dev/null 2>&1`])
+    child.on('close', (code) => resolve(code === 0))
+    child.on('error', () => resolve(false))
+  })
+}
+
+async function commandMissing(commands?: string[]): Promise<string[]> {
+  const missing: string[] = []
+  for (const command of commands ?? []) {
+    const exists = await commandExists(command)
+    if (!exists) missing.push(command)
+  }
+  return missing
+}
+
 function trimOutput(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text
   return `${text.slice(0, Math.max(0, maxChars - 40))}\n[...verification output truncated...]`
@@ -103,6 +124,23 @@ export async function runVerificationChecks(
         durationMs: 0,
         exitCode: null,
         output: `Skipped: missing env ${missing.join(', ')}`,
+        timedOut: false
+      }
+      results.push(skipped)
+      await options.onCheckResult?.(skipped)
+      continue
+    }
+
+    const missingCommands = await commandMissing(check.requiresCommands)
+    if (missingCommands.length > 0) {
+      const skipped: VerificationCheckResult = {
+        id: check.id,
+        name: check.name,
+        command: check.command,
+        status: 'skipped',
+        durationMs: 0,
+        exitCode: null,
+        output: `Skipped: missing command ${missingCommands.join(', ')}`,
         timedOut: false
       }
       results.push(skipped)

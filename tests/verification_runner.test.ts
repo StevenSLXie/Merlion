@@ -52,3 +52,19 @@ test('runVerificationChecks marks timeout as failure', async () => {
   assert.equal(result.results[0]?.status, 'failed')
   assert.equal(result.results[0]?.timedOut, true)
 })
+
+test('runVerificationChecks skips when required command is missing', async () => {
+  const cwd = await makeDir()
+  const checks: VerificationCheck[] = [
+    {
+      id: 'needs_missing_bin',
+      name: 'Needs Missing Bin',
+      command: 'totally-missing-binary --version',
+      requiresCommands: ['totally-missing-binary'],
+    },
+  ]
+  const result = await runVerificationChecks({ cwd, checks })
+  assert.equal(result.allPassed, true)
+  assert.equal(result.results[0]?.status, 'skipped')
+  assert.match(result.results[0]?.output ?? '', /missing command/i)
+})
