@@ -22,6 +22,7 @@ export interface ChatMessage {
 export interface Usage {
   prompt_tokens: number
   completion_tokens: number
+  cached_tokens?: number | null
 }
 
 export interface AssistantResponse {
@@ -46,4 +47,3 @@ export interface LoopState {
 }
 
 export type LoopTerminal = 'completed' | 'max_turns_exceeded' | 'model_error'
-

@@ -14,6 +14,7 @@ import {
   getSessionFilesForResume,
   loadSessionMessages
 } from './runtime/session.ts'
+import { calculateUsageCostUsd, createUsageTracker, formatUsageProgressLine, type UsageRates } from './runtime/usage.ts'
 import { buildDefaultRegistry } from './tools/builtin/index.ts'
 
 interface CliOptions {
@@ -100,6 +101,26 @@ function estimateToolSchemaTokens(registry: ReturnType<typeof buildDefaultRegist
   return Math.ceil(serialized.length / 4)
 }
 
+function parseEnvNumber(name: string): number | undefined {
+  const raw = process.env[name]
+  if (raw === undefined || raw.trim() === '') return undefined
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed < 0) return undefined
+  return parsed
+}
+
+function loadUsageRatesFromEnv(): UsageRates | undefined {
+  const input = parseEnvNumber('MERLION_COST_INPUT_PER_1M')
+  const output = parseEnvNumber('MERLION_COST_OUTPUT_PER_1M')
+  if (input === undefined || output === undefined) return undefined
+  const cached = parseEnvNumber('MERLION_COST_CACHED_INPUT_PER_1M')
+  return {
+    inputPerMillion: input,
+    outputPerMillion: output,
+    cachedInputPerMillion: cached
+  }
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2))
   if (options === 'help') {
@@ -143,6 +164,8 @@ async function main(): Promise<void> {
 
   const systemPrompt = 'You are Merlion, a coding agent. Use tools to complete the task.'
   let history = initialMessages
+  const usageTracker = createUsageTracker()
+  const usageRates = loadUsageRatesFromEnv()
 
   const runTurn = async (prompt: string) => {
     const result = await runLoop({
@@ -165,9 +188,12 @@ async function main(): Promise<void> {
           model: options.model,
           prompt_tokens: usage.prompt_tokens,
           completion_tokens: usage.completion_tokens,
-          cached_tokens: null,
+          cached_tokens: usage.cached_tokens ?? null,
           tool_schema_tokens_estimate: toolSchemaTokensEstimate
         })
+        const snapshot = usageTracker.record(usage)
+        const estimatedCost = usageRates ? calculateUsageCostUsd(snapshot.totals, usageRates) : undefined
+        process.stdout.write(`${formatUsageProgressLine(snapshot, estimatedCost)}\n`)
       }
     })
     history = result.state.messages

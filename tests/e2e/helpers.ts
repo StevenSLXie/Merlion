@@ -8,16 +8,22 @@ import { cp, mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { mkdir, writeFile } from 'node:fs/promises'
 
 import { OpenAICompatProvider } from '../../src/providers/openai.ts'
 import { buildDefaultRegistry } from '../../src/tools/builtin/index.ts'
 import { runLoop } from '../../src/runtime/loop.ts'
 import type { RunLoopResult } from '../../src/runtime/loop.ts'
+import { createUsageTracker } from '../../src/runtime/usage.ts'
 
-export const FIXTURES_DIR = join(fileURLToPath(import.meta.url), '../../fixtures')
+export const FIXTURES_DIR = join(fileURLToPath(import.meta.url), '../fixtures')
 
-// Default model for E2E tests — cheap but capable enough for simple tool-use tasks.
-const E2E_MODEL = process.env.MERLION_E2E_MODEL ?? 'anthropic/claude-haiku-4-5'
+// Default model for E2E tests.
+// Priority: MERLION_E2E_MODEL > MERLION_MODEL > cheap default
+const E2E_MODEL =
+  process.env.MERLION_E2E_MODEL ??
+  process.env.MERLION_MODEL ??
+  'anthropic/claude-haiku-4-5'
 const E2E_BASE_URL = process.env.MERLION_BASE_URL ?? 'https://openrouter.ai/api/v1'
 
 export const API_KEY = process.env.OPENROUTER_API_KEY ?? ''
@@ -37,19 +43,65 @@ export async function rmSandbox(dir: string): Promise<void> {
   await rm(dir, { recursive: true, force: true })
 }
 
+function safeScenarioLabel(raw: string): string {
+  const normalized = raw.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return normalized.length > 0 ? normalized.slice(0, 64) : 'unnamed'
+}
+
+function getUsageArchiveDir(): string {
+  return process.env.MERLION_E2E_USAGE_DIR ?? join(process.cwd(), '.merlion', 'e2e-usage')
+}
+
+async function writeUsageArchive(params: {
+  scenario: string
+  task: string
+  cwd: string
+  result: RunLoopResult
+  model: string
+  baseURL: string
+  usageSamples: Array<{ prompt_tokens: number; completion_tokens: number; cached_tokens: number | null }>
+  totals: { prompt_tokens: number; completion_tokens: number; cached_tokens: number; total_tokens: number }
+}): Promise<void> {
+  const dir = getUsageArchiveDir()
+  await mkdir(dir, { recursive: true })
+  const scenario = safeScenarioLabel(params.scenario)
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const path = join(dir, `${scenario}-${stamp}.json`)
+  const payload = {
+    timestamp: new Date().toISOString(),
+    scenario,
+    model: params.model,
+    base_url: params.baseURL,
+    cwd: params.cwd,
+    terminal: params.result.terminal,
+    task: params.task,
+    final_text: params.result.finalText,
+    turn_count: params.result.state.turnCount,
+    usage_samples: params.usageSamples,
+    totals: params.totals
+  }
+  await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+}
+
 /**
  * Run a single-task agent loop in the sandbox and return the result.
  * Uses auto_allow permissions so tests never block on interactive prompts.
  */
-export async function runAgent(task: string, cwd: string): Promise<RunLoopResult> {
+export async function runAgent(
+  task: string,
+  cwd: string,
+  options?: { scenario?: string },
+): Promise<RunLoopResult> {
   const provider = new OpenAICompatProvider({
     apiKey: API_KEY,
     baseURL: E2E_BASE_URL,
     model: E2E_MODEL,
   })
   const registry = buildDefaultRegistry()
+  const usageTracker = createUsageTracker()
+  const usageSamples: Array<{ prompt_tokens: number; completion_tokens: number; cached_tokens: number | null }> = []
 
-  return runLoop({
+  const result = await runLoop({
     provider,
     registry,
     systemPrompt:
@@ -59,5 +111,26 @@ export async function runAgent(task: string, cwd: string): Promise<RunLoopResult
     cwd,
     maxTurns: 20,
     permissions: { ask: async () => 'allow_session' },
+    onUsage: (usage) => {
+      usageTracker.record(usage)
+      usageSamples.push({
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        cached_tokens: usage.cached_tokens ?? null,
+      })
+    },
   })
+
+  await writeUsageArchive({
+    scenario: options?.scenario ?? 'e2e',
+    task,
+    cwd,
+    result,
+    model: E2E_MODEL,
+    baseURL: E2E_BASE_URL,
+    usageSamples,
+    totals: usageTracker.getTotals(),
+  })
+
+  return result
 }

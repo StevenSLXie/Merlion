@@ -30,6 +30,7 @@ if (SKIP) {
             'only the first line of hello.txt (no trailing newline is fine). ' +
             'Do not modify hello.txt.',
           sandbox,
+          { scenario: 'e2e-multi-tool' },
         )
 
         assert.equal(result.terminal, 'completed', `Loop ended with: ${result.terminal}`)

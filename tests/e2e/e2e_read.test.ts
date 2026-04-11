@@ -23,6 +23,7 @@ if (SKIP) {
         const result = await runAgent(
           'Read the file hello.txt and tell me exactly how many lines it contains.',
           sandbox,
+          { scenario: 'e2e-read' },
         )
 
         assert.equal(result.terminal, 'completed', `Loop ended with: ${result.terminal}`)

@@ -15,7 +15,7 @@ export interface RunLoopOptions {
   initialMessages?: ChatMessage[]
   persistInitialMessages?: boolean
   onMessageAppended?: (message: ChatMessage) => Promise<void> | void
-  onUsage?: (usage: { prompt_tokens: number; completion_tokens: number }) => Promise<void> | void
+  onUsage?: (usage: { prompt_tokens: number; completion_tokens: number; cached_tokens?: number | null }) => Promise<void> | void
 }
 
 export interface RunLoopResult {

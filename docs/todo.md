@@ -51,3 +51,21 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 ## Milestone 6: CLI UX (P1)
 
 - [x] `M6-01` Interactive REPL mode (`--repl`) with `:help` and `:q`
+
+## Milestone 7: Token/Cost Observability (P0)
+
+- [x] `M7-01` Usage aggregator module with unit tests (turn delta + session total)
+- [x] `M7-02` CLI real-time usage line per model response
+- [x] `M7-03` E2E usage archive output (`.merlion/e2e-usage`)
+
+## Milestone 8: CLI UX V1 (P1)
+
+- [ ] `M8-01` Runtime/executor event hooks for tool visualization
+- [ ] `M8-02` Line-based renderer for status/tool progress
+- [ ] `M8-03` Output sanitization for long opaque tokens/ansi noise
+
+## Milestone 9: Cost Regression Gate (P1)
+
+- [ ] `M9-01` Baseline schema + initial fixture values
+- [ ] `M9-02` Cost gate checker in test flow
+- [ ] `M9-03` Configurable warn/fail modes

@@ -27,6 +27,7 @@ if (SKIP) {
             'that takes two numbers (a, b) and returns a - b. ' +
             'Do not remove existing functions.',
           sandbox,
+          { scenario: 'e2e-edit' },
         )
 
         assert.equal(result.terminal, 'completed', `Loop ended with: ${result.terminal}`)

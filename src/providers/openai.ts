@@ -8,6 +8,23 @@ export interface OpenAICompatConfig {
   maxTokens?: number
 }
 
+function extractCachedTokens(usage: any): number | null {
+  const candidates = [
+    usage?.cached_tokens,
+    usage?.prompt_tokens_details?.cached_tokens,
+    usage?.input_tokens_details?.cached_tokens,
+    usage?.prompt_tokens_details?.cache_read_tokens,
+    usage?.cache_read_input_tokens
+  ]
+
+  for (const value of candidates) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.max(0, Math.floor(value))
+    }
+  }
+  return null
+}
+
 function toApiTools(tools: ToolDefinition[]): unknown[] {
   return tools.map((tool) => ({
     type: 'function',
@@ -67,7 +84,8 @@ export class OpenAICompatProvider implements ModelProvider {
       finish_reason: choice.finish_reason ?? 'stop',
       usage: {
         prompt_tokens: json.usage?.prompt_tokens ?? 0,
-        completion_tokens: json.usage?.completion_tokens ?? 0
+        completion_tokens: json.usage?.completion_tokens ?? 0,
+        cached_tokens: extractCachedTokens(json.usage)
       }
     }
   }

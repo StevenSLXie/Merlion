@@ -26,6 +26,7 @@ if (SKIP) {
         const result = await runAgent(
           `Run the command: echo "${SENTINEL}" and tell me exactly what was printed.`,
           sandbox,
+          { scenario: 'e2e-bash' },
         )
 
         assert.equal(result.terminal, 'completed', `Loop ended with: ${result.terminal}`)
