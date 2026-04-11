@@ -198,30 +198,37 @@ async function main(): Promise<void> {
     printUsage()
     return
   }
-  if (!flags) {
-    printUsage()
-    process.exitCode = 1
-    return
+  // No arguments → default to interactive REPL mode.
+  const resolvedFlags = flags ?? {
+    task: '',
+    modelFlag: undefined,
+    baseURLFlag: undefined,
+    cwd: currentCwd(),
+    permissionMode: 'interactive' as const,
+    resumeSessionId: undefined,
+    repl: true,
+    verify: process.env.MERLION_VERIFY === '1',
+    configMode: false
   }
 
   // --- Config resolution ---
   let fileConfig = await readConfig()
 
   // `merlion config` → always re-run the wizard
-  if (flags.configMode) {
+  if (resolvedFlags.configMode) {
     const result = await runConfigWizard(fileConfig)
     if (!result.ok) {
       process.exitCode = 1
     }
     // If no task was given alongside `config`, just exit after setup.
-    if (flags.task === 'Continue from the existing session state.' && !flags.resumeSessionId && !flags.repl) {
+    if (resolvedFlags.task === 'Continue from the existing session state.' && !resolvedFlags.resumeSessionId && !resolvedFlags.repl) {
       return
     }
     fileConfig = result.config
   }
 
   const merged = mergeConfig(
-    { apiKey: process.env.OPENROUTER_API_KEY, model: flags.modelFlag, baseURL: flags.baseURLFlag },
+    { apiKey: process.env.OPENROUTER_API_KEY, model: resolvedFlags.modelFlag, baseURL: resolvedFlags.baseURLFlag },
     fileConfig,
     { apiKey: '', model: DEFAULT_MODEL, baseURL: DEFAULT_BASE_URL }
   )
@@ -239,15 +246,15 @@ async function main(): Promise<void> {
   }
 
   const options: CliOptions = {
-    task: flags.task,
+    task: resolvedFlags.task,
     model: merged.model,
     baseURL: merged.baseURL,
     apiKey: merged.apiKey,
-    cwd: flags.cwd,
-    permissionMode: flags.permissionMode,
-    resumeSessionId: flags.resumeSessionId,
-    repl: flags.repl,
-    verify: flags.verify
+    cwd: resolvedFlags.cwd,
+    permissionMode: resolvedFlags.permissionMode,
+    resumeSessionId: resolvedFlags.resumeSessionId,
+    repl: resolvedFlags.repl,
+    verify: resolvedFlags.verify
   }
 
   const provider = new OpenAICompatProvider({

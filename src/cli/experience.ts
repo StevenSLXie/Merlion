@@ -159,10 +159,13 @@ export class CliExperience {
   constructor(options: CliExperienceOptions) {
     this.options = options
     const interactiveTty = Boolean(process.stdout.isTTY) && process.env.TERM !== 'dumb'
+    // REPL mode: TUI on by default when stdout is a real terminal.
+    // Single-task mode: opt-in via MERLION_CLI_TUI=1 (avoids noise in CI/scripts).
     this.tuiEnabled =
       interactiveTty &&
-      !options.isRepl &&
-      process.env.MERLION_CLI_TUI === '1'
+      (options.isRepl
+        ? process.env.MERLION_CLI_TUI !== '0'
+        : process.env.MERLION_CLI_TUI === '1')
     this.useColor =
       interactiveTty &&
       process.env.NO_COLOR !== '1' &&

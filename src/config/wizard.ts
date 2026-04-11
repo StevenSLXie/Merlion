@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline/promises'
-import { stdin, stdout, stderr } from 'node:process'
+import { Writable } from 'node:stream'
+import { stdin, stdout } from 'node:process'
 import { writeConfig, configPath, type MerlionConfig } from './store.ts'
 
 export const DEFAULT_MODEL = 'google/gemini-2.5-flash-preview'
@@ -26,16 +27,11 @@ export function createStdioWizardIO(): WizardIO {
     },
 
     async promptSecret(question: string): Promise<string> {
-      // Mute stdout while the user types so the key is not echoed.
-      const rl = createInterface({
-        input: stdin,
-        output: stdout,
-        terminal: true
-      })
+      // Route readline's output to a sink so typed characters are never echoed.
+      // Writing the question directly to stdout keeps it visible.
+      const sink = new Writable({ write(_chunk, _enc, cb) { cb() } })
+      const rl = createInterface({ input: stdin, output: sink, terminal: stdin.isTTY })
       stdout.write(question)
-      // Suppress echoing by overriding _writeToOutput.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(rl as any)._writeToOutput = () => {}
       try {
         const answer = await rl.question('')
         stdout.write('\n')
