@@ -6,6 +6,8 @@ import { CliExperience } from './cli/experience.ts'
 import { runReplSession } from './cli/repl.ts'
 import { createPermissionStore } from './permissions/store.ts'
 import { OpenAICompatProvider } from './providers/openai.ts'
+import { readConfig, mergeConfig } from './config/store.ts'
+import { runConfigWizard, DEFAULT_MODEL, DEFAULT_BASE_URL } from './config/wizard.ts'
 import { ensureCodebaseIndex, updateCodebaseIndexWithChangedFiles } from './artifacts/codebase_index.ts'
 import { buildOrientationContext } from './context/orientation.ts'
 import { runLoop } from './runtime/loop.ts'
@@ -23,10 +25,27 @@ import { discoverVerificationChecks } from './verification/checks.ts'
 import { runVerificationFixRounds } from './verification/fix_round.ts'
 import { runVerificationChecks } from './verification/runner.ts'
 
+interface CliFlags {
+  /** CLI-only flag overrides (undefined = not specified on CLI) */
+  modelFlag: string | undefined
+  baseURLFlag: string | undefined
+  cwd: string
+  permissionMode: 'interactive' | 'auto_allow' | 'auto_deny'
+  resumeSessionId?: string
+  repl: boolean
+  verify: boolean
+  configMode: boolean
+  task: string
+}
+
 interface CliOptions {
   task: string
+  /** Resolved model (after merging env, config file, CLI flag) */
   model: string
+  /** Resolved base URL */
   baseURL: string
+  /** Resolved API key */
+  apiKey: string
   cwd: string
   permissionMode: 'interactive' | 'auto_allow' | 'auto_deny'
   resumeSessionId?: string
@@ -34,25 +53,26 @@ interface CliOptions {
   verify: boolean
 }
 
-function parseArgs(argv: string[]): CliOptions | null | 'help' {
+function parseArgs(argv: string[]): CliFlags | null | 'help' {
   const args = [...argv]
-  let model = process.env.MERLION_MODEL ?? 'anthropic/claude-sonnet-4-5'
-  let baseURL = process.env.MERLION_BASE_URL ?? 'https://openrouter.ai/api/v1'
+  let modelFlag: string | undefined
+  let baseURLFlag: string | undefined
   let cwd = currentCwd()
-  let permissionMode: CliOptions['permissionMode'] = 'interactive'
+  let permissionMode: CliFlags['permissionMode'] = 'interactive'
   let resumeSessionId: string | undefined
   let repl = false
   let verify = process.env.MERLION_VERIFY === '1'
+  let configMode = false
   const taskParts: string[] = []
 
   while (args.length > 0) {
     const arg = args.shift()!
     if (arg === '--model') {
-      model = args.shift() ?? model
+      modelFlag = args.shift()
       continue
     }
     if (arg === '--base-url') {
-      baseURL = args.shift() ?? baseURL
+      baseURLFlag = args.shift()
       continue
     }
     if (arg === '--cwd') {
@@ -86,26 +106,32 @@ function parseArgs(argv: string[]): CliOptions | null | 'help' {
     if (arg === '--help' || arg === '-h') {
       return 'help'
     }
+    if (arg === '--config' || arg === 'config') {
+      configMode = true
+      continue
+    }
     taskParts.push(arg)
   }
 
   const task = taskParts.join(' ').trim()
-  if (task.length === 0 && !resumeSessionId && !repl) return null
+  if (task.length === 0 && !resumeSessionId && !repl && !configMode) return null
+
   return {
     task: task.length === 0 ? 'Continue from the existing session state.' : task,
-    model,
-    baseURL,
+    modelFlag,
+    baseURLFlag,
     cwd,
     permissionMode,
     resumeSessionId,
     repl,
-    verify
+    verify,
+    configMode
   }
 }
 
 function printUsage(): void {
   process.stdout.write(
-    'Usage: merlion [--model <id>] [--base-url <url>] [--cwd <path>] [--auto-allow|--auto-deny] [--resume <id>] [--repl] [--verify|--no-verify] "<task>"\n'
+    'Usage: merlion [--model <id>] [--base-url <url>] [--cwd <path>] [--auto-allow|--auto-deny] [--resume <id>] [--repl] [--verify|--no-verify] [config] "<task>"\n'
   )
 }
 
@@ -167,26 +193,65 @@ function extractPathArg(raw: string): string | null {
 }
 
 async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2))
-  if (options === 'help') {
+  const flags = parseArgs(process.argv.slice(2))
+  if (flags === 'help') {
     printUsage()
     return
   }
-  if (!options) {
+  if (!flags) {
     printUsage()
     process.exitCode = 1
     return
   }
 
-  const apiKey = process.env.OPENROUTER_API_KEY
-  if (!apiKey) {
-    process.stderr.write('OPENROUTER_API_KEY is required.\n')
-    process.exitCode = 1
-    return
+  // --- Config resolution ---
+  let fileConfig = await readConfig()
+
+  // `merlion config` → always re-run the wizard
+  if (flags.configMode) {
+    const result = await runConfigWizard(fileConfig)
+    if (!result.ok) {
+      process.exitCode = 1
+    }
+    // If no task was given alongside `config`, just exit after setup.
+    if (flags.task === 'Continue from the existing session state.' && !flags.resumeSessionId && !flags.repl) {
+      return
+    }
+    fileConfig = result.config
+  }
+
+  const merged = mergeConfig(
+    { apiKey: process.env.OPENROUTER_API_KEY, model: flags.modelFlag, baseURL: flags.baseURLFlag },
+    fileConfig,
+    { apiKey: '', model: DEFAULT_MODEL, baseURL: DEFAULT_BASE_URL }
+  )
+
+  // If still no API key, run the setup wizard.
+  if (merged.apiKey === '') {
+    const result = await runConfigWizard(fileConfig)
+    if (!result.ok) {
+      process.exitCode = 1
+      return
+    }
+    merged.apiKey = result.config.apiKey ?? ''
+    merged.model = result.config.model ?? merged.model
+    merged.baseURL = result.config.baseURL ?? merged.baseURL
+  }
+
+  const options: CliOptions = {
+    task: flags.task,
+    model: merged.model,
+    baseURL: merged.baseURL,
+    apiKey: merged.apiKey,
+    cwd: flags.cwd,
+    permissionMode: flags.permissionMode,
+    resumeSessionId: flags.resumeSessionId,
+    repl: flags.repl,
+    verify: flags.verify
   }
 
   const provider = new OpenAICompatProvider({
-    apiKey,
+    apiKey: options.apiKey,
     baseURL: options.baseURL,
     model: options.model
   })

@@ -63,6 +63,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M6-09` Interactive detail toggle in REPL (`:detail full|compact`)
 - [x] `M6-10` Keyboard-driven detail toggle in fullscreen TUI (`f`/`c`/`?`)
 - [ ] `M6-11` Structured scrollback panes (assistant/tool split view)
+- [x] `M6-12` First-run configuration wizard (API key + model, saved to `~/.config/merlion/config.json`)
 
 ## Milestone 7: Token/Cost Observability (P0)
 
