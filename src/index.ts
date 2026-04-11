@@ -3,6 +3,12 @@ import { cwd as currentCwd } from 'node:process'
 import { createPermissionStore } from './permissions/store.ts'
 import { OpenAICompatProvider } from './providers/openai.ts'
 import { runLoop } from './runtime/loop.ts'
+import {
+  appendSessionMeta,
+  appendTranscriptMessage,
+  appendUsage,
+  createSessionFiles
+} from './runtime/session.ts'
 import { buildDefaultRegistry } from './tools/builtin/index.ts'
 
 interface CliOptions {
@@ -60,6 +66,15 @@ function printUsage(): void {
   )
 }
 
+function estimateToolSchemaTokens(registry: ReturnType<typeof buildDefaultRegistry>): number {
+  const serialized = JSON.stringify(registry.getAll().map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters
+  })))
+  return Math.ceil(serialized.length / 4)
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2))
   if (options === 'help') {
@@ -86,6 +101,9 @@ async function main(): Promise<void> {
   })
   const registry = buildDefaultRegistry()
   const permissions = createPermissionStore(options.permissionMode)
+  const session = await createSessionFiles(options.cwd)
+  await appendSessionMeta(session.transcriptPath, session.sessionId, options.model, options.cwd)
+  const toolSchemaTokensEstimate = estimateToolSchemaTokens(registry)
 
   const result = await runLoop({
     provider,
@@ -94,7 +112,21 @@ async function main(): Promise<void> {
     userPrompt: options.task,
     cwd: options.cwd,
     maxTurns: 100,
-    permissions
+    permissions,
+    onMessageAppended: async (message) => {
+      await appendTranscriptMessage(session.transcriptPath, message)
+    },
+    onUsage: async (usage) => {
+      await appendUsage(session.usagePath, {
+        timestamp: new Date().toISOString(),
+        session_id: session.sessionId,
+        model: options.model,
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        cached_tokens: null,
+        tool_schema_tokens_estimate: toolSchemaTokensEstimate
+      })
+    }
   })
 
   process.stdout.write(`${result.finalText}\n`)

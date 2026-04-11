@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-11T15:29:00+08:00
+Last updated: 2026-04-11T15:34:00+08:00
 
 ## Active Sprint
 
@@ -29,7 +29,9 @@ Last updated: 2026-04-11T15:29:00+08:00
 | M3-01 | provider wrapper | done | codex | OpenAI-compatible non-stream |
 | M3-04 | ReAct loop skeleton | done | codex | loop tests pass |
 | M0-05 | minimal CLI one-shot | done | codex | `npm run merlion -- --help` works |
-| M3-05 | transcript persistence + redaction | todo | codex | next feature |
+| M3-05 | transcript persistence + redaction | done | codex | session jsonl in data dir |
+| M3-07 | usage ledger | done | codex | `.usage.jsonl` append per turn |
+| M3-06 | resume reconstruction | todo | codex | next feature |
 
 ## Commit Log
 
@@ -44,3 +46,4 @@ Last updated: 2026-04-11T15:29:00+08:00
 | (pending) | feature 006 bash | red->green tests + implementation |
 | (pending) | feature 007 fetch | red->green tests + implementation |
 | (pending) | feature 008 minimal cli loop | red->green tests + implementation |
+| (pending) | feature 009 session logging | red->green tests + implementation |

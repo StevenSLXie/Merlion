@@ -10,6 +10,8 @@ export interface RunLoopOptions {
   cwd: string
   permissions?: PermissionStore
   maxTurns?: number
+  onMessageAppended?: (message: ChatMessage) => Promise<void> | void
+  onUsage?: (usage: { prompt_tokens: number; completion_tokens: number }) => Promise<void> | void
 }
 
 export interface RunLoopResult {
@@ -48,6 +50,10 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     permissions: options.permissions ?? defaultPermissions
   }
 
+  for (const initialMessage of state.messages) {
+    await options.onMessageAppended?.(initialMessage)
+  }
+
   for (;;) {
     if (state.turnCount >= maxTurns) {
       return { terminal: 'max_turns_exceeded', finalText, state }
@@ -61,41 +67,50 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     }
 
     state.turnCount += 1
-    state.messages.push({
+    const assistantMessage: ChatMessage = {
       role: 'assistant',
       content: assistant.content,
       tool_calls: assistant.tool_calls
-    })
+    }
+    state.messages.push(assistantMessage)
+    await options.onMessageAppended?.(assistantMessage)
+    await options.onUsage?.(assistant.usage)
 
     if (assistant.finish_reason === 'tool_calls' && assistant.tool_calls && assistant.tool_calls.length > 0) {
       for (const call of assistant.tool_calls) {
         const tool = options.registry.get(call.function.name)
         if (!tool) {
-          state.messages.push({
+          const toolMsg: ChatMessage = {
             role: 'tool',
             tool_call_id: call.id,
             content: `Unknown tool: ${call.function.name}`
-          })
+          }
+          state.messages.push(toolMsg)
+          await options.onMessageAppended?.(toolMsg)
           continue
         }
 
         const args = parseToolArgs(call.function.arguments)
         const result = await tool.execute(args, toolContext)
-        state.messages.push({
+        const toolMsg: ChatMessage = {
           role: 'tool',
           tool_call_id: call.id,
           content: result.content && result.content.trim() !== '' ? result.content : '(no output)'
-        })
+        }
+        state.messages.push(toolMsg)
+        await options.onMessageAppended?.(toolMsg)
       }
       continue
     }
 
     if (assistant.finish_reason === 'length' && state.maxOutputTokensRecoveryCount < 3) {
       state.maxOutputTokensRecoveryCount += 1
-      state.messages.push({
+      const continueMessage: ChatMessage = {
         role: 'user',
         content: 'Output was cut off. Continue directly from where you stopped. No recap, no apology.'
-      })
+      }
+      state.messages.push(continueMessage)
+      await options.onMessageAppended?.(continueMessage)
       continue
     }
 
