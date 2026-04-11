@@ -21,6 +21,9 @@ Type: `P1 ux`
   - 新增 `forceColorEnabled`
   - `tuiEnabled` 改为全模式显式 opt-in
   - `useColor` 增加 `FORCE_COLOR` 支持
+- `bin/merlion.js`
+  - npm 安装入口在 TTY 下默认设置 `FORCE_COLOR=1`
+  - 仍可被 `NO_COLOR=1` 或显式 `FORCE_COLOR` 覆盖
 
 ## Verification
 

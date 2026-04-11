@@ -1,6 +1,7 @@
 import { ToolRegistry } from '../registry.ts'
 import { appendFileTool } from './append_file.ts'
 import { bashTool } from './bash.ts'
+import { configTool } from './config.ts'
 import { configGetTool } from './config_get.ts'
 import { configSetTool } from './config_set.ts'
 import { copyFileTool } from './copy_file.ts'
@@ -51,6 +52,7 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register(fetchTool)
   registry.register(toolSearchTool)
   registry.register(todoWriteTool)
+  registry.register(configTool)
   registry.register(configGetTool)
   registry.register(configSetTool)
   registry.register(sleepTool)

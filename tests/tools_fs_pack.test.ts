@@ -60,6 +60,53 @@ test('mkdir + list_dir + glob + grep', async () => {
   assert.match(grepped.content, /app\.ts/)
 })
 
+test('grep supports output_mode, head_limit, and offset pagination', async () => {
+  const cwd = await makeTempDir()
+  const p = permission('allow')
+  await mkdirTool.execute({ path: 'src' }, { cwd, permissions: p })
+  await writeFile(join(cwd, 'src', 'a.ts'), 'const TOKEN = 1\nconst TOKEN2 = 2\n', 'utf8')
+  await writeFile(join(cwd, 'src', 'b.ts'), 'const TOKEN = 3\n', 'utf8')
+
+  const contentMode = await grepTool.execute(
+    { path: 'src', pattern: 'TOKEN', output_mode: 'content', head_limit: 1, offset: 1 },
+    { cwd }
+  )
+  assert.equal(contentMode.isError, false)
+  assert.match(contentMode.content, /TOKEN/)
+
+  const filesMode = await grepTool.execute(
+    { path: 'src', pattern: 'TOKEN', output_mode: 'files_with_matches' },
+    { cwd }
+  )
+  assert.equal(filesMode.isError, false)
+  assert.match(filesMode.content, /src\/a\.ts/)
+  assert.match(filesMode.content, /src\/b\.ts/)
+
+  const countMode = await grepTool.execute(
+    { path: 'src', pattern: 'TOKEN', output_mode: 'count' },
+    { cwd }
+  )
+  assert.equal(countMode.isError, false)
+  assert.match(countMode.content, /src\/a\.ts:2/)
+  assert.match(countMode.content, /src\/b\.ts:1/)
+})
+
+test('glob validates path and reports truncation', async () => {
+  const cwd = await makeTempDir()
+  const p = permission('allow')
+  await mkdirTool.execute({ path: 'src' }, { cwd, permissions: p })
+  await writeFile(join(cwd, 'src', 'a.ts'), 'a\n', 'utf8')
+  await writeFile(join(cwd, 'src', 'b.ts'), 'b\n', 'utf8')
+
+  const invalid = await globTool.execute({ path: 'src/a.ts', pattern: '*.ts' }, { cwd })
+  assert.equal(invalid.isError, true)
+  assert.match(invalid.content, /not a directory/i)
+
+  const limited = await globTool.execute({ path: 'src', pattern: '*.ts', max_results: 1 }, { cwd })
+  assert.equal(limited.isError, false)
+  assert.match(limited.content, /Results are truncated/)
+})
+
 test('copy_file + move_file + delete_file', async () => {
   const cwd = await makeTempDir()
   const p = permission('allow')

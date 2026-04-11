@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { configTool } from '../src/tools/builtin/config.ts'
 import { configGetTool } from '../src/tools/builtin/config_get.ts'
 import { configSetTool } from '../src/tools/builtin/config_set.ts'
 import { listScriptsTool } from '../src/tools/builtin/list_scripts.ts'
@@ -41,6 +42,19 @@ test('tool_search lists tools and supports query', async () => {
   assert.equal(filtered.isError, false)
   assert.match(filtered.content, /edit_file/)
   assert.equal(filtered.content.includes('read_file'), false)
+
+  const selected = await toolSearchTool.execute(
+    { query: 'select:read_file' },
+    {
+      cwd: process.cwd(),
+      listTools: () => [
+        { name: 'read_file', description: 'Read files' },
+        { name: 'edit_file', description: 'Edit files' }
+      ]
+    }
+  )
+  assert.equal(selected.isError, false)
+  assert.equal(selected.content.includes('read_file'), true)
 })
 
 test('list_scripts and run_script work against package.json', async () => {
@@ -79,6 +93,9 @@ test('sleep waits with bounded duration', async () => {
   const elapsed = Date.now() - start
   assert.equal(result.isError, false)
   assert.ok(elapsed >= 10)
+
+  const bySeconds = await sleepTool.execute({ duration_seconds: 1 }, { cwd: process.cwd() })
+  assert.equal(bySeconds.isError, false)
 })
 
 test('config_set/config_get roundtrip in temp XDG dir', async () => {
@@ -99,4 +116,52 @@ test('config_set/config_get roundtrip in temp XDG dir', async () => {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME
     else process.env.XDG_CONFIG_HOME = previous
   }
+})
+
+test('config tool supports get, set and reset', async () => {
+  const cwd = await makeTempDir()
+  const xdg = join(cwd, 'xdg')
+  const previous = process.env.XDG_CONFIG_HOME
+  process.env.XDG_CONFIG_HOME = xdg
+  try {
+    const set = await configTool.execute(
+      { setting: 'model', value: 'qwen/qwen3-coder' },
+      { cwd, permissions: permission('allow') }
+    )
+    assert.equal(set.isError, false)
+    assert.match(set.content, /Set model=qwen\/qwen3-coder/)
+
+    const get = await configTool.execute({ setting: 'model' }, { cwd })
+    assert.equal(get.isError, false)
+    assert.match(get.content, /model=qwen\/qwen3-coder/)
+
+    const reset = await configTool.execute(
+      { setting: 'model', value: 'default' },
+      { cwd, permissions: permission('allow') }
+    )
+    assert.equal(reset.isError, false)
+    assert.match(reset.content, /Reset model to default/)
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previous
+  }
+})
+
+test('todo_write supports full todo list payload', async () => {
+  const cwd = await makeTempDir()
+  const updated = await todoWriteTool.execute(
+    {
+      path: '.merlion/todos.json',
+      todos: [
+        { content: 'implement parser', status: 'in_progress', activeForm: 'implementing parser' },
+        { content: 'write tests', status: 'pending' }
+      ]
+    },
+    { cwd, permissions: permission('allow') }
+  )
+  assert.equal(updated.isError, false)
+  assert.match(updated.content, /Updated todo list/)
+  const content = await readFile(join(cwd, '.merlion', 'todos.json'), 'utf8')
+  assert.match(content, /implement parser/)
+  assert.match(content, /write tests/)
 })
