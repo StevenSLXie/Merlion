@@ -3,6 +3,7 @@ import type { UsageSnapshot } from '../runtime/usage.ts'
 import { renderEditDiffLines } from './diff.ts'
 import { buildAssistantRenderPlan, type MessageTone } from './message_content.ts'
 import { formatCliStatusLine } from './status.ts'
+import { createTuiFrame } from './tui_frame.ts'
 import type { ToolUiPayload } from '../tools/types.ts'
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -54,6 +55,10 @@ function createColors(enabled: boolean): ColorSet {
 
 function plainLength(text: string): number {
   return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '').length
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
 }
 
 function padRight(text: string, length: number): string {
@@ -137,19 +142,27 @@ export class CliExperience {
   private readonly useColor: boolean
   private readonly colors: ColorSet
   private readonly options: CliExperienceOptions
+  private readonly tuiEnabled: boolean
   private spinnerTimer: NodeJS.Timeout | null = null
   private spinnerFrame = 0
   private spinnerText = ''
   private spinnerWidth = 0
   private readonly maxDiffLines: number
   private readonly markdownEnabled: boolean
+  private readonly tuiLogLines: string[] = []
+  private tuiStatusLine = 'ready'
 
   constructor(options: CliExperienceOptions) {
     this.options = options
+    const interactiveTty = Boolean(process.stdout.isTTY) && process.env.TERM !== 'dumb'
+    this.tuiEnabled =
+      interactiveTty &&
+      !options.isRepl &&
+      process.env.MERLION_CLI_TUI === '1'
     this.useColor =
-      Boolean(process.stdout.isTTY) &&
+      interactiveTty &&
       process.env.NO_COLOR !== '1' &&
-      process.env.TERM !== 'dumb'
+      !this.tuiEnabled
     this.colors = createColors(this.useColor)
     this.maxDiffLines = parsePositiveInt(process.env.MERLION_CLI_DIFF_MAX_LINES, 120)
     this.markdownEnabled = process.env.MERLION_CLI_MARKDOWN !== '0'
@@ -167,15 +180,47 @@ export class CliExperience {
     return Math.min(140, width)
   }
 
+  private getHeight(): number {
+    const height = Number(process.stdout.rows ?? 32)
+    if (!Number.isFinite(height) || height < 18) return 24
+    return Math.min(60, height)
+  }
+
   private clearSpinnerLine(): void {
+    if (this.tuiEnabled) return
     if (!this.spinnerTimer) return
     process.stdout.write('\r\x1b[2K')
     this.spinnerWidth = 0
   }
 
   private printRawLine(text = ''): void {
+    if (this.tuiEnabled) {
+      const clean = sanitizeRenderableText(stripAnsi(text))
+      const lines = clean.split('\n')
+      for (const line of lines) this.tuiLogLines.push(line)
+      const maxLines = 800
+      if (this.tuiLogLines.length > maxLines) {
+        this.tuiLogLines.splice(0, this.tuiLogLines.length - maxLines)
+      }
+      this.renderTuiFrame()
+      return
+    }
     this.clearSpinnerLine()
     process.stdout.write(`${text}\n`)
+  }
+
+  private renderTuiFrame(): void {
+    if (!this.tuiEnabled) return
+    const frame = createTuiFrame({
+      width: this.getWidth(),
+      height: this.getHeight(),
+      title: 'MERLION COMMAND CONSOLE',
+      subtitle: `model ${this.options.model} · session ${this.options.sessionId.slice(0, 8)} · mode=one-shot`,
+      status: this.tuiStatusLine,
+      bodyLines: this.tuiLogLines
+    })
+    process.stdout.write('\x1b[2J\x1b[H')
+    process.stdout.write(`${frame}\n`)
   }
 
   private printCard(title: string, body: string, tone: 'info' | 'success' | 'warn' | 'error' = 'info'): void {
@@ -270,6 +315,11 @@ export class CliExperience {
   }
 
   renderBanner(): void {
+    if (this.tuiEnabled) {
+      this.tuiStatusLine = 'ready'
+      this.renderTuiFrame()
+      return
+    }
     const width = this.getWidth()
     const edge = '═'.repeat(Math.max(20, width - 2))
     const title = this.c('bold', 'MERLION COMMAND CONSOLE')
@@ -294,6 +344,7 @@ export class CliExperience {
   }
 
   clearTypedInputLine(): void {
+    if (this.tuiEnabled) return
     if (!process.stdout.isTTY) return
     this.stopSpinner()
     process.stdout.write('\r\x1b[2K\x1b[1A\r\x1b[2K')
@@ -308,6 +359,11 @@ export class CliExperience {
   }
 
   private startSpinner(text: string): void {
+    if (this.tuiEnabled) {
+      this.tuiStatusLine = sanitizeRenderableText(text)
+      this.renderTuiFrame()
+      return
+    }
     this.stopSpinner()
     this.spinnerText = sanitizeRenderableText(text)
     if (!process.stdout.isTTY) {
@@ -327,6 +383,7 @@ export class CliExperience {
   }
 
   stopSpinner(): void {
+    if (this.tuiEnabled) return
     if (this.spinnerTimer) {
       clearInterval(this.spinnerTimer)
       this.spinnerTimer = null
@@ -344,11 +401,13 @@ export class CliExperience {
   onAssistantResponse(event: { turn: number; finish_reason: string; tool_calls_count: number }): void {
     this.stopSpinner()
     if (event.finish_reason === 'tool_calls') {
+      this.tuiStatusLine = `turn ${event.turn} · queued ${event.tool_calls_count} tool call(s)`
       this.printRawLine(
         this.c('dim', `[turn ${event.turn}] assistant queued ${event.tool_calls_count} tool call(s)`)
       )
       return
     }
+    this.tuiStatusLine = `turn ${event.turn} · finish=${event.finish_reason}`
     this.printRawLine(this.c('dim', `[turn ${event.turn}] assistant finish=${event.finish_reason}`))
   }
 
@@ -395,6 +454,11 @@ export class CliExperience {
 
   onUsage(snapshot: UsageSnapshot, estimatedCost?: number): void {
     const line = formatCliStatusLine(snapshot, estimatedCost)
+    if (this.tuiEnabled) {
+      this.tuiStatusLine = line
+      this.renderTuiFrame()
+      return
+    }
     this.printRawLine(this.c('dim', line))
   }
 }

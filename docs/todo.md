@@ -58,7 +58,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M6-04` Markdown-aware assistant renderer (headings/lists/code/table + fallback)
 - [x] `M6-05` CLI message architecture unification (content type pipeline + layout cleanup)
 - [x] `M6-06` Markdown code-fence language badge + unified status line formatter
-- [ ] `M6-07` Full-screen TUI shell (fixed header/footer + scrollable message area)
+- [x] `M6-07` Full-screen TUI shell (fixed header/footer + scrollable message area)
 
 ## Milestone 7: Token/Cost Observability (P0)
 

@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-12T03:15:00+08:00
+Last updated: 2026-04-12T03:45:00+08:00
 
 ## Active Sprint
 
@@ -38,7 +38,7 @@ Last updated: 2026-04-12T03:15:00+08:00
 | M6-04 | markdown-aware assistant renderer | done | codex | feature 035; fallback to plain card |
 | M6-05 | CLI render pipeline unification | done | codex | feature 036; unified assistant content pipeline |
 | M6-06 | markdown code-fence badge + status formatter | done | codex | feature 037; richer code block cues + cached ratio line |
-| M6-07 | full-screen TUI shell | todo | codex | pending (larger structural upgrade) |
+| M6-07 | full-screen TUI shell | done | codex | feature 038; optional `MERLION_CLI_TUI=1` with fixed header/footer |
 | M7-01 | usage aggregator module + tests | done | codex | feature 014 |
 | M7-02 | CLI real-time token usage line | done | codex | in `src/index.ts` |
 | M7-03 | E2E usage archive output | done | codex | `.merlion/e2e-usage` |
