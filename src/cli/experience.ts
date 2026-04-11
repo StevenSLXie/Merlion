@@ -131,6 +131,14 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return value > 0 ? value : fallback
 }
 
+function forceColorEnabled(raw: string | undefined): boolean {
+  if (raw === undefined) return false
+  const value = raw.trim()
+  if (value === '') return true
+  if (value === '0' || value.toLowerCase() === 'false') return false
+  return true
+}
+
 function clipText(text: string, maxChars: number): string {
   if (maxChars < 1) return ''
   if (text.length <= maxChars) return text
@@ -157,14 +165,13 @@ export class CliExperience {
 
   constructor(options: CliExperienceOptions) {
     this.options = options
-    const interactiveTty = Boolean(process.stdout.isTTY) && process.env.TERM !== 'dumb'
-    // REPL mode: TUI on by default when stdout is a real terminal.
-    // Single-task mode: opt-in via MERLION_CLI_TUI=1 (avoids noise in CI/scripts).
+    const ttyEnabled = Boolean(process.stdout.isTTY) && process.env.TERM !== 'dumb'
+    const forceColor = forceColorEnabled(process.env.FORCE_COLOR)
+    const interactiveTty = ttyEnabled || forceColor
+    // TUI is always opt-in to preserve colorful line-based output by default.
     this.tuiEnabled =
       interactiveTty &&
-      (options.isRepl
-        ? process.env.MERLION_CLI_TUI !== '0'
-        : process.env.MERLION_CLI_TUI === '1')
+      process.env.MERLION_CLI_TUI === '1'
     this.useColor =
       interactiveTty &&
       process.env.NO_COLOR !== '1'
