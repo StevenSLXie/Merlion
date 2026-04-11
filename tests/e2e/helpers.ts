@@ -4,12 +4,12 @@
  * All E2E tests require OPENROUTER_API_KEY in the environment.
  * Tests are skipped automatically when the key is absent.
  */
-import { cp, mkdtemp, rm } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { mkdir, writeFile } from 'node:fs/promises'
 
+import { evaluateCostGate, parseCostGateMode, readCostBaseline } from '../../src/runtime/cost_gate.ts'
 import { OpenAICompatProvider } from '../../src/providers/openai.ts'
 import { buildDefaultRegistry } from '../../src/tools/builtin/index.ts'
 import { runLoop } from '../../src/runtime/loop.ts'
@@ -52,6 +52,10 @@ function getUsageArchiveDir(): string {
   return process.env.MERLION_E2E_USAGE_DIR ?? join(process.cwd(), '.merlion', 'e2e-usage')
 }
 
+function getCostBaselinePath(): string {
+  return process.env.MERLION_E2E_COST_BASELINE ?? join(process.cwd(), 'docs', 'cost-baseline.json')
+}
+
 async function writeUsageArchive(params: {
   scenario: string
   task: string
@@ -83,6 +87,25 @@ async function writeUsageArchive(params: {
   await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
 }
 
+async function enforceCostGate(scenario: string, totalTokens: number): Promise<void> {
+  const mode = parseCostGateMode(process.env.MERLION_COST_GATE)
+  const baseline = await readCostBaseline(getCostBaselinePath())
+  const decision = evaluateCostGate({
+    baseline,
+    scenario: safeScenarioLabel(scenario),
+    totalTokens,
+    mode
+  })
+
+  if (decision.status === 'warn') {
+    process.stderr.write(`${decision.message}\n`)
+    return
+  }
+  if (decision.status === 'fail') {
+    throw new Error(decision.message)
+  }
+}
+
 /**
  * Run a single-task agent loop in the sandbox and return the result.
  * Uses auto_allow permissions so tests never block on interactive prompts.
@@ -109,7 +132,7 @@ export async function runAgent(
       'Be concise. When done, state what you did.',
     userPrompt: task,
     cwd,
-    maxTurns: 20,
+    maxTurns: 30,
     permissions: { ask: async () => 'allow_session' },
     onUsage: (usage) => {
       usageTracker.record(usage)
@@ -131,6 +154,7 @@ export async function runAgent(
     usageSamples,
     totals: usageTracker.getTotals(),
   })
+  await enforceCostGate(options?.scenario ?? 'e2e', usageTracker.getTotals().total_tokens)
 
   return result
 }

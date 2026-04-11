@@ -66,6 +66,6 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 
 ## Milestone 9: Cost Regression Gate (P1)
 
-- [ ] `M9-01` Baseline schema + initial fixture values
-- [ ] `M9-02` Cost gate checker in test flow
-- [ ] `M9-03` Configurable warn/fail modes
+- [x] `M9-01` Baseline schema + initial fixture values
+- [x] `M9-02` Cost gate checker in test flow
+- [x] `M9-03` Configurable warn/fail modes

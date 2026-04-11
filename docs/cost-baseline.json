@@ -1,0 +1,17 @@
+{
+  "default_threshold_pct": 20,
+  "scenarios": {
+    "e2e-read": {
+      "total_tokens": 5000
+    },
+    "e2e-edit": {
+      "total_tokens": 12000
+    },
+    "e2e-bash": {
+      "total_tokens": 5000
+    },
+    "e2e-multi-tool": {
+      "total_tokens": 9000
+    }
+  }
+}
