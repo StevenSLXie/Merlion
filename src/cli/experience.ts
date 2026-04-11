@@ -1,6 +1,6 @@
 import { sanitizeRenderableText } from './sanitize.ts'
 import type { UsageSnapshot } from '../runtime/usage.ts'
-import { renderEditDiffLines } from './diff.ts'
+import { renderEditDiffLines, summarizeEditDiff } from './diff.ts'
 import { buildAssistantRenderPlan, type MessageTone } from './message_content.ts'
 import { formatCliStatusLine } from './status.ts'
 import { createTuiFrame } from './tui_frame.ts'
@@ -149,6 +149,7 @@ export class CliExperience {
   private spinnerWidth = 0
   private readonly maxDiffLines: number
   private readonly markdownEnabled: boolean
+  private readonly toolDetailMode: 'full' | 'compact'
   private readonly tuiLogLines: string[] = []
   private tuiStatusLine = 'ready'
 
@@ -166,6 +167,7 @@ export class CliExperience {
     this.colors = createColors(this.useColor)
     this.maxDiffLines = parsePositiveInt(process.env.MERLION_CLI_DIFF_MAX_LINES, 120)
     this.markdownEnabled = process.env.MERLION_CLI_MARKDOWN !== '0'
+    this.toolDetailMode = process.env.MERLION_CLI_TOOL_DETAIL === 'compact' ? 'compact' : 'full'
   }
 
   private c(code: keyof ColorSet, text: string): string {
@@ -433,10 +435,12 @@ export class CliExperience {
     if (payload.kind === 'edit_diff') {
       const width = this.getWidth()
       const innerWidth = Math.max(20, width - 8)
-      const lines = renderEditDiffLines(payload, {
-        maxLines: this.maxDiffLines,
-        maxCharsPerLine: innerWidth
-      })
+      const lines = this.toolDetailMode === 'compact'
+        ? summarizeEditDiff(payload)
+        : renderEditDiffLines(payload, {
+            maxLines: this.maxDiffLines,
+            maxCharsPerLine: innerWidth
+          })
       this.printRawLine(this.c('bold', '┌─ EDIT DIFF'))
       for (const line of lines) {
         const tone = line.tone === 'add'

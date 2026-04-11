@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { renderEditDiffLines } from '../src/cli/diff.ts'
+import { renderEditDiffLines, summarizeEditDiff } from '../src/cli/diff.ts'
 
 test('renderEditDiffLines renders metadata and colored prefixes', () => {
   const lines = renderEditDiffLines({
@@ -53,4 +53,33 @@ test('renderEditDiffLines truncates when exceeding maxLines', () => {
 
   assert.equal(lines.length, 10)
   assert.match(lines[9]?.text ?? '', /truncated/)
+})
+
+test('summarizeEditDiff returns compact metadata lines', () => {
+  const lines = summarizeEditDiff({
+    kind: 'edit_diff',
+    path: '/tmp/small.ts',
+    addedLines: 3,
+    removedLines: 2,
+    hunks: [
+      {
+        oldStart: 1,
+        oldLines: 2,
+        newStart: 1,
+        newLines: 3,
+        lines: [
+          { type: 'remove', text: 'a' },
+          { type: 'remove', text: 'b' },
+          { type: 'add', text: 'c' },
+          { type: 'add', text: 'd' },
+          { type: 'add', text: 'e' }
+        ]
+      }
+    ]
+  })
+
+  assert.equal(lines.length, 2)
+  assert.match(lines[0]?.text ?? '', /diff \/tmp\/small\.ts/)
+  assert.match(lines[1]?.text ?? '', /1 hunk/)
+  assert.match(lines[1]?.text ?? '', /5 changed line/)
 })

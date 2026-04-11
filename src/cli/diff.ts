@@ -52,3 +52,17 @@ export function renderEditDiffLines(
     { tone: 'meta', text: `... diff truncated (${clipped.length - keep} line(s) hidden)` }
   ]
 }
+
+export function summarizeEditDiff(payload: EditDiffUiPayload): RenderedDiffLine[] {
+  const totalChanged = payload.addedLines + payload.removedLines
+  return [
+    {
+      tone: 'meta',
+      text: `diff ${sanitizeRenderableText(payload.path)} (+${payload.addedLines} -${payload.removedLines})`
+    },
+    {
+      tone: 'meta',
+      text: `${payload.hunks.length} hunk(s), ${totalChanged} changed line(s)`
+    }
+  ]
+}
