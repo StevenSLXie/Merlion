@@ -3,9 +3,16 @@ export interface ToolResult {
   isError: boolean
 }
 
+export type PermissionDecision = 'allow' | 'deny' | 'allow_session'
+
+export interface PermissionStore {
+  ask: (tool: string, description: string) => Promise<PermissionDecision>
+}
+
 export interface ToolContext {
   cwd: string
   sessionId?: string
+  permissions?: PermissionStore
 }
 
 export interface ToolDefinition {
@@ -19,4 +26,3 @@ export interface ToolDefinition {
   concurrencySafe: boolean
   execute: (input: Record<string, unknown>, ctx: ToolContext) => Promise<ToolResult>
 }
-
