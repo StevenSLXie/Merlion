@@ -1,12 +1,21 @@
 {
   "name": "merlion",
   "version": "0.1.0",
-  "private": true,
+  "description": "A coding agent powered by OpenRouter",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "merlion": "./bin/merlion.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build && npm test",
     "test": "node --experimental-strip-types --test 'tests/*.test.ts'",
     "test:e2e": "node --experimental-strip-types --test --test-concurrency=1 'tests/e2e/*.test.ts'",
     "test:all": "node --experimental-strip-types --test --test-concurrency=1 'tests/**/*.test.ts'",
