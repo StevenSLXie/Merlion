@@ -34,3 +34,27 @@ test('runReplSession loops prompts and exits', async () => {
   assert.equal(outputs.some((t) => t.includes('Commands: :help, :q')), true)
 })
 
+test('runReplSession supports custom turn renderer hooks', async () => {
+  const inputs = ['hello', ':q']
+  const outputs: string[] = []
+  const rendered: string[] = []
+
+  await runReplSession({
+    readLine: async () => inputs.shift() ?? null,
+    write: (text) => {
+      outputs.push(text)
+    },
+    runTurn: async () => ({ output: 'raw-output', terminal: 'completed' }),
+    startupMessage: false,
+    onPromptSubmitted: (prompt) => {
+      rendered.push(`user:${prompt}`)
+    },
+    onTurnResult: (result) => {
+      rendered.push(`assistant:${result.output}`)
+    },
+  })
+
+  assert.equal(rendered.includes('user:hello'), true)
+  assert.equal(rendered.includes('assistant:raw-output'), true)
+  assert.equal(outputs.some((t) => t.includes('raw-output')), false)
+})

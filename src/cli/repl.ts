@@ -17,10 +17,18 @@ export interface RunReplSessionOptions {
   write: (text: string) => void
   runTurn: (prompt: string) => Promise<{ output: string; terminal: string }>
   promptLabel?: string
+  startupMessage?: string | false
+  onPromptSubmitted?: (prompt: string) => Promise<void> | void
+  onTurnResult?: (
+    result: { output: string; terminal: string },
+    prompt: string
+  ) => Promise<void> | void
 }
 
 export async function runReplSession(options: RunReplSessionOptions): Promise<void> {
-  options.write('REPL started. Commands: :help, :q\n')
+  if (options.startupMessage !== false) {
+    options.write(options.startupMessage ?? 'REPL started. Commands: :help, :q\n')
+  }
   const promptLabel = options.promptLabel ?? 'merlion> '
 
   for (;;) {
@@ -39,11 +47,15 @@ export async function runReplSession(options: RunReplSessionOptions): Promise<vo
     }
     if (parsed.kind === 'empty') continue
 
+    await options.onPromptSubmitted?.(parsed.prompt)
     const result = await options.runTurn(parsed.prompt)
-    options.write(`${result.output}\n`)
-    if (result.terminal !== 'completed') {
-      options.write(`[terminal: ${result.terminal}]\n`)
+    if (options.onTurnResult) {
+      await options.onTurnResult(result, parsed.prompt)
+    } else {
+      options.write(`${result.output}\n`)
+      if (result.terminal !== 'completed') {
+        options.write(`[terminal: ${result.terminal}]\n`)
+      }
     }
   }
 }
-

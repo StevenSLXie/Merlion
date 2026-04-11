@@ -2,14 +2,7 @@ import { cwd as currentCwd } from 'node:process'
 import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 
-import {
-  formatAssistantResponseEvent,
-  formatToolResultEvent,
-  formatToolStartEvent,
-  formatTurnStartEvent,
-  summarizeToolArguments
-} from './cli/render.ts'
-import { sanitizeRenderableText } from './cli/sanitize.ts'
+import { CliExperience } from './cli/experience.ts'
 import { runReplSession } from './cli/repl.ts'
 import { createPermissionStore } from './permissions/store.ts'
 import { OpenAICompatProvider } from './providers/openai.ts'
@@ -22,7 +15,7 @@ import {
   getSessionFilesForResume,
   loadSessionMessages
 } from './runtime/session.ts'
-import { calculateUsageCostUsd, createUsageTracker, formatUsageProgressLine, type UsageRates } from './runtime/usage.ts'
+import { calculateUsageCostUsd, createUsageTracker, type UsageRates } from './runtime/usage.ts'
 import { buildDefaultRegistry } from './tools/builtin/index.ts'
 
 interface CliOptions {
@@ -174,6 +167,13 @@ async function main(): Promise<void> {
   let history = initialMessages
   const usageTracker = createUsageTracker()
   const usageRates = loadUsageRatesFromEnv()
+  const ui = new CliExperience({
+    model: options.model,
+    sessionId: session.sessionId,
+    isRepl: options.repl
+  })
+
+  ui.renderBanner()
 
   const runTurn = async (prompt: string) => {
     const result = await runLoop({
@@ -201,35 +201,30 @@ async function main(): Promise<void> {
         })
         const snapshot = usageTracker.record(usage)
         const estimatedCost = usageRates ? calculateUsageCostUsd(snapshot.totals, usageRates) : undefined
-        process.stdout.write(`${sanitizeRenderableText(formatUsageProgressLine(snapshot, estimatedCost))}\n`)
+        ui.onUsage(snapshot, estimatedCost)
       },
       onTurnStart: ({ turn }) => {
-        process.stdout.write(`${formatTurnStartEvent({ turn })}\n`)
+        ui.onTurnStart({ turn })
       },
       onAssistantResponse: ({ turn, finish_reason, tool_calls_count }) => {
-        process.stdout.write(`${formatAssistantResponseEvent({ turn, finish_reason, tool_calls_count })}\n`)
+        ui.onAssistantResponse({ turn, finish_reason, tool_calls_count })
       },
       onToolCallStart: ({ call, index, total }) => {
-        const summary = summarizeToolArguments(call.function.arguments)
-        process.stdout.write(
-          `${formatToolStartEvent({
-            index,
-            total,
-            name: call.function.name,
-            summary
-          })}\n`
-        )
+        ui.onToolStart({
+          index,
+          total,
+          name: call.function.name,
+          summary: call.function.arguments
+        })
       },
       onToolCallResult: ({ call, index, total, durationMs, isError }) => {
-        process.stdout.write(
-          `${formatToolResultEvent({
-            index,
-            total,
-            name: call.function.name,
-            isError,
-            durationMs
-          })}\n`
-        )
+        ui.onToolResult({
+          index,
+          total,
+          name: call.function.name,
+          isError,
+          durationMs
+        })
       }
     })
     history = result.state.messages
@@ -251,16 +246,25 @@ async function main(): Promise<void> {
       },
       runTurn: async (prompt) => {
         const result = await runTurn(prompt)
-        return { output: sanitizeRenderableText(result.finalText), terminal: result.terminal }
+        return { output: result.finalText, terminal: result.terminal }
       },
-      promptLabel: 'merlion> '
+      promptLabel: ui.promptLabel(),
+      startupMessage: false,
+      onPromptSubmitted: (prompt) => {
+        ui.renderUserPrompt(prompt)
+      },
+      onTurnResult: (result) => {
+        ui.renderAssistantOutput(result.output, result.terminal)
+      }
     })
+    ui.stopSpinner()
     rl.close()
     return
   }
 
+  ui.renderUserPrompt(options.task)
   const result = await runTurn(options.task)
-  process.stdout.write(`${sanitizeRenderableText(result.finalText)}\n`)
+  ui.renderAssistantOutput(result.finalText, result.terminal)
   if (result.terminal !== 'completed') {
     process.stderr.write(`Terminal state: ${result.terminal}\n`)
     process.exitCode = 1
