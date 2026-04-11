@@ -221,6 +221,12 @@ export class CliExperience {
     this.printCard('YOU', prompt, 'info')
   }
 
+  clearTypedInputLine(): void {
+    if (!process.stdout.isTTY) return
+    this.stopSpinner()
+    process.stdout.write('\x1b[1A\r\x1b[2K')
+  }
+
   renderAssistantOutput(output: string, terminal: string): void {
     const tone = terminal === 'completed' ? 'success' : 'warn'
     this.printCard('MERLION', output, tone)

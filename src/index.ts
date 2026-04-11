@@ -251,6 +251,7 @@ async function main(): Promise<void> {
       promptLabel: ui.promptLabel(),
       startupMessage: false,
       onPromptSubmitted: (prompt) => {
+        ui.clearTypedInputLine()
         ui.renderUserPrompt(prompt)
       },
       onTurnResult: (result) => {
