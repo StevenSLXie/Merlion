@@ -11,6 +11,9 @@ function globToRegExp(pattern: string): RegExp {
     .replace(/\*\*/g, '§§DOUBLESTAR§§')
     .replace(/\*/g, '[^/]*')
     .replace(/\?/g, '.')
+    // **/ → optional path prefix (zero or more dir segments)
+    // remaining ** → match any chars including /
+    .replace(/§§DOUBLESTAR§§\//g, '(?:[^/]+/)*')
     .replace(/§§DOUBLESTAR§§/g, '.*')
   return new RegExp(`^${escaped}$`)
 }

@@ -115,9 +115,11 @@ export const grepTool: ToolDefinition = {
     const before = parseOptionalInteger(input['-B'], { min: 0, max: 100 })
     const after = parseOptionalInteger(input['-A'], { min: 0, max: 100 })
     const showLineNumbers = typeof input['-n'] === 'boolean' ? input['-n'] : true
+    // Default: case-sensitive (matching rg behaviour).
+    // Opt-out with case_sensitive=false or -i=true.
     const caseInsensitive = typeof input['-i'] === 'boolean'
       ? input['-i']
-      : input.case_sensitive !== true
+      : input.case_sensitive === false
 
     const rgArgs = ['--no-heading']
     if (caseInsensitive) rgArgs.push('-i')
