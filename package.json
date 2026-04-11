@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "node --experimental-strip-types --test tests/**/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "merlion": "node --experimental-strip-types src/index.ts"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

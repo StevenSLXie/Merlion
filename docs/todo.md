@@ -25,10 +25,10 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 
 ## Milestone 3: Runtime + Session (P0)
 
-- [ ] `M3-01` Provider wrapper with stream handling
+- [x] `M3-01` Provider wrapper with non-stream completion (MVP)
 - [ ] `M3-02` Retry strategy
 - [ ] `M3-03` Tool executor + batching
-- [ ] `M3-04` ReAct loop skeleton
+- [x] `M3-04` ReAct loop skeleton
 - [ ] `M3-05` Transcript persistence (redaction included)
 - [ ] `M3-06` Resume reconstruction
 - [ ] `M3-07` Usage ledger (`.usage.jsonl`)
