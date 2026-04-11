@@ -59,21 +59,24 @@ function buildEditDiffHunk(original: string, oldString: string, newString: strin
 
 export const editFileTool: ToolDefinition = {
   name: 'edit_file',
-  description: 'Edit file by replacing exact text. old_string must match exactly once in the file. new_string is the literal replacement text (plain string, not an object or dict).',
+  description: 'Edit file by replacing exact text. Default mode requires unique match; set replace_all=true to replace every match.',
   parameters: {
     type: 'object',
     properties: {
       path: { type: 'string' },
+      file_path: { type: 'string' },
       old_string: { type: 'string' },
-      new_string: { type: 'string' }
+      new_string: { type: 'string' },
+      replace_all: { type: 'boolean' }
     },
-    required: ['path', 'old_string', 'new_string']
+    required: ['old_string', 'new_string']
   },
   concurrencySafe: false,
   async execute(input, ctx) {
-    const pathInput = input.path
+    const pathInput = typeof input.path === 'string' ? input.path : input.file_path
     const oldString = input.old_string
     const newString = input.new_string
+    const replaceAll = input.replace_all === true
 
     if (typeof pathInput !== 'string' || pathInput.trim() === '') {
       return { content: 'Invalid path: expected non-empty string.', isError: true }
@@ -106,22 +109,22 @@ export const editFileTool: ToolDefinition = {
         isError: true
       }
     }
-    if (occurrences > 1) {
+    if (!replaceAll && occurrences > 1) {
       return {
         content: `Found ${occurrences} occurrences of old_string. Provide a more specific string that uniquely identifies the target section.`,
         isError: true
       }
     }
 
-    const updated = content.replace(oldString, newString)
+    const updated = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString)
     const hunk = buildEditDiffHunk(content, oldString, newString)
-    const removedLines = splitForDiff(oldString).length
-    const addedLines = splitForDiff(newString).length
+    const removedLines = splitForDiff(oldString).length * (replaceAll ? occurrences : 1)
+    const addedLines = splitForDiff(newString).length * (replaceAll ? occurrences : 1)
     await writeFile(resolvedPath, updated, 'utf8')
     return {
-      content: `Edited ${resolvedPath} (+${addedLines} -${removedLines})`,
+      content: `Edited ${resolvedPath} (+${addedLines} -${removedLines})${replaceAll ? ` [replace_all=${occurrences}]` : ''}`,
       isError: false,
-      uiPayload: hunk
+      uiPayload: hunk && occurrences === 1
         ? {
             kind: 'edit_diff',
             path: resolvedPath,

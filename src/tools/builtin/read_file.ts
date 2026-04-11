@@ -20,19 +20,22 @@ function toPositiveInt(value: unknown): number | undefined {
 
 export const readFileTool: ToolDefinition = {
   name: 'read_file',
-  description: 'Read file contents. Supports line ranges via start_line/end_line.',
+  description: 'Read file contents. Supports line ranges via offset/limit or start_line/end_line.',
   parameters: {
     type: 'object',
     properties: {
       path: { type: 'string' },
+      file_path: { type: 'string' },
+      offset: { type: 'integer' },
+      limit: { type: 'integer' },
       start_line: { type: 'integer' },
       end_line: { type: 'integer' }
     },
-    required: ['path']
+    required: []
   },
   concurrencySafe: true,
   async execute(input, ctx) {
-    const rawPath = input.path
+    const rawPath = typeof input.path === 'string' ? input.path : input.file_path
     if (typeof rawPath !== 'string' || rawPath.trim() === '') {
       return { content: 'Invalid path: expected non-empty string.', isError: true }
     }
@@ -64,8 +67,19 @@ export const readFileTool: ToolDefinition = {
       return { content: '(empty file)', isError: false }
     }
 
-    const startLine = toPositiveInt(input.start_line) ?? 1
-    const endLine = toPositiveInt(input.end_line) ?? lines.length
+    const startFromOffset = (() => {
+      if (typeof input.offset !== 'number' || !Number.isFinite(input.offset)) return undefined
+      const normalized = Math.floor(input.offset)
+      if (normalized < 1) return 1
+      return normalized
+    })()
+    const limit = toPositiveInt(input.limit)
+    const startLine = toPositiveInt(input.start_line) ?? startFromOffset ?? 1
+    const endLine = toPositiveInt(input.end_line) ?? (
+      limit !== undefined
+        ? startLine + limit - 1
+        : lines.length
+    )
 
     if (endLine < startLine) {
       return {

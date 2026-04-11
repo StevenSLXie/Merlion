@@ -103,3 +103,32 @@ test('outside-workspace path is rejected', async () => {
   assert.equal(await readFile(outsidePath, 'utf8'), 'const a = 1\n')
   await access(outsidePath, constants.F_OK)
 })
+
+test('supports file_path alias', async () => {
+  const cwd = await makeTempDir()
+  const target = join(cwd, 'sample.ts')
+  await writeFile(target, 'const a = 1\n', 'utf8')
+
+  const result = await editFileTool.execute(
+    { file_path: 'sample.ts', old_string: 'const a = 1', new_string: 'const a = 2' },
+    { cwd, permissions: permission('allow') }
+  )
+
+  assert.equal(result.isError, false)
+  assert.equal(await readFile(target, 'utf8'), 'const a = 2\n')
+})
+
+test('replace_all updates all matches', async () => {
+  const cwd = await makeTempDir()
+  const target = join(cwd, 'sample.ts')
+  await writeFile(target, 'same\nsame\n', 'utf8')
+
+  const result = await editFileTool.execute(
+    { path: 'sample.ts', old_string: 'same', new_string: 'diff', replace_all: true },
+    { cwd, permissions: permission('allow') }
+  )
+
+  assert.equal(result.isError, false)
+  assert.match(result.content, /replace_all=2/)
+  assert.equal(await readFile(target, 'utf8'), 'diff\ndiff\n')
+})

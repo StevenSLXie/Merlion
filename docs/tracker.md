@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-12T08:35:00+08:00
+Last updated: 2026-04-12T09:05:00+08:00
 
 ## Active Sprint
 
@@ -49,6 +49,7 @@ Last updated: 2026-04-12T08:35:00+08:00
 | M10-04 | wave1 productivity tools | done | codex | tool_search/todo_write/config_get/config_set/sleep |
 | M10-06 | wave1 strict parity hardening | done | codex | feature 045; grep/search/glob + tool_search/todo/config/sleep |
 | M10-07 | bundled ripgrep for local/npm | done | codex | feature 045; `@vscode/ripgrep` + unified runner |
+| M10-08 | file tool API compatibility alignment | done | codex | feature 046; read/write/edit aliases + replace_all |
 | M10-05 | wave2 advanced tools | todo | codex | pending research/implementation |
 | M11-01 | npm install color parity | done | codex | `bin/merlion.js` force color bootstrap |
 | M7-01 | usage aggregator module + tests | done | codex | feature 014 |

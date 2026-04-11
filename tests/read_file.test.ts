@@ -35,6 +35,20 @@ test('reads requested line range', async () => {
   assert.equal(result.content, '2\tb\n3\tc')
 })
 
+test('supports file_path + offset/limit aliases', async () => {
+  const cwd = await makeTempDir()
+  const file = join(cwd, 'sample.ts')
+  await writeFile(file, 'a\nb\nc\nd\n', 'utf8')
+
+  const result = await readFileTool.execute(
+    { file_path: 'sample.ts', offset: 3, limit: 2 },
+    { cwd }
+  )
+
+  assert.equal(result.isError, false)
+  assert.equal(result.content, '3\tc\n4\td')
+})
+
 test('returns error for missing file', async () => {
   const cwd = await makeTempDir()
 
@@ -77,4 +91,3 @@ test('returns error for >1 GiB file', async () => {
   assert.equal(result.isError, true)
   assert.match(result.content, /> 1 GiB/i)
 })
-

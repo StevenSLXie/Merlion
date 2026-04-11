@@ -91,6 +91,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M10-04` Wave1 productivity tools (`tool_search/todo_write/config_get/config_set/sleep`)
 - [x] `M10-06` Wave1 strict parity hardening (`grep/search/glob` semantics + `tool_search/todo/config/sleep` alignment)
 - [x] `M10-07` Bundle ripgrep for local + npm install (`@vscode/ripgrep` + unified runner)
+- [x] `M10-08` File tool API compatibility alignment (`read/write/edit` aliases + `replace_all`)
 - [ ] `M10-05` Wave2 advanced tools (web_search, notebook/lsp-like semantic helpers, task orchestration)
 
 ## Milestone 11: Packaging Parity (P1)

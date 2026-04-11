@@ -11,19 +11,21 @@ export const writeFileTool: ToolDefinition = {
     type: 'object',
     properties: {
       path: { type: 'string' },
+      file_path: { type: 'string' },
       content: { type: 'string' }
     },
-    required: ['path', 'content']
+    required: ['content']
   },
   concurrencySafe: false,
   async execute(input, ctx) {
-    const validated = validateAndResolveWorkspacePath(ctx.cwd, input.path)
+    const rawPath = typeof input.path === 'string' ? input.path : input.file_path
+    const validated = validateAndResolveWorkspacePath(ctx.cwd, rawPath)
     if (!validated.ok) return { content: validated.error, isError: true }
     if (typeof input.content !== 'string') {
       return { content: 'Invalid content: expected string.', isError: true }
     }
 
-    const decision = await ctx.permissions?.ask('write_file', `Write: ${input.path}`)
+    const decision = await ctx.permissions?.ask('write_file', `Write: ${String(rawPath)}`)
     if (decision === 'deny' || decision === undefined) {
       return { content: '[Permission denied]', isError: true }
     }

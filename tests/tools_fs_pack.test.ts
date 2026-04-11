@@ -37,6 +37,10 @@ test('write_file + append_file + stat_path basic flow', async () => {
   const statResult = await statPathTool.execute({ path: 'a.txt' }, { cwd })
   assert.equal(statResult.isError, false)
   assert.match(statResult.content, /type: file/)
+
+  const writeAlias = await writeFileTool.execute({ file_path: 'b.txt', content: 'alias' }, { cwd, permissions: p })
+  assert.equal(writeAlias.isError, false)
+  assert.equal(await readFile(join(cwd, 'b.txt'), 'utf8'), 'alias')
 })
 
 test('mkdir + list_dir + glob + grep', async () => {
