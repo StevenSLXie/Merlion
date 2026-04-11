@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-12T05:00:00+08:00
+Last updated: 2026-04-12T06:10:00+08:00
 
 ## Active Sprint
 
@@ -43,6 +43,11 @@ Last updated: 2026-04-12T05:00:00+08:00
 | M6-09 | interactive detail toggle in REPL | done | codex | feature 040; `:detail full|compact` without restart |
 | M6-10 | keyboard-driven detail toggle in TUI | done | codex | feature 041; keys `f/c/?` + Ctrl+C passthrough |
 | M6-11 | structured scrollback panes (assistant/tool split) | todo | codex | pending renderer refactor |
+| M10-01 | free-code tool survey + ranking | done | codex | feature 043 |
+| M10-02 | wave1 core fs/navigation tools | done | codex | list_dir/glob/grep/write/append/delete/move/copy/mkdir/stat_path |
+| M10-03 | wave1 execution/meta tools | done | codex | list_scripts/run_script/git_status/git_diff/git_log |
+| M10-04 | wave1 productivity tools | done | codex | tool_search/todo_write/config_get/config_set/sleep |
+| M10-05 | wave2 advanced tools | todo | codex | pending research/implementation |
 | M7-01 | usage aggregator module + tests | done | codex | feature 014 |
 | M7-02 | CLI real-time token usage line | done | codex | in `src/index.ts` |
 | M7-03 | E2E usage archive output | done | codex | `.merlion/e2e-usage` |

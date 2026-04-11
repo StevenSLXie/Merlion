@@ -37,6 +37,7 @@ export interface ToolContext {
   cwd: string
   sessionId?: string
   permissions?: PermissionStore
+  listTools?: () => Array<{ name: string; description: string }>
 }
 
 export interface ToolDefinition {

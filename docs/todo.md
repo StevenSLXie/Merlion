@@ -82,3 +82,11 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M9-01` Baseline schema + initial fixture values
 - [x] `M9-02` Cost gate checker in test flow
 - [x] `M9-03` Configurable warn/fail modes
+
+## Milestone 10: Builtin Tool Expansion (P1/P2)
+
+- [x] `M10-01` Free-code tool survey + priority ranking (critical subset)
+- [x] `M10-02` Wave1 core file/navigation tools (`list_dir/glob/grep/write/append/delete/move/copy/mkdir/stat_path`)
+- [x] `M10-03` Wave1 execution/meta tools (`list_scripts/run_script/git_status/git_diff/git_log`)
+- [x] `M10-04` Wave1 productivity tools (`tool_search/todo_write/config_get/config_set/sleep`)
+- [ ] `M10-05` Wave2 advanced tools (web_search, notebook/lsp-like semantic helpers, task orchestration)

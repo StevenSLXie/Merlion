@@ -112,6 +112,11 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   const toolContext: ToolContext = {
     cwd: options.cwd,
     permissions: options.permissions ?? defaultPermissions,
+    listTools: () =>
+      options.registry.getAll().map((tool) => ({
+        name: tool.name,
+        description: tool.description
+      })),
   }
 
   if (options.persistInitialMessages !== false) {
