@@ -55,8 +55,8 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 
 - [x] `M6-01` Interactive REPL mode (`--repl`) with `:help` and `:q`
 - [x] `M6-03` Structured `edit_file` diff payload + red/green CLI rendering
-- [ ] `M6-04` Markdown-aware assistant renderer (headings/lists/code/table + fallback)
-- [ ] `M6-05` CLI message architecture unification (content type pipeline + layout cleanup)
+- [x] `M6-04` Markdown-aware assistant renderer (headings/lists/code/table + fallback)
+- [x] `M6-05` CLI message architecture unification (content type pipeline + layout cleanup)
 
 ## Milestone 7: Token/Cost Observability (P0)
 

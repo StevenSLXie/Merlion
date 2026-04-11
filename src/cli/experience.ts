@@ -1,6 +1,7 @@
 import { sanitizeRenderableText } from './sanitize.ts'
 import type { UsageSnapshot } from '../runtime/usage.ts'
 import { renderEditDiffLines } from './diff.ts'
+import { buildAssistantRenderPlan, type MessageTone } from './message_content.ts'
 import type { ToolUiPayload } from '../tools/types.ts'
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -124,6 +125,13 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return value > 0 ? value : fallback
 }
 
+function clipText(text: string, maxChars: number): string {
+  if (maxChars < 1) return ''
+  if (text.length <= maxChars) return text
+  if (maxChars === 1) return '…'
+  return `${text.slice(0, maxChars - 1)}…`
+}
+
 export class CliExperience {
   private readonly useColor: boolean
   private readonly colors: ColorSet
@@ -133,6 +141,7 @@ export class CliExperience {
   private spinnerText = ''
   private spinnerWidth = 0
   private readonly maxDiffLines: number
+  private readonly markdownEnabled: boolean
 
   constructor(options: CliExperienceOptions) {
     this.options = options
@@ -142,6 +151,7 @@ export class CliExperience {
       process.env.TERM !== 'dumb'
     this.colors = createColors(this.useColor)
     this.maxDiffLines = parsePositiveInt(process.env.MERLION_CLI_DIFF_MAX_LINES, 120)
+    this.markdownEnabled = process.env.MERLION_CLI_MARKDOWN !== '0'
   }
 
   private c(code: keyof ColorSet, text: string): string {
@@ -183,6 +193,49 @@ export class CliExperience {
     this.printRawLine(this.c('bold', top))
     for (const line of lines) {
       this.printRawLine(`${prefix}${line}`)
+    }
+    this.printRawLine(this.c('dim', '└─'))
+  }
+
+  private colorForMessageTone(tone: MessageTone): keyof ColorSet | null {
+    if (tone === 'heading') return 'cyan'
+    if (tone === 'list') return 'yellow'
+    if (tone === 'quote') return 'dim'
+    if (tone === 'code') return 'cyan'
+    if (tone === 'rule') return 'dim'
+    if (tone === 'table') return 'magenta'
+    return null
+  }
+
+  private printAssistantCard(title: string, output: string, tone: 'info' | 'success' | 'warn' | 'error'): void {
+    const width = this.getWidth()
+    const innerWidth = Math.max(20, width - 8)
+    const prefix = tone === 'success'
+      ? this.c('green', '│ ')
+      : tone === 'warn'
+        ? this.c('yellow', '│ ')
+        : tone === 'error'
+          ? this.c('red', '│ ')
+          : this.c('blue', '│ ')
+    const plan = buildAssistantRenderPlan(output, { markdownEnabled: this.markdownEnabled })
+    this.printRawLine(this.c('bold', `┌─ ${title}`))
+    for (const line of plan.lines) {
+      const clipped = clipText(line.text, innerWidth)
+      if (clipped === '') {
+        this.printRawLine(prefix)
+        continue
+      }
+      const colorCode = this.colorForMessageTone(line.tone)
+      if (line.tone === 'heading') {
+        const text = colorCode ? this.c(colorCode, clipped) : clipped
+        this.printRawLine(`${prefix}${this.c('bold', text)}`)
+        continue
+      }
+      if (!colorCode) {
+        this.printRawLine(`${prefix}${clipped}`)
+        continue
+      }
+      this.printRawLine(`${prefix}${this.c(colorCode, clipped)}`)
     }
     this.printRawLine(this.c('dim', '└─'))
   }
@@ -236,12 +289,12 @@ export class CliExperience {
   clearTypedInputLine(): void {
     if (!process.stdout.isTTY) return
     this.stopSpinner()
-    process.stdout.write('\x1b[1A\r\x1b[2K')
+    process.stdout.write('\r\x1b[2K\x1b[1A\r\x1b[2K')
   }
 
   renderAssistantOutput(output: string, terminal: string): void {
     const tone = terminal === 'completed' ? 'success' : 'warn'
-    this.printCard('MERLION', output, tone)
+    this.printAssistantCard('MERLION', output, tone)
     if (terminal !== 'completed') {
       this.printRawLine(this.c('yellow', `terminal state: ${terminal}`))
     }

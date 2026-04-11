@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-12T01:40:00+08:00
+Last updated: 2026-04-12T02:40:00+08:00
 
 ## Active Sprint
 
@@ -35,8 +35,8 @@ Last updated: 2026-04-12T01:40:00+08:00
 | M3-02 | retry strategy | done | codex | transient errors retried |
 | M6-01 | interactive REPL mode | done | codex | `--repl`, `:help`, `:q` |
 | M6-03 | edit diff payload + colored CLI diff | done | codex | feature 034; model sees summary only |
-| M6-04 | markdown-aware assistant renderer | in_progress | codex | next |
-| M6-05 | CLI render pipeline unification | todo | codex | after markdown baseline |
+| M6-04 | markdown-aware assistant renderer | done | codex | feature 035; fallback to plain card |
+| M6-05 | CLI render pipeline unification | done | codex | feature 036; unified assistant content pipeline |
 | M7-01 | usage aggregator module + tests | done | codex | feature 014 |
 | M7-02 | CLI real-time token usage line | done | codex | in `src/index.ts` |
 | M7-03 | E2E usage archive output | done | codex | `.merlion/e2e-usage` |
