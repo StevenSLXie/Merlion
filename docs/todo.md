@@ -30,7 +30,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [ ] `M3-03` Tool executor + batching
 - [x] `M3-04` ReAct loop skeleton
 - [x] `M3-05` Transcript persistence (redaction included)
-- [ ] `M3-06` Resume reconstruction
+- [x] `M3-06` Resume reconstruction
 - [x] `M3-07` Usage ledger (`.usage.jsonl`)
 
 ## Milestone 4: Context + Artifacts (P0/P1)

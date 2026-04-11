@@ -131,3 +131,33 @@ test('loop returns terminal assistant text', async () => {
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'all good')
 })
+
+test('loop accepts initial messages', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: 'continued',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const result = await runLoop({
+    provider,
+    registry: new ToolRegistry(),
+    systemPrompt: 'ignored because initial messages provided',
+    userPrompt: '',
+    cwd: process.cwd(),
+    maxTurns: 5,
+    initialMessages: [
+      { role: 'system', content: 's' },
+      { role: 'user', content: 'u' },
+      { role: 'assistant', content: 'a' }
+    ],
+    persistInitialMessages: false
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'continued')
+  assert.equal(result.state.messages.length >= 4, true)
+})

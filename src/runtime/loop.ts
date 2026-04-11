@@ -10,6 +10,8 @@ export interface RunLoopOptions {
   cwd: string
   permissions?: PermissionStore
   maxTurns?: number
+  initialMessages?: ChatMessage[]
+  persistInitialMessages?: boolean
   onMessageAppended?: (message: ChatMessage) => Promise<void> | void
   onUsage?: (usage: { prompt_tokens: number; completion_tokens: number }) => Promise<void> | void
 }
@@ -20,12 +22,20 @@ export interface RunLoopResult {
   state: LoopState
 }
 
-function createState(systemPrompt: string, userPrompt: string): LoopState {
+function createState(systemPrompt: string, userPrompt: string, initialMessages?: ChatMessage[]): LoopState {
+  const messages: ChatMessage[] = initialMessages
+    ? [...initialMessages]
+    : [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]
+
+  if (initialMessages && userPrompt.trim() !== '') {
+    messages.push({ role: 'user', content: userPrompt })
+  }
+
   return {
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ],
+    messages,
     turnCount: 0,
     maxOutputTokensRecoveryCount: 0
   }
@@ -40,7 +50,7 @@ function parseToolArgs(raw: string): Record<string, unknown> {
 }
 
 export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
-  const state = createState(options.systemPrompt, options.userPrompt)
+  const state = createState(options.systemPrompt, options.userPrompt, options.initialMessages)
   const maxTurns = options.maxTurns ?? 100
   let finalText = ''
 
@@ -50,8 +60,10 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     permissions: options.permissions ?? defaultPermissions
   }
 
-  for (const initialMessage of state.messages) {
-    await options.onMessageAppended?.(initialMessage)
+  if (options.persistInitialMessages !== false) {
+    for (const initialMessage of state.messages) {
+      await options.onMessageAppended?.(initialMessage)
+    }
   }
 
   for (;;) {

@@ -8,6 +8,8 @@ import {
   appendTranscriptMessage,
   appendUsage,
   createSessionFiles,
+  getSessionFilesForResume,
+  loadSessionMessages,
   redactSecrets
 } from '../src/runtime/session.ts'
 
@@ -66,3 +68,27 @@ test('appends usage lines', async () => {
   assert.match(text, /"completion_tokens":40/)
 })
 
+test('loads messages from existing transcript', async () => {
+  const cwd = await makeTempDir()
+  process.env.MERLION_DATA_DIR = cwd
+  const session = await createSessionFiles('/project/c')
+
+  await appendTranscriptMessage(session.transcriptPath, { role: 'system', content: 's' })
+  await appendTranscriptMessage(session.transcriptPath, { role: 'user', content: 'u' })
+  await appendTranscriptMessage(session.transcriptPath, { role: 'assistant', content: 'a' })
+
+  const loaded = await loadSessionMessages(session.transcriptPath)
+  assert.equal(loaded.length, 3)
+  assert.equal(loaded[0]?.role, 'system')
+  assert.equal(loaded[2]?.content, 'a')
+})
+
+test('throws when session transcript not found', async () => {
+  const cwd = await makeTempDir()
+  process.env.MERLION_DATA_DIR = cwd
+
+  await assert.rejects(
+    () => getSessionFilesForResume('/project/missing', 'nope'),
+    /not found/i
+  )
+})

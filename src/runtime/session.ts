@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, stat } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -68,6 +68,22 @@ export async function createSessionFiles(cwd: string): Promise<SessionFiles> {
   }
 }
 
+export async function getSessionFilesForResume(cwd: string, sessionId: string): Promise<SessionFiles> {
+  const dataDir = process.env.MERLION_DATA_DIR ?? join(homedir(), '.merlion')
+  const projectHash = createHash('sha256').update(cwd).digest('hex').slice(0, 16)
+  const projectDir = join(dataDir, 'projects', projectHash)
+  const transcriptPath = join(projectDir, `${sessionId}.jsonl`)
+  const usagePath = join(projectDir, `${sessionId}.usage.jsonl`)
+
+  try {
+    await stat(transcriptPath)
+  } catch {
+    throw new Error(`Session transcript not found: ${sessionId}`)
+  }
+
+  return { sessionId, projectHash, projectDir, transcriptPath, usagePath }
+}
+
 export async function appendSessionMeta(
   transcriptPath: string,
   sessionId: string,
@@ -94,3 +110,29 @@ export async function appendUsage(usagePath: string, entry: UsageEntry): Promise
   await appendFile(usagePath, `${JSON.stringify(entry)}\n`, 'utf8')
 }
 
+export async function loadSessionMessages(transcriptPath: string): Promise<ChatMessage[]> {
+  const text = await readFile(transcriptPath, 'utf8')
+  const lines = text.split('\n').filter((line) => line.trim() !== '')
+  const messages: ChatMessage[] = []
+
+  for (const line of lines) {
+    let parsed: any
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (parsed.type !== 'message') continue
+
+    const message: ChatMessage = {
+      role: parsed.role,
+      content: parsed.content ?? null,
+      tool_calls: parsed.tool_calls,
+      tool_call_id: parsed.tool_call_id,
+      name: parsed.name,
+    }
+    messages.push(message)
+  }
+
+  return messages
+}

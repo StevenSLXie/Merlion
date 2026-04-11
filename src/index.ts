@@ -7,7 +7,9 @@ import {
   appendSessionMeta,
   appendTranscriptMessage,
   appendUsage,
-  createSessionFiles
+  createSessionFiles,
+  getSessionFilesForResume,
+  loadSessionMessages
 } from './runtime/session.ts'
 import { buildDefaultRegistry } from './tools/builtin/index.ts'
 
@@ -17,6 +19,7 @@ interface CliOptions {
   baseURL: string
   cwd: string
   permissionMode: 'interactive' | 'auto_allow' | 'auto_deny'
+  resumeSessionId?: string
 }
 
 function parseArgs(argv: string[]): CliOptions | null | 'help' {
@@ -25,6 +28,7 @@ function parseArgs(argv: string[]): CliOptions | null | 'help' {
   let baseURL = process.env.MERLION_BASE_URL ?? 'https://openrouter.ai/api/v1'
   let cwd = currentCwd()
   let permissionMode: CliOptions['permissionMode'] = 'interactive'
+  let resumeSessionId: string | undefined
   const taskParts: string[] = []
 
   while (args.length > 0) {
@@ -49,6 +53,10 @@ function parseArgs(argv: string[]): CliOptions | null | 'help' {
       permissionMode = 'auto_deny'
       continue
     }
+    if (arg === '--resume') {
+      resumeSessionId = args.shift()
+      continue
+    }
     if (arg === '--help' || arg === '-h') {
       return 'help'
     }
@@ -56,8 +64,15 @@ function parseArgs(argv: string[]): CliOptions | null | 'help' {
   }
 
   const task = taskParts.join(' ').trim()
-  if (task.length === 0) return null
-  return { task, model, baseURL, cwd, permissionMode }
+  if (task.length === 0 && !resumeSessionId) return null
+  return {
+    task: task.length === 0 ? 'Continue from the existing session state.' : task,
+    model,
+    baseURL,
+    cwd,
+    permissionMode,
+    resumeSessionId
+  }
 }
 
 function printUsage(): void {
@@ -101,9 +116,16 @@ async function main(): Promise<void> {
   })
   const registry = buildDefaultRegistry()
   const permissions = createPermissionStore(options.permissionMode)
-  const session = await createSessionFiles(options.cwd)
-  await appendSessionMeta(session.transcriptPath, session.sessionId, options.model, options.cwd)
+  const session = options.resumeSessionId
+    ? await getSessionFilesForResume(options.cwd, options.resumeSessionId)
+    : await createSessionFiles(options.cwd)
+  if (!options.resumeSessionId) {
+    await appendSessionMeta(session.transcriptPath, session.sessionId, options.model, options.cwd)
+  }
   const toolSchemaTokensEstimate = estimateToolSchemaTokens(registry)
+  const initialMessages = options.resumeSessionId
+    ? await loadSessionMessages(session.transcriptPath)
+    : undefined
 
   const result = await runLoop({
     provider,
@@ -113,6 +135,8 @@ async function main(): Promise<void> {
     cwd: options.cwd,
     maxTurns: 100,
     permissions,
+    initialMessages,
+    persistInitialMessages: !options.resumeSessionId,
     onMessageAppended: async (message) => {
       await appendTranscriptMessage(session.transcriptPath, message)
     },
