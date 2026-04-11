@@ -6,6 +6,8 @@ import { CliExperience } from './cli/experience.ts'
 import { runReplSession } from './cli/repl.ts'
 import { createPermissionStore } from './permissions/store.ts'
 import { OpenAICompatProvider } from './providers/openai.ts'
+import { ensureCodebaseIndex, updateCodebaseIndexWithChangedFiles } from './artifacts/codebase_index.ts'
+import { buildOrientationContext } from './context/orientation.ts'
 import { runLoop } from './runtime/loop.ts'
 import {
   appendSessionMeta,
@@ -122,6 +124,34 @@ function loadUsageRatesFromEnv(): UsageRates | undefined {
   }
 }
 
+function loadOrientationBudgetsFromEnv(): Partial<{
+  totalTokens: number
+  agentsTokens: number
+  progressTokens: number
+  indexTokens: number
+}> {
+  const totalTokens = parseEnvNumber('MERLION_ORIENTATION_TOTAL_TOKENS')
+  const agentsTokens = parseEnvNumber('MERLION_ORIENTATION_AGENTS_TOKENS')
+  const progressTokens = parseEnvNumber('MERLION_ORIENTATION_PROGRESS_TOKENS')
+  const indexTokens = parseEnvNumber('MERLION_ORIENTATION_INDEX_TOKENS')
+  return {
+    totalTokens,
+    agentsTokens,
+    progressTokens,
+    indexTokens
+  }
+}
+
+function extractPathArg(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const value = parsed.path
+    return typeof value === 'string' && value.trim() !== '' ? value : null
+  } catch {
+    return null
+  }
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2))
   if (options === 'help') {
@@ -158,9 +188,27 @@ async function main(): Promise<void> {
   const initialMessagesFromResume = options.resumeSessionId
     ? await loadSessionMessages(session.transcriptPath)
     : undefined
-  const initialMessages = initialMessagesFromResume ?? [{ role: 'system' as const, content: 'You are Merlion, a coding agent. Use tools to complete the task.' }]
-  if (!options.resumeSessionId) {
+  const initialMessages = initialMessagesFromResume ?? [
+    { role: 'system' as const, content: 'You are Merlion, a coding agent. Use tools to complete the task.' }
+  ]
+  if (!options.resumeSessionId && initialMessages.length > 0) {
     await appendTranscriptMessage(session.transcriptPath, initialMessages[0]!)
+    try {
+      await ensureCodebaseIndex(options.cwd)
+      const orientation = await buildOrientationContext(options.cwd, loadOrientationBudgetsFromEnv())
+      if (orientation.text.trim() !== '') {
+        const orientationMessage = {
+          role: 'system' as const,
+          content:
+            'Project orientation context. Use this as a starting map, then verify with tools before edits.\n\n' +
+            orientation.text
+        }
+        initialMessages.push(orientationMessage)
+        await appendTranscriptMessage(session.transcriptPath, orientationMessage)
+      }
+    } catch (error) {
+      process.stderr.write(`Orientation build warning: ${String(error)}\n`)
+    }
   }
 
   const systemPrompt = 'You are Merlion, a coding agent. Use tools to complete the task.'
@@ -176,6 +224,7 @@ async function main(): Promise<void> {
   ui.renderBanner()
 
   const runTurn = async (prompt: string) => {
+    const changedFiles = new Set<string>()
     const result = await runLoop({
       provider,
       registry,
@@ -225,8 +274,19 @@ async function main(): Promise<void> {
           isError,
           durationMs
         })
+        if (!isError && (call.function.name === 'create_file' || call.function.name === 'edit_file')) {
+          const path = extractPathArg(call.function.arguments)
+          if (path) changedFiles.add(path)
+        }
       }
     })
+    if (changedFiles.size > 0) {
+      try {
+        await updateCodebaseIndexWithChangedFiles(options.cwd, [...changedFiles])
+      } catch (error) {
+        process.stderr.write(`Codebase index update warning: ${String(error)}\n`)
+      }
+    }
     history = result.state.messages
     return result
   }
