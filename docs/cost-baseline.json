@@ -15,6 +15,7 @@
     "e2e-session-resume":      { "total_tokens": 10000 },
     "e2e-budget-truncation":   { "total_tokens":  4000 },
     "e2e-compact":             { "total_tokens":  4000 },
-    "e2e-orientation-inject":  { "total_tokens":  4000 }
+    "e2e-orientation-inject":  { "total_tokens":  4000 },
+    "e2e-verify-fix-round":    { "total_tokens":  8000 }
   }
 }

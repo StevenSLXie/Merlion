@@ -1,7 +1,13 @@
 import type { ChatMessage, ToolCall } from '../types.js'
-import type { ToolContext } from '../tools/types.js'
+import type { ToolContext, ToolUiPayload } from '../tools/types.js'
 import { ToolRegistry } from '../tools/registry.ts'
 import { applyToolResultBudget, resolveToolResultBudgetFromEnv } from './budget.ts'
+
+interface ToolExecutionResult {
+  message: ChatMessage
+  isError: boolean
+  uiPayload?: ToolUiPayload
+}
 
 function parseToolArgs(raw: string): Record<string, unknown> {
   try {
@@ -43,7 +49,7 @@ async function runToolCall(
   call: ToolCall,
   registry: ToolRegistry,
   toolContext: ToolContext,
-): Promise<{ message: ChatMessage; isError: boolean }> {
+): Promise<ToolExecutionResult> {
   const tool = registry.get(call.function.name)
   if (!tool) {
     return {
@@ -69,7 +75,8 @@ async function runToolCall(
       tool_call_id: call.id,
       content: content && content.trim() !== '' ? content : '(no output)'
     },
-    isError: result.isError
+    isError: result.isError,
+    uiPayload: result.uiPayload
   }
 }
 
@@ -83,6 +90,7 @@ export interface ToolCallResultEvent extends ToolCallStartEvent {
   message: ChatMessage
   isError: boolean
   durationMs: number
+  uiPayload?: ToolUiPayload
 }
 
 async function executeSafeBatch(
@@ -94,8 +102,8 @@ async function executeSafeBatch(
   total: number,
   onToolCallStart?: (event: ToolCallStartEvent) => Promise<void> | void,
   onToolCallResult?: (event: ToolCallResultEvent) => Promise<void> | void,
-): Promise<Array<{ message: ChatMessage; isError: boolean }>> {
-  const results: Array<{ message: ChatMessage; isError: boolean }> = new Array(batch.length)
+): Promise<ToolExecutionResult[]> {
+  const results: ToolExecutionResult[] = new Array(batch.length)
   let cursor = 0
 
   async function worker(): Promise<void> {
@@ -116,7 +124,8 @@ async function executeSafeBatch(
         total,
         message: outcome.message,
         isError: outcome.isError,
-        durationMs
+        durationMs,
+        uiPayload: outcome.uiPayload
       })
     }
   }
@@ -146,7 +155,7 @@ export async function executeToolCalls(options: ExecuteToolCallsOptions): Promis
   for (const batch of batches) {
     if (batch.length === 0) continue
     const safe = batch.every((call) => isConcurrencySafe(call, registry))
-    const batchResults: Array<{ message: ChatMessage; isError: boolean }> = safe
+    const batchResults: ToolExecutionResult[] = safe
       ? await executeSafeBatch(
           batch,
           registry,
@@ -170,7 +179,8 @@ export async function executeToolCalls(options: ExecuteToolCallsOptions): Promis
             total,
             message: outcome.message,
             isError: outcome.isError,
-            durationMs
+            durationMs,
+            uiPayload: outcome.uiPayload
           })
           return [outcome]
         })()

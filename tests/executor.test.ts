@@ -133,3 +133,50 @@ test('execute applies tool result budget truncation', async () => {
   assert.equal(result.length, 1)
   assert.match(result[0]?.content ?? '', /tool result truncated by budget/)
 })
+
+test('execute forwards tool ui payload to result hook', async () => {
+  const registry = new ToolRegistry()
+  registry.register({
+    name: 'edit_file',
+    description: 'edit',
+    parameters: { type: 'object', properties: {} },
+    concurrencySafe: false,
+    async execute() {
+      return {
+        content: 'Edited /tmp/a.ts (+1 -1)',
+        isError: false,
+        uiPayload: {
+          kind: 'edit_diff' as const,
+          path: '/tmp/a.ts',
+          addedLines: 1,
+          removedLines: 1,
+          hunks: [
+            {
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: [
+                { type: 'remove' as const, text: 'old' },
+                { type: 'add' as const, text: 'new' },
+              ]
+            }
+          ]
+        }
+      }
+    }
+  })
+
+  let seenPayloadKind: string | undefined
+  await executeToolCalls({
+    toolCalls: [call('edit-1', 'edit_file')],
+    registry,
+    toolContext: { cwd: process.cwd() },
+    maxConcurrency: 1,
+    onToolCallResult: ({ uiPayload }) => {
+      seenPayloadKind = uiPayload?.kind
+    }
+  })
+
+  assert.equal(seenPayloadKind, 'edit_diff')
+})

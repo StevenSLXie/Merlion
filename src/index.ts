@@ -280,13 +280,14 @@ async function main(): Promise<void> {
           summary: call.function.arguments
         })
       },
-      onToolCallResult: ({ call, index, total, durationMs, isError }) => {
+      onToolCallResult: ({ call, index, total, durationMs, isError, uiPayload }) => {
         ui.onToolResult({
           index,
           total,
           name: call.function.name,
           isError,
-          durationMs
+          durationMs,
+          uiPayload
         })
         if (!isError && (call.function.name === 'create_file' || call.function.name === 'edit_file')) {
           const path = extractPathArg(call.function.arguments)

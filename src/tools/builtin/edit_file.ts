@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
 
-import type { ToolDefinition } from '../types.js'
+import type { EditDiffHunk, ToolDefinition } from '../types.js'
 
 function isWithinWorkspace(workspaceRoot: string, candidatePath: string): boolean {
   const root = resolve(workspaceRoot)
@@ -19,6 +19,41 @@ function countOccurrences(text: string, needle: string): number {
     if (found === -1) return count
     count += 1
     index = found + needle.length
+  }
+}
+
+function lineNumberAtOffset(text: string, offset: number): number {
+  let line = 1
+  for (let i = 0; i < offset; i += 1) {
+    if (text[i] === '\n') line += 1
+  }
+  return line
+}
+
+function splitForDiff(text: string): string[] {
+  if (text === '') return []
+  const lines = text.split('\n')
+  if (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop()
+  }
+  return lines
+}
+
+function buildEditDiffHunk(original: string, oldString: string, newString: string): EditDiffHunk | null {
+  const startOffset = original.indexOf(oldString)
+  if (startOffset === -1) return null
+  const oldLines = splitForDiff(oldString)
+  const newLines = splitForDiff(newString)
+  const startLine = lineNumberAtOffset(original, startOffset)
+  return {
+    oldStart: startLine,
+    oldLines: oldLines.length,
+    newStart: startLine,
+    newLines: newLines.length,
+    lines: [
+      ...oldLines.map((line) => ({ type: 'remove' as const, text: line })),
+      ...newLines.map((line) => ({ type: 'add' as const, text: line })),
+    ]
   }
 }
 
@@ -79,8 +114,22 @@ export const editFileTool: ToolDefinition = {
     }
 
     const updated = content.replace(oldString, newString)
+    const hunk = buildEditDiffHunk(content, oldString, newString)
+    const removedLines = splitForDiff(oldString).length
+    const addedLines = splitForDiff(newString).length
     await writeFile(resolvedPath, updated, 'utf8')
-    return { content: `Edited ${resolvedPath}`, isError: false }
+    return {
+      content: `Edited ${resolvedPath} (+${addedLines} -${removedLines})`,
+      isError: false,
+      uiPayload: hunk
+        ? {
+            kind: 'edit_diff',
+            path: resolvedPath,
+            addedLines,
+            removedLines,
+            hunks: [hunk]
+          }
+        : undefined
+    }
   }
 }
-

@@ -1,5 +1,7 @@
 import { sanitizeRenderableText } from './sanitize.ts'
 import type { UsageSnapshot } from '../runtime/usage.ts'
+import { renderEditDiffLines } from './diff.ts'
+import type { ToolUiPayload } from '../tools/types.ts'
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
@@ -114,6 +116,14 @@ function wrapText(text: string, width: number): string[] {
   return lines.length > 0 ? lines : ['']
 }
 
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  if (!raw || raw.trim() === '') return fallback
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed)) return fallback
+  const value = Math.floor(parsed)
+  return value > 0 ? value : fallback
+}
+
 export class CliExperience {
   private readonly useColor: boolean
   private readonly colors: ColorSet
@@ -122,6 +132,7 @@ export class CliExperience {
   private spinnerFrame = 0
   private spinnerText = ''
   private spinnerWidth = 0
+  private readonly maxDiffLines: number
 
   constructor(options: CliExperienceOptions) {
     this.options = options
@@ -130,6 +141,7 @@ export class CliExperience {
       process.env.NO_COLOR !== '1' &&
       process.env.TERM !== 'dumb'
     this.colors = createColors(this.useColor)
+    this.maxDiffLines = parsePositiveInt(process.env.MERLION_CLI_DIFF_MAX_LINES, 120)
   }
 
   private c(code: keyof ColorSet, text: string): string {
@@ -288,12 +300,37 @@ export class CliExperience {
     )
   }
 
-  onToolResult(event: { index: number; total: number; name: string; durationMs: number; isError: boolean }): void {
+  onToolResult(event: { index: number; total: number; name: string; durationMs: number; isError: boolean; uiPayload?: ToolUiPayload }): void {
     const icon = event.isError ? this.c('red', '✖') : this.c('green', '✔')
     const status = event.isError ? this.c('red', 'error') : this.c('green', 'ok')
     this.printRawLine(
       `${icon} ${this.c('bold', `[tool ${event.index}/${event.total}]`)} ${event.name} ${status} ${this.c('dim', `${event.durationMs}ms`)}`
     )
+    this.renderToolUiPayload(event.uiPayload)
+  }
+
+  private renderToolUiPayload(payload: ToolUiPayload | undefined): void {
+    if (!payload) return
+    if (payload.kind === 'edit_diff') {
+      const width = this.getWidth()
+      const innerWidth = Math.max(20, width - 8)
+      const lines = renderEditDiffLines(payload, {
+        maxLines: this.maxDiffLines,
+        maxCharsPerLine: innerWidth
+      })
+      this.printRawLine(this.c('bold', '┌─ EDIT DIFF'))
+      for (const line of lines) {
+        const tone = line.tone === 'add'
+          ? 'green'
+          : line.tone === 'remove'
+            ? 'red'
+            : line.tone === 'meta'
+              ? 'yellow'
+              : 'dim'
+        this.printRawLine(`${this.c('blue', '│ ')}${this.c(tone, line.text)}`)
+      }
+      this.printRawLine(this.c('dim', '└─'))
+    }
   }
 
   onUsage(snapshot: UsageSnapshot, estimatedCost?: number): void {

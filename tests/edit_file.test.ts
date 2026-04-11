@@ -32,6 +32,13 @@ test('replaces exact unique match', async () => {
 
   assert.equal(result.isError, false)
   assert.match(result.content, /Edited/)
+  assert.equal(result.uiPayload?.kind, 'edit_diff')
+  assert.equal(result.uiPayload?.addedLines, 1)
+  assert.equal(result.uiPayload?.removedLines, 1)
+  assert.deepEqual(result.uiPayload?.hunks[0]?.lines, [
+    { type: 'remove', text: 'const b = 2' },
+    { type: 'add', text: 'const b = 3' },
+  ])
   assert.equal(await readFile(target, 'utf8'), 'const a = 1\nconst b = 3\n')
 })
 
@@ -96,4 +103,3 @@ test('outside-workspace path is rejected', async () => {
   assert.equal(await readFile(outsidePath, 'utf8'), 'const a = 1\n')
   await access(outsidePath, constants.F_OK)
 })
-
