@@ -1,5 +1,8 @@
 import { cwd as currentCwd } from 'node:process'
+import { createInterface } from 'node:readline/promises'
+import { stdin as input, stdout as output } from 'node:process'
 
+import { runReplSession } from './cli/repl.ts'
 import { createPermissionStore } from './permissions/store.ts'
 import { OpenAICompatProvider } from './providers/openai.ts'
 import { runLoop } from './runtime/loop.ts'
@@ -20,6 +23,7 @@ interface CliOptions {
   cwd: string
   permissionMode: 'interactive' | 'auto_allow' | 'auto_deny'
   resumeSessionId?: string
+  repl: boolean
 }
 
 function parseArgs(argv: string[]): CliOptions | null | 'help' {
@@ -29,6 +33,7 @@ function parseArgs(argv: string[]): CliOptions | null | 'help' {
   let cwd = currentCwd()
   let permissionMode: CliOptions['permissionMode'] = 'interactive'
   let resumeSessionId: string | undefined
+  let repl = false
   const taskParts: string[] = []
 
   while (args.length > 0) {
@@ -57,6 +62,10 @@ function parseArgs(argv: string[]): CliOptions | null | 'help' {
       resumeSessionId = args.shift()
       continue
     }
+    if (arg === '--repl') {
+      repl = true
+      continue
+    }
     if (arg === '--help' || arg === '-h') {
       return 'help'
     }
@@ -64,20 +73,21 @@ function parseArgs(argv: string[]): CliOptions | null | 'help' {
   }
 
   const task = taskParts.join(' ').trim()
-  if (task.length === 0 && !resumeSessionId) return null
+  if (task.length === 0 && !resumeSessionId && !repl) return null
   return {
     task: task.length === 0 ? 'Continue from the existing session state.' : task,
     model,
     baseURL,
     cwd,
     permissionMode,
-    resumeSessionId
+    resumeSessionId,
+    repl
   }
 }
 
 function printUsage(): void {
   process.stdout.write(
-    'Usage: merlion [--model <id>] [--base-url <url>] [--cwd <path>] [--auto-allow|--auto-deny] "<task>"\n'
+    'Usage: merlion [--model <id>] [--base-url <url>] [--cwd <path>] [--auto-allow|--auto-deny] [--resume <id>] [--repl] "<task>"\n'
   )
 }
 
@@ -123,36 +133,71 @@ async function main(): Promise<void> {
     await appendSessionMeta(session.transcriptPath, session.sessionId, options.model, options.cwd)
   }
   const toolSchemaTokensEstimate = estimateToolSchemaTokens(registry)
-  const initialMessages = options.resumeSessionId
+  const initialMessagesFromResume = options.resumeSessionId
     ? await loadSessionMessages(session.transcriptPath)
     : undefined
+  const initialMessages = initialMessagesFromResume ?? [{ role: 'system' as const, content: 'You are Merlion, a coding agent. Use tools to complete the task.' }]
+  if (!options.resumeSessionId) {
+    await appendTranscriptMessage(session.transcriptPath, initialMessages[0]!)
+  }
 
-  const result = await runLoop({
-    provider,
-    registry,
-    systemPrompt: 'You are Merlion, a coding agent. Use tools to complete the task.',
-    userPrompt: options.task,
-    cwd: options.cwd,
-    maxTurns: 100,
-    permissions,
-    initialMessages,
-    persistInitialMessages: !options.resumeSessionId,
-    onMessageAppended: async (message) => {
-      await appendTranscriptMessage(session.transcriptPath, message)
-    },
-    onUsage: async (usage) => {
-      await appendUsage(session.usagePath, {
-        timestamp: new Date().toISOString(),
-        session_id: session.sessionId,
-        model: options.model,
-        prompt_tokens: usage.prompt_tokens,
-        completion_tokens: usage.completion_tokens,
-        cached_tokens: null,
-        tool_schema_tokens_estimate: toolSchemaTokensEstimate
-      })
-    }
-  })
+  const systemPrompt = 'You are Merlion, a coding agent. Use tools to complete the task.'
+  let history = initialMessages
 
+  const runTurn = async (prompt: string) => {
+    const result = await runLoop({
+      provider,
+      registry,
+      systemPrompt,
+      userPrompt: prompt,
+      cwd: options.cwd,
+      maxTurns: 100,
+      permissions,
+      initialMessages: history,
+      persistInitialMessages: false,
+      onMessageAppended: async (message) => {
+        await appendTranscriptMessage(session.transcriptPath, message)
+      },
+      onUsage: async (usage) => {
+        await appendUsage(session.usagePath, {
+          timestamp: new Date().toISOString(),
+          session_id: session.sessionId,
+          model: options.model,
+          prompt_tokens: usage.prompt_tokens,
+          completion_tokens: usage.completion_tokens,
+          cached_tokens: null,
+          tool_schema_tokens_estimate: toolSchemaTokensEstimate
+        })
+      }
+    })
+    history = result.state.messages
+    return result
+  }
+
+  if (options.repl) {
+    const rl = createInterface({ input, output })
+    await runReplSession({
+      readLine: async () => {
+        try {
+          return await rl.question('')
+        } catch {
+          return null
+        }
+      },
+      write: (text) => {
+        process.stdout.write(text)
+      },
+      runTurn: async (prompt) => {
+        const result = await runTurn(prompt)
+        return { output: result.finalText, terminal: result.terminal }
+      },
+      promptLabel: 'merlion> '
+    })
+    rl.close()
+    return
+  }
+
+  const result = await runTurn(options.task)
   process.stdout.write(`${result.finalText}\n`)
   if (result.terminal !== 'completed') {
     process.stderr.write(`Terminal state: ${result.terminal}\n`)
