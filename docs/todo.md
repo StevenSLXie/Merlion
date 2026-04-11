@@ -38,7 +38,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [ ] `M4-01` Tool-result budget truncation
 - [ ] `M4-02` Compact summary
 - [x] `M4-03` AGENTS loader
-- [ ] `M4-04` Progress artifact
+- [x] `M4-04` Progress artifact
 - [ ] `M4-05` Codebase index loader
 - [ ] `M4-06` Orientation context assembly
 
