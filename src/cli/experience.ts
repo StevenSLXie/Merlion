@@ -1,8 +1,9 @@
 import { sanitizeRenderableText } from './sanitize.ts'
 import type { UsageSnapshot } from '../runtime/usage.ts'
+import type { PromptObservabilitySnapshot } from '../runtime/prompt_observability.ts'
 import { renderEditDiffLines, summarizeEditDiff } from './diff.ts'
 import { buildAssistantRenderPlan, type MessageTone } from './message_content.ts'
-import { formatCliStatusLine } from './status.ts'
+import { formatCliStatusLine, formatPromptObservabilityLine } from './status.ts'
 import { createTuiFrame } from './tui_frame.ts'
 import { parseTuiKeyAction } from './keybindings.ts'
 import { plainDisplayWidth } from './char_width.ts'
@@ -513,14 +514,22 @@ export class CliExperience {
     }
   }
 
-  onUsage(snapshot: UsageSnapshot, estimatedCost?: number, provider?: string): void {
+  onUsage(
+    snapshot: UsageSnapshot,
+    estimatedCost?: number,
+    provider?: string,
+    promptObservability?: PromptObservabilitySnapshot
+  ): void {
     const line = formatCliStatusLine(snapshot, estimatedCost, provider)
+    const promptLine = formatPromptObservabilityLine(snapshot, promptObservability)
     if (this.tuiEnabled) {
       this.tuiStatusLine = line
+      if (promptLine !== '') this.printRawLine(this.c('dim', promptLine))
       this.renderTuiFrame()
       return
     }
     this.printRawLine(this.c('dim', line))
+    if (promptLine !== '') this.printRawLine(this.c('dim', promptLine))
   }
 
   setToolDetailMode(mode: 'full' | 'compact'): void {

@@ -14,6 +14,10 @@ Changes:
 - Artifact hygiene:
   moved generated codebase index from docs/codebase_index.md to
   .merlion/codebase_index.md to avoid polluting tracked docs
+- Cache/token observability v2 in CLI:
+  added per-turn prompt diagnostics (estimated input tokens, role breakdown,
+  role delta, stable-prefix tokens/ratio/hash, provider cache ratio for turn)
+  and persisted these metrics into usage jsonl as prompt_observability
 
 Policy:
 - For every version change in package.json, add:

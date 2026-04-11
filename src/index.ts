@@ -20,6 +20,7 @@ import {
   loadSessionMessages
 } from './runtime/session.ts'
 import { calculateUsageCostUsd, createUsageTracker, type UsageRates } from './runtime/usage.ts'
+import type { PromptObservabilitySnapshot } from './runtime/prompt_observability.ts'
 import { buildDefaultRegistry } from './tools/builtin/index.ts'
 import { discoverVerificationChecks } from './verification/checks.ts'
 import { runVerificationFixRounds } from './verification/fix_round.ts'
@@ -321,6 +322,7 @@ async function main(): Promise<void> {
 
   const runTurn = async (prompt: string) => {
     const changedFiles = new Set<string>()
+    let latestPromptObservability: PromptObservabilitySnapshot | undefined
     const result = await runLoop({
       provider,
       registry,
@@ -343,11 +345,15 @@ async function main(): Promise<void> {
           prompt_tokens: usage.prompt_tokens,
           completion_tokens: usage.completion_tokens,
           cached_tokens: usage.cached_tokens ?? null,
-          tool_schema_tokens_estimate: toolSchemaTokensEstimate
+          tool_schema_tokens_estimate: toolSchemaTokensEstimate,
+          prompt_observability: latestPromptObservability
         })
         const snapshot = usageTracker.record(usage)
         const estimatedCost = usageRates ? calculateUsageCostUsd(snapshot.totals, usageRates) : undefined
-        ui.onUsage(snapshot, estimatedCost, usage.provider)
+        ui.onUsage(snapshot, estimatedCost, usage.provider, latestPromptObservability)
+      },
+      onPromptObservability: (snapshot) => {
+        latestPromptObservability = snapshot
       },
       onTurnStart: ({ turn }) => {
         ui.onTurnStart({ turn })

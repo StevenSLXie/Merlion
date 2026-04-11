@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { formatCliStatusLine } from '../src/cli/status.ts'
+import { formatCliStatusLine, formatPromptObservabilityLine } from '../src/cli/status.ts'
 import type { UsageSnapshot } from '../src/runtime/usage.ts'
+import type { PromptObservabilitySnapshot } from '../src/runtime/prompt_observability.ts'
 
 function snapshot(): UsageSnapshot {
   return {
@@ -52,4 +53,22 @@ test('formatCliStatusLine highlights no cache hits after multiple turns', () => 
     }
   })
   assert.match(line, /no cache hits yet/)
+})
+
+test('formatPromptObservabilityLine includes role breakdown and stable hash', () => {
+  const line = formatPromptObservabilityLine(snapshot(), {
+    turn: 3,
+    estimated_input_tokens: 10_000,
+    role_tokens: { system: 1200, user: 900, assistant: 3400, tool: 4500 },
+    role_delta_tokens: { system: 0, user: 120, assistant: 700, tool: 1800 },
+    stable_prefix_tokens: 7600,
+    stable_prefix_ratio: 0.76,
+    stable_prefix_hash: 'abc123def456'
+  } satisfies PromptObservabilitySnapshot)
+  assert.match(line, /prompt ~10,000 tok/)
+  assert.match(line, /roles s 1,200 u 900 a 3,400 t 4,500/)
+  assert.match(line, /Δroles s 0 u \+120 a \+700 t \+1,800/)
+  assert.match(line, /stable 7,600 \(76\.0%\)/)
+  assert.match(line, /provider-cache turn 400 \(4\.0%\)/)
+  assert.match(line, /hash abc123def456/)
 })

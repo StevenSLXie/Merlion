@@ -4,6 +4,7 @@ import { executeToolCalls, type ToolCallResultEvent, type ToolCallStartEvent } f
 import { withRetry } from './retry.ts'
 import { ToolRegistry } from '../tools/registry.ts'
 import { compactMessages, estimateMessagesChars } from '../context/compact.ts'
+import { createPromptObservabilityTracker, type PromptObservabilitySnapshot } from './prompt_observability.ts'
 
 export interface RunLoopOptions {
   provider: ModelProvider
@@ -22,6 +23,7 @@ export interface RunLoopOptions {
     cached_tokens?: number | null
     provider?: string
   }) => Promise<void> | void
+  onPromptObservability?: (snapshot: PromptObservabilitySnapshot) => Promise<void> | void
   onTurnStart?: (event: { turn: number }) => Promise<void> | void
   onAssistantResponse?: (event: {
     turn: number
@@ -107,6 +109,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   let finalText = ''
   let emptyStopRecoveryCount = 0
   let awaitingPostToolSummary = false
+  const promptObservability = createPromptObservabilityTracker()
 
   const defaultPermissions: PermissionStore = { ask: async () => 'allow' }
   const toolContext: ToolContext = {
@@ -142,6 +145,9 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
           state.hasAttemptedReactiveCompact = true
         }
       }
+      await options.onPromptObservability?.(
+        promptObservability.record(state.turnCount + 1, state.messages)
+      )
       await options.onTurnStart?.({ turn: state.turnCount + 1 })
       assistant = await withRetry(
         () => options.provider.complete(state.messages, options.registry.getAll()),

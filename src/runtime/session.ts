@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import type { ChatMessage, SessionMetaEntry, TranscriptEntry, TranscriptMessageEntry } from '../types.js'
+import type { PromptObservabilitySnapshot } from './prompt_observability.ts'
 
 export interface SessionFiles {
   sessionId: string
@@ -22,6 +23,7 @@ export interface UsageEntry {
   completion_tokens: number
   cached_tokens: number | null
   tool_schema_tokens_estimate: number
+  prompt_observability?: PromptObservabilitySnapshot
 }
 
 const VALID_ROLES = new Set(['system', 'user', 'assistant', 'tool'])

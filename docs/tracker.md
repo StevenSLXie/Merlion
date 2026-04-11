@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-12T10:05:00+08:00
+Last updated: 2026-04-12T11:05:00+08:00
 
 ## Active Sprint
 
@@ -58,6 +58,7 @@ Last updated: 2026-04-12T10:05:00+08:00
 | M7-01 | usage aggregator module + tests | done | codex | feature 014 |
 | M7-02 | CLI real-time token usage line | done | codex | in `src/index.ts` |
 | M7-03 | E2E usage archive output | done | codex | `.merlion/e2e-usage` |
+| M7-04 | prompt observability v2 | done | codex | feature 048; role breakdown + stable prefix hash + provider cache turn ratio |
 | M8-01 | runtime/executor event hooks | done | codex | feature 017 |
 | M8-02 | line-based renderer | done | codex | feature 017 |
 | M8-03 | output sanitization | done | codex | feature 018 |

@@ -70,6 +70,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M7-01` Usage aggregator module with unit tests (turn delta + session total)
 - [x] `M7-02` CLI real-time usage line per model response
 - [x] `M7-03` E2E usage archive output (`.merlion/e2e-usage`)
+- [x] `M7-04` Prompt observability v2 (role breakdown + stable prefix hash + provider cache turn ratio)
 
 ## Milestone 8: CLI UX V1 (P1)
 
