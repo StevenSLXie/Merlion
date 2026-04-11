@@ -24,7 +24,7 @@ function countOccurrences(text: string, needle: string): number {
 
 export const editFileTool: ToolDefinition = {
   name: 'edit_file',
-  description: 'Edit file by replacing exact text. old_string must match exactly once.',
+  description: 'Edit file by replacing exact text. old_string must match exactly once in the file. new_string is the literal replacement text (plain string, not an object or dict).',
   parameters: {
     type: 'object',
     properties: {

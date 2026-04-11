@@ -23,9 +23,9 @@ if (SKIP) {
       const sandbox = await makeSandbox()
       try {
         const result = await runAgent(
-          'Read math.ts. Then add a new exported function called `subtract` ' +
-            'that takes two numbers (a, b) and returns a - b. ' +
-            'Do not remove existing functions.',
+          'Read math.ts. It has two functions: add and multiply. ' +
+            'Append a new exported function called subtract that takes (a, b) and returns a - b. ' +
+            'The final file must contain all three functions.',
           sandbox,
           { scenario: 'e2e-edit' },
         )
