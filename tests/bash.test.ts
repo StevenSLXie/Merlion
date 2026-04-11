@@ -64,3 +64,15 @@ test('times out long-running command', async () => {
   assert.match(result.content, /timed out/i)
 })
 
+test('autocorrects accidental .git prefix', async () => {
+  const cwd = await makeTempDir()
+  const result = await bashTool.execute(
+    { command: '.git --version' },
+    { cwd, permissions: permission('allow') }
+  )
+
+  assert.equal(result.isError, false)
+  assert.match(result.content, /autocorrect/i)
+  assert.match(result.content, /git version/i)
+  assert.match(result.content, /\[exit: 0\]/)
+})

@@ -22,6 +22,11 @@ const BLOCK_PATTERNS: RegExp[] = [
 
 type RiskLevel = 'safe' | 'warn' | 'block'
 
+function normalizeCommand(raw: string): { command: string; normalized: boolean } {
+  const rewritten = raw.replace(/(^|[;&|]\s*)\.git(?=\s+)/g, '$1git')
+  return { command: rewritten, normalized: rewritten !== raw }
+}
+
 function assessCommandRisk(command: string): RiskLevel {
   if (BLOCK_PATTERNS.some((p) => p.test(command))) return 'block'
   if (WARN_PATTERNS.some((p) => p.test(command))) return 'warn'
@@ -84,26 +89,28 @@ export const bashTool: ToolDefinition = {
     if (typeof command !== 'string' || command.trim() === '') {
       return { content: 'Invalid command: expected non-empty string.', isError: true }
     }
+    const normalized = normalizeCommand(command)
+    const effectiveCommand = normalized.command
 
     const timeout = typeof timeoutRaw === 'number' && Number.isFinite(timeoutRaw)
       ? Math.min(Math.max(Math.floor(timeoutRaw), 1), 300_000)
       : 30_000
 
-    const risk = assessCommandRisk(command)
+    const risk = assessCommandRisk(effectiveCommand)
     if (risk === 'block') {
-      return { content: `[Blocked: command matched high-risk policy] ${command}`, isError: true }
+      return { content: `[Blocked: command matched high-risk policy] ${effectiveCommand}`, isError: true }
     }
     if (risk === 'warn') {
-      const decision = await ctx.permissions?.ask('bash', command)
+      const decision = await ctx.permissions?.ask('bash', effectiveCommand)
       if (decision === 'deny' || decision === undefined) {
         return { content: '[Permission denied]', isError: true }
       }
     }
 
-    const result = await runBash(command, ctx.cwd, timeout)
+    const result = await runBash(effectiveCommand, ctx.cwd, timeout)
     if (result.timedOut) {
       return {
-        content: `${result.content}\n[Command timed out after ${timeout} ms]`,
+        content: `${normalized.normalized ? '[autocorrect] normalized `.git` to `git`\n' : ''}${result.content}\n[Command timed out after ${timeout} ms]`,
         isError: true
       }
     }
@@ -111,7 +118,9 @@ export const bashTool: ToolDefinition = {
     const text = result.content.trim().length > 0
       ? `${result.content}\n[exit: ${result.exit}]`
       : `[exit: ${result.exit}]`
-    return { content: text, isError: result.exit !== 0 }
+    return {
+      content: `${normalized.normalized ? '[autocorrect] normalized `.git` to `git`\n' : ''}${text}`,
+      isError: result.exit !== 0
+    }
   }
 }
-
