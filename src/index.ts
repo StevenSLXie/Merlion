@@ -331,6 +331,9 @@ async function main(): Promise<void> {
       },
       onTurnResult: (result) => {
         ui.renderAssistantOutput(result.output, result.terminal)
+      },
+      onSetDetailMode: (mode) => {
+        ui.setToolDetailMode(mode)
       }
     })
     ui.stopSpinner()

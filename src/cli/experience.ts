@@ -149,7 +149,7 @@ export class CliExperience {
   private spinnerWidth = 0
   private readonly maxDiffLines: number
   private readonly markdownEnabled: boolean
-  private readonly toolDetailMode: 'full' | 'compact'
+  private toolDetailMode: 'full' | 'compact'
   private readonly tuiLogLines: string[] = []
   private tuiStatusLine = 'ready'
 
@@ -333,7 +333,7 @@ export class CliExperience {
     this.printRawLine(this.c('magenta', '║') + ` ${subtitle}  ${this.c('dim', `mode=${mode}`)}`)
     this.printRawLine(this.c('magenta', `╚${edge}╝`))
     if (this.options.isRepl) {
-      this.printRawLine(this.c('dim', 'Commands: :help, :q'))
+      this.printRawLine(this.c('dim', 'Commands: :help, :q, :detail full|compact'))
     }
   }
 
@@ -464,5 +464,13 @@ export class CliExperience {
       return
     }
     this.printRawLine(this.c('dim', line))
+  }
+
+  setToolDetailMode(mode: 'full' | 'compact'): void {
+    this.toolDetailMode = mode
+    if (this.tuiEnabled) {
+      this.tuiStatusLine = `ui · tool detail mode=${mode}`
+      this.renderTuiFrame()
+    }
   }
 }

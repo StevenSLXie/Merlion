@@ -2,6 +2,7 @@ export type ReplInput =
   | { kind: 'exit' }
   | { kind: 'help' }
   | { kind: 'empty' }
+  | { kind: 'set_detail'; mode: 'full' | 'compact' }
   | { kind: 'prompt'; prompt: string }
 
 export function parseReplInput(input: string): ReplInput {
@@ -9,6 +10,10 @@ export function parseReplInput(input: string): ReplInput {
   if (trimmed === '') return { kind: 'empty' }
   if (trimmed === ':q' || trimmed === ':quit' || trimmed === ':exit') return { kind: 'exit' }
   if (trimmed === ':help') return { kind: 'help' }
+  const detailMatch = trimmed.match(/^:detail\s+(full|compact)$/i)
+  if (detailMatch) {
+    return { kind: 'set_detail', mode: detailMatch[1]!.toLowerCase() as 'full' | 'compact' }
+  }
   return { kind: 'prompt', prompt: trimmed }
 }
 
@@ -23,11 +28,12 @@ export interface RunReplSessionOptions {
     result: { output: string; terminal: string },
     prompt: string
   ) => Promise<void> | void
+  onSetDetailMode?: (mode: 'full' | 'compact') => Promise<void> | void
 }
 
 export async function runReplSession(options: RunReplSessionOptions): Promise<void> {
   if (options.startupMessage !== false) {
-    options.write(options.startupMessage ?? 'REPL started. Commands: :help, :q\n')
+    options.write(options.startupMessage ?? 'REPL started. Commands: :help, :q, :detail full|compact\n')
   }
   const promptLabel = options.promptLabel ?? 'merlion> '
 
@@ -42,7 +48,12 @@ export async function runReplSession(options: RunReplSessionOptions): Promise<vo
       break
     }
     if (parsed.kind === 'help') {
-      options.write('Commands: :help, :q\n')
+      options.write('Commands: :help, :q, :detail full|compact\n')
+      continue
+    }
+    if (parsed.kind === 'set_detail') {
+      await options.onSetDetailMode?.(parsed.mode)
+      options.write(`[ui] tool detail mode = ${parsed.mode}\n`)
       continue
     }
     if (parsed.kind === 'empty') continue

@@ -7,14 +7,17 @@ test('parseReplInput handles commands and prompt', () => {
   assert.deepEqual(parseReplInput(':q'), { kind: 'exit' })
   assert.deepEqual(parseReplInput(':quit'), { kind: 'exit' })
   assert.deepEqual(parseReplInput(':help'), { kind: 'help' })
+  assert.deepEqual(parseReplInput(':detail compact'), { kind: 'set_detail', mode: 'compact' })
+  assert.deepEqual(parseReplInput(':detail FULL'), { kind: 'set_detail', mode: 'full' })
   assert.deepEqual(parseReplInput('   '), { kind: 'empty' })
   assert.deepEqual(parseReplInput('fix auth flow'), { kind: 'prompt', prompt: 'fix auth flow' })
 })
 
 test('runReplSession loops prompts and exits', async () => {
-  const inputs = ['first task', ':help', 'second task', ':q']
+  const inputs = ['first task', ':help', ':detail compact', 'second task', ':q']
   const outputs: string[] = []
   const prompts: string[] = []
+  const detailModes: Array<'full' | 'compact'> = []
 
   await runReplSession({
     readLine: async () => inputs.shift() ?? null,
@@ -25,13 +28,18 @@ test('runReplSession loops prompts and exits', async () => {
       prompts.push(prompt)
       return { output: `done:${prompt}`, terminal: 'completed' }
     },
+    onSetDetailMode: (mode) => {
+      detailModes.push(mode)
+    },
     promptLabel: 'merlion> '
   })
 
   assert.deepEqual(prompts, ['first task', 'second task'])
+  assert.deepEqual(detailModes, ['compact'])
   assert.equal(outputs.some((t) => t.includes('done:first task')), true)
   assert.equal(outputs.some((t) => t.includes('done:second task')), true)
-  assert.equal(outputs.some((t) => t.includes('Commands: :help, :q')), true)
+  assert.equal(outputs.some((t) => t.includes('Commands: :help, :q, :detail full|compact')), true)
+  assert.equal(outputs.some((t) => t.includes('[ui] tool detail mode = compact')), true)
 })
 
 test('runReplSession supports custom turn renderer hooks', async () => {
