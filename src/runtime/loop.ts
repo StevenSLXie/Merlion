@@ -24,12 +24,45 @@ export interface RunLoopResult {
   state: LoopState
 }
 
-function createState(systemPrompt: string, userPrompt: string, initialMessages?: ChatMessage[]): LoopState {
+// Patterns that signal the model promised action but made no tool calls.
+// Only tested on responses ≥50 chars to avoid flagging conversational short replies.
+const WILL_DO_PATTERNS: RegExp[] = [
+  /\bi('ll| will)\s+(start|begin|look|check|read|analyze|examine|fix|help|try|write|create|update|run|search|find)/i,
+  /\blet me\s+(start|begin|look|check|read|analyze|examine|fix|help|try|write|create|update|run|search|find)/i,
+  /\bi('m| am) going to\s+\w/i,
+  /\bfirst,?\s+i('ll| will)\s+\w/i,
+  /\bto (start|begin|proceed),?\s+i('ll| will)\s+\w/i,
+]
+
+/**
+ * Returns true when the model's response looks like a false start:
+ * it promised to take action but produced no tool calls.
+ *
+ * Deliberately conservative to avoid nudging genuine short completions
+ * ("done", "在", "yes") or complete summaries.
+ */
+export function shouldNudge(text: string, state: LoopState): boolean {
+  // Hard cap: never nudge more than twice per session
+  if (state.nudgeCount >= 2) return false
+
+  // Very short text is always conversational — never nudge
+  // "在", "done", "ok", "yes", "finished", etc.
+  if (text.trim().length < 50) return false
+
+  // Core signal: contains a "will do X" promise without having done X
+  return WILL_DO_PATTERNS.some((p) => p.test(text))
+}
+
+function createState(
+  systemPrompt: string,
+  userPrompt: string,
+  initialMessages?: ChatMessage[],
+): LoopState {
   const messages: ChatMessage[] = initialMessages
     ? [...initialMessages]
     : [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
+        { role: 'user', content: userPrompt },
       ]
 
   if (initialMessages && userPrompt.trim() !== '') {
@@ -39,7 +72,8 @@ function createState(systemPrompt: string, userPrompt: string, initialMessages?:
   return {
     messages,
     turnCount: 0,
-    maxOutputTokensRecoveryCount: 0
+    maxOutputTokensRecoveryCount: 0,
+    nudgeCount: 0,
   }
 }
 
@@ -51,12 +85,12 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   const defaultPermissions: PermissionStore = { ask: async () => 'allow' }
   const toolContext: ToolContext = {
     cwd: options.cwd,
-    permissions: options.permissions ?? defaultPermissions
+    permissions: options.permissions ?? defaultPermissions,
   }
 
   if (options.persistInitialMessages !== false) {
-    for (const initialMessage of state.messages) {
-      await options.onMessageAppended?.(initialMessage)
+    for (const msg of state.messages) {
+      await options.onMessageAppended?.(msg)
     }
   }
 
@@ -76,22 +110,28 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     }
 
     state.turnCount += 1
+
     const assistantMessage: ChatMessage = {
       role: 'assistant',
       content: assistant.content,
-      tool_calls: assistant.tool_calls
+      tool_calls: assistant.tool_calls,
     }
     state.messages.push(assistantMessage)
     await options.onMessageAppended?.(assistantMessage)
     await options.onUsage?.(assistant.usage)
 
-    if (assistant.finish_reason === 'tool_calls' && assistant.tool_calls && assistant.tool_calls.length > 0) {
+    // ── tool_calls ──────────────────────────────────────────────────────────
+    if (
+      assistant.finish_reason === 'tool_calls' &&
+      assistant.tool_calls &&
+      assistant.tool_calls.length > 0
+    ) {
       const maxConcurrency = Number(process.env.MERLION_MAX_TOOL_CONCURRENCY ?? '10')
       const toolMessages = await executeToolCalls({
         toolCalls: assistant.tool_calls,
         registry: options.registry,
         toolContext,
-        maxConcurrency: Number.isFinite(maxConcurrency) ? Math.max(1, Math.floor(maxConcurrency)) : 10
+        maxConcurrency: Number.isFinite(maxConcurrency) ? Math.max(1, Math.floor(maxConcurrency)) : 10,
       })
 
       for (const toolMsg of toolMessages) {
@@ -101,18 +141,41 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
       continue
     }
 
+    // ── length (output truncated) ────────────────────────────────────────────
     if (assistant.finish_reason === 'length' && state.maxOutputTokensRecoveryCount < 3) {
       state.maxOutputTokensRecoveryCount += 1
       const continueMessage: ChatMessage = {
         role: 'user',
-        content: 'Output was cut off. Continue directly from where you stopped. No recap, no apology.'
+        content: 'Output was cut off. Continue directly from where you stopped. No recap, no apology.',
       }
       state.messages.push(continueMessage)
       await options.onMessageAppended?.(continueMessage)
       continue
     }
 
-    finalText = assistant.content ?? ''
+    // ── content_filter ───────────────────────────────────────────────────────
+    if (assistant.finish_reason === 'content_filter') {
+      return { terminal: 'model_error', finalText, state }
+    }
+
+    // ── stop (and length-recovery exhausted) ────────────────────────────────
+    const text = assistant.content ?? ''
+
+    // Nudge: model promised action but made no tool call
+    if (shouldNudge(text, state)) {
+      const nudgeMessage: ChatMessage = {
+        role: 'user',
+        content:
+          'Continue with the task. Use your tools to make progress. ' +
+          'If you have completed everything, describe what was done.',
+      }
+      state.messages.push(nudgeMessage)
+      await options.onMessageAppended?.(nudgeMessage)
+      state.nudgeCount += 1
+      continue
+    }
+
+    finalText = text
     return { terminal: 'completed', finalText, state }
   }
 }

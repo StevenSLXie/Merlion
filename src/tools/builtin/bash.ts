@@ -30,7 +30,7 @@ function assessCommandRisk(command: string): RiskLevel {
 
 function runBash(command: string, cwd: string, timeoutMs: number): Promise<{ content: string; exit: number; timedOut: boolean }> {
   return new Promise((resolve) => {
-    const child = spawn('bash', ['-lc', command], { cwd })
+    const child = spawn('bash', ['-c', command], { cwd })
     let combined = ''
     let timedOut = false
     let done = false

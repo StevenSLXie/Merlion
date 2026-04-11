@@ -41,6 +41,8 @@ export interface LoopState {
   messages: ChatMessage[]
   turnCount: number
   maxOutputTokensRecoveryCount: number
+  // Times a nudge was injected this session. Capped at 2 to prevent nudge loops.
+  nudgeCount: number
 }
 
 export type LoopTerminal = 'completed' | 'max_turns_exceeded' | 'model_error'

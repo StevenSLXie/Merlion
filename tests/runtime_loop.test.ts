@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../src/types.ts'
 import { ToolRegistry } from '../src/tools/registry.ts'
 import type { ToolDefinition } from '../src/tools/types.ts'
-import { runLoop } from '../src/runtime/loop.ts'
+import { runLoop, shouldNudge } from '../src/runtime/loop.ts'
 
 class StubProvider implements ModelProvider {
   private index = 0
@@ -160,4 +160,127 @@ test('loop accepts initial messages', async () => {
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'continued')
   assert.equal(result.state.messages.length >= 4, true)
+})
+
+// ── shouldNudge unit tests ─────────────────────────────────────────────────
+
+test('shouldNudge: never nudges short conversational text', () => {
+  const baseState = { messages: [], turnCount: 0, maxOutputTokensRecoveryCount: 0, nudgeCount: 0 }
+  assert.equal(shouldNudge('在', baseState), false)
+  assert.equal(shouldNudge('yes', baseState), false)
+  assert.equal(shouldNudge('done', baseState), false)
+  assert.equal(shouldNudge('ok', baseState), false)
+  assert.equal(shouldNudge('', baseState), false)
+})
+
+test('shouldNudge: detects false start with I will/I\'ll pattern', () => {
+  const baseState = { messages: [], turnCount: 0, maxOutputTokensRecoveryCount: 0, nudgeCount: 0 }
+  const longEnough = "I'll start by reading the auth file and understanding the current session management approach."
+  assert.equal(shouldNudge(longEnough, baseState), true)
+})
+
+test('shouldNudge: detects "let me" false start', () => {
+  const baseState = { messages: [], turnCount: 0, maxOutputTokensRecoveryCount: 0, nudgeCount: 0 }
+  assert.equal(
+    shouldNudge('Let me read the configuration file to understand the current setup.', baseState),
+    true,
+  )
+})
+
+test('shouldNudge: does not nudge genuine past-tense completion', () => {
+  const baseState = { messages: [], turnCount: 0, maxOutputTokensRecoveryCount: 0, nudgeCount: 0 }
+  assert.equal(
+    shouldNudge('The function has been updated successfully. The type error on line 42 is fixed.', baseState),
+    false,
+  )
+})
+
+test('shouldNudge: cap at 2 nudges prevents infinite nudge loop', () => {
+  const cappedState = { messages: [], turnCount: 0, maxOutputTokensRecoveryCount: 0, nudgeCount: 2 }
+  const text = "Let me read the configuration file to understand the current setup."
+  assert.equal(shouldNudge(text, cappedState), false)
+})
+
+test('loop injects nudge then completes when model stops after nudge', async () => {
+  const LONG_WILL_DO = "I'll start by reading the authentication module to understand the existing session management approach."
+
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: LONG_WILL_DO,
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+    {
+      role: 'assistant',
+      content: 'Task is now complete.',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+  ])
+
+  const result = await runLoop({
+    provider,
+    registry: new ToolRegistry(),
+    systemPrompt: 'system',
+    userPrompt: 'fix the auth bug',
+    cwd: process.cwd(),
+    maxTurns: 10,
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'Task is now complete.')
+  assert.equal(result.state.nudgeCount, 1)
+  // Nudge message must be present in state
+  const nudgeMsg = result.state.messages.find(
+    (m) => m.role === 'user' && typeof m.content === 'string' && m.content.includes('Continue with the task'),
+  )
+  assert.ok(nudgeMsg, 'nudge message should be in state.messages')
+})
+
+test('loop returns model_error for content_filter finish_reason', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'content_filter',
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+  ])
+
+  const result = await runLoop({
+    provider,
+    registry: new ToolRegistry(),
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 5,
+  })
+
+  assert.equal(result.terminal, 'model_error')
+})
+
+test('loop handles tool_calls finish_reason with empty tool_calls array', async () => {
+  // Model says tool_calls but sends empty array — should fall through to stop handling
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: 'no tools called',
+      finish_reason: 'tool_calls',
+      tool_calls: [],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+  ])
+
+  const result = await runLoop({
+    provider,
+    registry: new ToolRegistry(),
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 5,
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'no tools called')
 })
