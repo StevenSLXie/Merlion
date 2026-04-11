@@ -48,6 +48,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M5-02` Verification runner
 - [x] `M5-03` Fix-round integration
 - [x] `M5-04` Multi-language check discovery + command dependency skip
+- [x] `M5-05` CI-first language-agnostic discovery
 
 ## Milestone 6: CLI UX (P1)
 

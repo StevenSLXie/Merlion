@@ -103,3 +103,58 @@ test('discoverVerificationChecks detects gradle wrapper', async () => {
   assert.equal(gradle?.command, './gradlew test --console=plain')
   assert.equal(gradle?.requiresCommands, undefined)
 })
+
+test('discoverVerificationChecks discovers mainstream ecosystems', async () => {
+  const dir = await makeDir()
+  await writeFile(join(dir, 'go.mod'), 'module example.com/app\n', 'utf8')
+  await writeFile(join(dir, 'Cargo.toml'), '[package]\nname="x"\nversion="0.1.0"\n', 'utf8')
+  await writeFile(join(dir, 'app.sln'), 'Microsoft Visual Studio Solution File\n', 'utf8')
+  await writeFile(join(dir, 'composer.json'), JSON.stringify({ scripts: { test: 'phpunit' } }), 'utf8')
+  await writeFile(join(dir, 'Gemfile'), 'source "https://rubygems.org"\n', 'utf8')
+  await mkdir(join(dir, 'spec'))
+  await writeFile(join(dir, 'mix.exs'), 'defmodule App.MixProject do end\n', 'utf8')
+  await writeFile(join(dir, 'Package.swift'), 'import PackageDescription\n', 'utf8')
+  await writeFile(join(dir, 'pubspec.yaml'), 'name: app\nenvironment:\n  sdk: \">=3.0.0 <4.0.0\"\n', 'utf8')
+
+  const checks = await discoverVerificationChecks(dir)
+  const ids = new Set(checks.map((c) => c.id))
+  assert.ok(ids.has('go_test'))
+  assert.ok(ids.has('rust_test'))
+  assert.ok(ids.has('dotnet_test'))
+  assert.ok(ids.has('php_test'))
+  assert.ok(ids.has('ruby_test_rspec'))
+  assert.ok(ids.has('elixir_test'))
+  assert.ok(ids.has('swift_test'))
+  assert.ok(ids.has('dart_test'))
+})
+
+test('discoverVerificationChecks uses CI commands as language-agnostic source', async () => {
+  const dir = await makeDir()
+  await mkdir(join(dir, '.github'))
+  await mkdir(join(dir, '.github', 'workflows'))
+  await writeFile(
+    join(dir, '.github', 'workflows', 'ci.yml'),
+    [
+      'name: ci',
+      'on: [push]',
+      'jobs:',
+      '  test:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: npm test',
+      '      - run: echo "prepare"',
+      '      - run: |',
+      '          cargo test',
+      '          cargo clippy -- -D warnings'
+    ].join('\n'),
+    'utf8'
+  )
+  await writeFile(join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' } }), 'utf8')
+
+  const checks = await discoverVerificationChecks(dir)
+  assert.deepEqual(
+    checks.map((c) => c.command),
+    ['npm test', 'cargo test && cargo clippy -- -D warnings']
+  )
+  assert.equal(checks[0]?.id, 'ci_1')
+})
