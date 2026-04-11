@@ -132,6 +132,88 @@ test('loop returns terminal assistant text', async () => {
   assert.equal(result.finalText, 'all good')
 })
 
+test('loop recovers empty stop after tool calls by requesting final summary', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'ok' })],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: '',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'Edited tests/executor.test.ts by adding one blank line.',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEchoTool())
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 8
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.match(result.finalText, /Edited tests\/executor\.test\.ts/)
+  assert.equal(
+    result.state.messages.some((m) => m.role === 'user' && (m.content ?? '').includes('Provide a concise final summary')),
+    true
+  )
+})
+
+test('loop falls back to synthetic summary when stop remains empty after recovery', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'ok' })],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: '',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: '',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEchoTool())
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 8
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.match(result.finalText, /returned no final summary/i)
+})
+
 test('loop accepts initial messages', async () => {
   const provider = new StubProvider([
     {

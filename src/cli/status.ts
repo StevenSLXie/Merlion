@@ -16,6 +16,9 @@ export function formatCliStatusLine(snapshot: UsageSnapshot, estimatedCost?: num
     `Δ in ${formatInt(snapshot.delta.prompt_tokens)} out ${formatInt(snapshot.delta.completion_tokens)} cached ${formatInt(snapshot.delta.cached_tokens)}`,
     `Σ in ${formatInt(snapshot.totals.prompt_tokens)} out ${formatInt(snapshot.totals.completion_tokens)} cached ${formatInt(snapshot.totals.cached_tokens)} (${cachedPct} input cached)`,
   ]
+  if (snapshot.turn >= 3 && snapshot.totals.cached_tokens === 0) {
+    parts.push('no cache hits yet (model/provider may not support caching)')
+  }
   if (typeof estimatedCost === 'number' && Number.isFinite(estimatedCost) && estimatedCost >= 0) {
     parts.push(`est $${estimatedCost.toFixed(6)}`)
   }

@@ -100,6 +100,8 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   const state = createState(options.systemPrompt, options.userPrompt, options.initialMessages)
   const maxTurns = options.maxTurns ?? 100
   let finalText = ''
+  let emptyStopRecoveryCount = 0
+  let awaitingPostToolSummary = false
 
   const defaultPermissions: PermissionStore = { ask: async () => 'allow' }
   const toolContext: ToolContext = {
@@ -198,6 +200,29 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
 
     // ── stop (and length-recovery exhausted) ────────────────────────────────
     const text = assistant.content ?? ''
+    const previousMessage = state.messages[state.messages.length - 2]
+    const previousWasTool = previousMessage?.role === 'tool'
+    const shouldRecoverEmptyStop = previousWasTool || awaitingPostToolSummary
+
+    if (assistant.finish_reason === 'stop' && text.trim() === '' && shouldRecoverEmptyStop) {
+      if (emptyStopRecoveryCount < 1) {
+        emptyStopRecoveryCount += 1
+        awaitingPostToolSummary = true
+        const summaryRequest: ChatMessage = {
+          role: 'user',
+          content:
+            'You just finished tool execution. Provide a concise final summary of what changed and any next steps.',
+        }
+        state.messages.push(summaryRequest)
+        await options.onMessageAppended?.(summaryRequest)
+        continue
+      }
+      finalText = 'Task completed via tool execution, but the model returned no final summary.'
+      return { terminal: 'completed', finalText, state }
+    }
+    if (text.trim() !== '') {
+      awaitingPostToolSummary = false
+    }
 
     // Nudge: model promised action but made no tool call
     if (shouldNudge(text, state)) {

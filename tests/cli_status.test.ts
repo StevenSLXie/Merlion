@@ -34,3 +34,22 @@ test('formatCliStatusLine includes estimated cost when provided', () => {
   const line = formatCliStatusLine(snapshot(), 0.01234567)
   assert.match(line, /est \$0\.012346/)
 })
+
+test('formatCliStatusLine highlights no cache hits after multiple turns', () => {
+  const line = formatCliStatusLine({
+    turn: 4,
+    delta: {
+      prompt_tokens: 900,
+      completion_tokens: 50,
+      cached_tokens: 0,
+      total_tokens: 950
+    },
+    totals: {
+      prompt_tokens: 4000,
+      completion_tokens: 220,
+      cached_tokens: 0,
+      total_tokens: 4220
+    }
+  })
+  assert.match(line, /no cache hits yet/)
+})
