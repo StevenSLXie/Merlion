@@ -29,6 +29,24 @@ const E2E_BASE_URL = process.env.MERLION_BASE_URL ?? 'https://openrouter.ai/api/
 export const API_KEY = process.env.OPENROUTER_API_KEY ?? ''
 export const SKIP = !API_KEY
 
+export const SYSTEM_PROMPT =
+  'You are Merlion, a coding agent. Use your tools to complete the task. ' +
+  'Be concise. When done, state what you did.'
+
+/** Create a fresh provider instance using the configured E2E model. */
+export function makeProvider(): OpenAICompatProvider {
+  return new OpenAICompatProvider({
+    apiKey: API_KEY,
+    baseURL: E2E_BASE_URL,
+    model: E2E_MODEL,
+  })
+}
+
+/** Create a fresh tool registry with all built-in tools registered. */
+export function makeRegistry() {
+  return buildDefaultRegistry()
+}
+
 /**
  * Create a temporary sandbox directory pre-populated with the fixture files.
  * Returns the sandbox path. Caller is responsible for cleanup via rmSandbox().
@@ -127,9 +145,7 @@ export async function runAgent(
   const result = await runLoop({
     provider,
     registry,
-    systemPrompt:
-      'You are Merlion, a coding agent. Use your tools to complete the task. ' +
-      'Be concise. When done, state what you did.',
+    systemPrompt: SYSTEM_PROMPT,
     userPrompt: task,
     cwd,
     maxTurns: 30,

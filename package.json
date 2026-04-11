@@ -8,8 +8,8 @@
   },
   "scripts": {
     "test": "node --experimental-strip-types --test 'tests/*.test.ts'",
-    "test:e2e": "node --experimental-strip-types --test 'tests/e2e/*.test.ts'",
-    "test:all": "node --experimental-strip-types --test 'tests/**/*.test.ts'",
+    "test:e2e": "node --experimental-strip-types --test --test-concurrency=1 'tests/e2e/*.test.ts'",
+    "test:all": "node --experimental-strip-types --test --test-concurrency=1 'tests/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
     "merlion": "node --experimental-strip-types src/index.ts"
   },
