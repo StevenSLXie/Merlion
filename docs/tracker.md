@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-11T15:03:00+08:00
+Last updated: 2026-04-11T15:06:00+08:00
 
 ## Active Sprint
 
@@ -20,7 +20,8 @@ Last updated: 2026-04-11T15:03:00+08:00
 | M0-02 | Test baseline scripts | done | codex | `npm test` + `npm run typecheck` passing |
 | M0-03 | Source skeleton | done | codex | `src/` + `tests/` initialized |
 | M2-01 | read_file tool with TDD | done | codex | 6 tests pass |
-| M1-02 | Tool registry + tests | todo | codex | next feature |
+| M1-02 | Tool registry + tests | done | codex | 3 tests pass |
+| M2-02 | search tool with TDD | todo | codex | next feature |
 
 ## Commit Log
 
@@ -28,3 +29,4 @@ Last updated: 2026-04-11T15:03:00+08:00
 |---|---|---|
 | (pending) | bootstrap + docs | moved docs, added blockers, todo/tracker |
 | (pending) | feature 001 read_file | red->green tests + implementation |
+| (pending) | feature 002 tool registry | red->green tests + implementation |

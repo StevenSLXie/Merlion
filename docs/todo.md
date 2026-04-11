@@ -12,7 +12,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 ## Milestone 1: Core Types + Registry (P0)
 
 - [ ] `M1-01` Add `src/types.ts` and `src/tools/types.ts` (partial: `src/tools/types.ts` done)
-- [ ] `M1-02` Add `src/tools/registry.ts` with unit tests
+- [x] `M1-02` Add `src/tools/registry.ts` with unit tests
 
 ## Milestone 2: Built-in Tools (P0)
 
