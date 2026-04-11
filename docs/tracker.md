@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-12T04:35:00+08:00
+Last updated: 2026-04-12T05:00:00+08:00
 
 ## Active Sprint
 
@@ -41,7 +41,8 @@ Last updated: 2026-04-12T04:35:00+08:00
 | M6-07 | full-screen TUI shell | done | codex | feature 038; optional `MERLION_CLI_TUI=1` with fixed header/footer |
 | M6-08 | tool detail mode full/compact | done | codex | feature 039; edit diff supports compact summary mode |
 | M6-09 | interactive detail toggle in REPL | done | codex | feature 040; `:detail full|compact` without restart |
-| M6-10 | keyboard-driven card expand/collapse in TUI | todo | codex | pending raw-mode key event loop |
+| M6-10 | keyboard-driven detail toggle in TUI | done | codex | feature 041; keys `f/c/?` + Ctrl+C passthrough |
+| M6-11 | structured scrollback panes (assistant/tool split) | todo | codex | pending renderer refactor |
 | M7-01 | usage aggregator module + tests | done | codex | feature 014 |
 | M7-02 | CLI real-time token usage line | done | codex | in `src/index.ts` |
 | M7-03 | E2E usage archive output | done | codex | `.merlion/e2e-usage` |

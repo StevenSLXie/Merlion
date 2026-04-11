@@ -4,6 +4,7 @@ import { renderEditDiffLines, summarizeEditDiff } from './diff.ts'
 import { buildAssistantRenderPlan, type MessageTone } from './message_content.ts'
 import { formatCliStatusLine } from './status.ts'
 import { createTuiFrame } from './tui_frame.ts'
+import { parseTuiKeyAction } from './keybindings.ts'
 import type { ToolUiPayload } from '../tools/types.ts'
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -152,6 +153,8 @@ export class CliExperience {
   private toolDetailMode: 'full' | 'compact'
   private readonly tuiLogLines: string[] = []
   private tuiStatusLine = 'ready'
+  private tuiKeybindingsEnabled = false
+  private tuiStdinHandler?: (chunk: Buffer) => void
 
   constructor(options: CliExperienceOptions) {
     this.options = options
@@ -223,6 +226,51 @@ export class CliExperience {
     })
     process.stdout.write('\x1b[2J\x1b[H')
     process.stdout.write(`${frame}\n`)
+  }
+
+  private enableTuiKeybindings(): void {
+    if (!this.tuiEnabled || this.tuiKeybindingsEnabled) return
+    const stdin = process.stdin
+    if (!stdin.isTTY || typeof stdin.setRawMode !== 'function') return
+    this.tuiStdinHandler = (chunk: Buffer) => {
+      const action = parseTuiKeyAction(chunk)
+      if (action === 'set_full') {
+        this.setToolDetailMode('full')
+        return
+      }
+      if (action === 'set_compact') {
+        this.setToolDetailMode('compact')
+        return
+      }
+      if (action === 'help') {
+        this.printRawLine('[tui keys] f=full c=compact ?=help Ctrl+C=exit')
+        return
+      }
+      if (action === 'interrupt') {
+        this.disableTuiKeybindings()
+        process.kill(process.pid, 'SIGINT')
+      }
+    }
+    stdin.setRawMode(true)
+    stdin.resume()
+    stdin.on('data', this.tuiStdinHandler)
+    this.tuiKeybindingsEnabled = true
+    process.once('exit', () => {
+      this.disableTuiKeybindings()
+    })
+  }
+
+  private disableTuiKeybindings(): void {
+    if (!this.tuiKeybindingsEnabled) return
+    const stdin = process.stdin
+    if (this.tuiStdinHandler) {
+      stdin.off('data', this.tuiStdinHandler)
+      this.tuiStdinHandler = undefined
+    }
+    if (stdin.isTTY && typeof stdin.setRawMode === 'function') {
+      stdin.setRawMode(false)
+    }
+    this.tuiKeybindingsEnabled = false
   }
 
   private printCard(title: string, body: string, tone: 'info' | 'success' | 'warn' | 'error' = 'info'): void {
@@ -319,6 +367,7 @@ export class CliExperience {
   renderBanner(): void {
     if (this.tuiEnabled) {
       this.tuiStatusLine = 'ready'
+      this.enableTuiKeybindings()
       this.renderTuiFrame()
       return
     }
@@ -469,7 +518,7 @@ export class CliExperience {
   setToolDetailMode(mode: 'full' | 'compact'): void {
     this.toolDetailMode = mode
     if (this.tuiEnabled) {
-      this.tuiStatusLine = `ui · tool detail mode=${mode}`
+      this.tuiStatusLine = `ui · tool detail mode=${mode} · keys[f/c/?]`
       this.renderTuiFrame()
     }
   }

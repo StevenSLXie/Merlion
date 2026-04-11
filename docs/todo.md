@@ -61,7 +61,8 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M6-07` Full-screen TUI shell (fixed header/footer + scrollable message area)
 - [x] `M6-08` Tool detail mode (`full|compact`) for edit diff cards
 - [x] `M6-09` Interactive detail toggle in REPL (`:detail full|compact`)
-- [ ] `M6-10` Keyboard-driven expand/collapse in fullscreen TUI
+- [x] `M6-10` Keyboard-driven detail toggle in fullscreen TUI (`f`/`c`/`?`)
+- [ ] `M6-11` Structured scrollback panes (assistant/tool split view)
 
 ## Milestone 7: Token/Cost Observability (P0)
 
