@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-11T15:10:00+08:00
+Last updated: 2026-04-11T15:13:00+08:00
 
 ## Active Sprint
 
@@ -22,7 +22,8 @@ Last updated: 2026-04-11T15:10:00+08:00
 | M2-01 | read_file tool with TDD | done | codex | 6 tests pass |
 | M1-02 | Tool registry + tests | done | codex | 3 tests pass |
 | M2-03 | create_file tool + boundary guard | done | codex | 5 tests pass |
-| M2-02 | search tool with TDD | todo | codex | next feature |
+| M2-02 | search tool with TDD | done | codex | 4 tests pass |
+| M2-04 | edit_file tool with boundary guard | todo | codex | next feature |
 
 ## Commit Log
 
@@ -32,3 +33,4 @@ Last updated: 2026-04-11T15:10:00+08:00
 | (pending) | feature 001 read_file | red->green tests + implementation |
 | (pending) | feature 002 tool registry | red->green tests + implementation |
 | (pending) | feature 003 create_file | red->green tests + implementation |
+| (pending) | feature 004 search | red->green tests + implementation |
