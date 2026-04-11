@@ -68,3 +68,97 @@ test('runVerificationChecks skips when required command is missing', async () =>
   assert.equal(result.results[0]?.status, 'skipped')
   assert.match(result.results[0]?.output ?? '', /missing command/i)
 })
+
+test('runVerificationChecks fires onCheckStart and onCheckResult for each check', async () => {
+  const cwd = await makeDir()
+  const checks: VerificationCheck[] = [
+    { id: 'a', name: 'A', command: 'echo a' },
+    { id: 'b', name: 'B', command: 'exit 1' },
+  ]
+  const startIds: string[] = []
+  const resultIds: string[] = []
+
+  await runVerificationChecks({
+    cwd,
+    checks,
+    timeoutMs: 5000,
+    onCheckStart: (check) => { startIds.push(check.id) },
+    onCheckResult: (result) => { resultIds.push(result.id) },
+  })
+
+  assert.deepEqual(startIds, ['a', 'b'])
+  assert.deepEqual(resultIds, ['a', 'b'])
+})
+
+test('runVerificationChecks captures stderr output', async () => {
+  const cwd = await makeDir()
+  const checks: VerificationCheck[] = [
+    { id: 'stderr_check', name: 'Stderr Check', command: 'echo "error output" >&2; exit 1' },
+  ]
+  const result = await runVerificationChecks({ cwd, checks, timeoutMs: 5000 })
+  assert.equal(result.results[0]?.status, 'failed')
+  assert.match(result.results[0]?.output ?? '', /error output/)
+})
+
+test('runVerificationChecks truncates output at maxOutputChars', async () => {
+  const cwd = await makeDir()
+  const checks: VerificationCheck[] = [
+    { id: 'verbose', name: 'Verbose', command: 'node -e "process.stdout.write(\'x\'.repeat(3000))"' },
+  ]
+  const result = await runVerificationChecks({ cwd, checks, timeoutMs: 5000, maxOutputChars: 120 })
+  const output = result.results[0]?.output ?? ''
+  assert.ok(output.length <= 220, `Output length (${output.length}) should respect low maxOutputChars`)
+  assert.match(output, /truncated/, 'Truncation marker should be present')
+})
+
+test('runVerificationChecks does not skip when requiresAnyCommands has at least one available command', async () => {
+  const cwd = await makeDir()
+  const checks: VerificationCheck[] = [
+    {
+      id: 'any_cmd',
+      name: 'Any Command',
+      command: 'echo ok',
+      requiresAnyCommands: ['definitely-missing-command-xyz', 'bash'],
+    },
+  ]
+  const result = await runVerificationChecks({ cwd, checks, timeoutMs: 5000 })
+  assert.equal(result.results[0]?.status, 'passed')
+})
+
+test('runVerificationChecks skips when all requiresAnyCommands are missing', async () => {
+  const cwd = await makeDir()
+  const checks: VerificationCheck[] = [
+    {
+      id: 'any_missing',
+      name: 'Any Missing',
+      command: 'echo ok',
+      requiresAnyCommands: ['definitely-missing-command-xyz', 'another-missing-command-xyz'],
+    },
+  ]
+  const result = await runVerificationChecks({ cwd, checks, timeoutMs: 5000 })
+  assert.equal(result.results[0]?.status, 'skipped')
+  assert.match(result.results[0]?.output ?? '', /missing any command/i)
+})
+
+test('runVerificationChecks allPassed is true when all checks are skipped', async () => {
+  const cwd = await makeDir()
+  delete process.env.MERLION_FAKE_KEY_A
+  delete process.env.MERLION_FAKE_KEY_B
+  const checks: VerificationCheck[] = [
+    { id: 'skip1', name: 'Skip 1', command: 'exit 1', requiresEnv: ['MERLION_FAKE_KEY_A'] },
+    { id: 'skip2', name: 'Skip 2', command: 'exit 1', requiresEnv: ['MERLION_FAKE_KEY_B'] },
+  ]
+  const result = await runVerificationChecks({ cwd, checks })
+  assert.equal(result.allPassed, true)
+  assert.ok(result.results.every((r) => r.status === 'skipped'))
+})
+
+test('runVerificationChecks records correct exitCode and durationMs', async () => {
+  const cwd = await makeDir()
+  const checks: VerificationCheck[] = [
+    { id: 'exit5', name: 'Exit 5', command: 'exit 5' },
+  ]
+  const result = await runVerificationChecks({ cwd, checks, timeoutMs: 5000 })
+  assert.equal(result.results[0]?.exitCode, 5)
+  assert.ok((result.results[0]?.durationMs ?? -1) >= 0, 'durationMs should be non-negative')
+})

@@ -57,6 +57,15 @@ async function commandMissing(commands?: string[]): Promise<string[]> {
   return missing
 }
 
+async function hasAnyCommand(commands?: string[]): Promise<boolean> {
+  const candidates = commands ?? []
+  if (candidates.length === 0) return true
+  for (const command of candidates) {
+    if (await commandExists(command)) return true
+  }
+  return false
+}
+
 function trimOutput(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text
   return `${text.slice(0, Math.max(0, maxChars - 40))}\n[...verification output truncated...]`
@@ -109,7 +118,9 @@ export async function runVerificationChecks(
   options: RunVerificationChecksOptions
 ): Promise<VerificationRunResult> {
   const timeoutMs = Math.max(1000, Math.floor(options.timeoutMs ?? 180_000))
-  const maxOutputChars = Math.max(500, Math.floor(options.maxOutputChars ?? 8000))
+  const requestedMax = options.maxOutputChars
+  const parsedMax = Number.isFinite(requestedMax) ? Math.floor(requestedMax as number) : 8000
+  const maxOutputChars = parsedMax > 0 ? parsedMax : 8000
   const results: VerificationCheckResult[] = []
 
   for (const check of options.checks) {
@@ -141,6 +152,22 @@ export async function runVerificationChecks(
         durationMs: 0,
         exitCode: null,
         output: `Skipped: missing command ${missingCommands.join(', ')}`,
+        timedOut: false
+      }
+      results.push(skipped)
+      await options.onCheckResult?.(skipped)
+      continue
+    }
+
+    if (!(await hasAnyCommand(check.requiresAnyCommands))) {
+      const skipped: VerificationCheckResult = {
+        id: check.id,
+        name: check.name,
+        command: check.command,
+        status: 'skipped',
+        durationMs: 0,
+        exitCode: null,
+        output: `Skipped: missing any command from ${check.requiresAnyCommands?.join(', ') ?? ''}`,
         timedOut: false
       }
       results.push(skipped)

@@ -7,6 +7,8 @@ export interface VerificationCheck {
   command: string
   requiresEnv?: string[]
   requiresCommands?: string[]
+  // At least one command in this list must exist.
+  requiresAnyCommands?: string[]
 }
 
 interface PackageJsonLike {
@@ -20,6 +22,7 @@ interface VerifyConfigLike {
     command?: unknown
     requiresEnv?: unknown
     requiresCommands?: unknown
+    requiresAnyCommands?: unknown
   }>
 }
 
@@ -71,12 +74,18 @@ function normalizeCheck(raw: RawVerifyCheck): VerificationCheck | null {
   if (typeof raw.id !== 'string' || raw.id.trim() === '') return null
   if (typeof raw.name !== 'string' || raw.name.trim() === '') return null
   if (typeof raw.command !== 'string' || raw.command.trim() === '') return null
+  const command = raw.command.trim()
+  const requiresEnv = toStringArray(raw.requiresEnv)
+  const requiresCommands = toStringArray(raw.requiresCommands)
+  const requiresAnyCommands = toStringArray(raw.requiresAnyCommands)
+  const inferredCommand = requiresCommands || requiresAnyCommands ? undefined : inferCommandBinary(command)
   return {
     id: raw.id.trim(),
     name: raw.name.trim(),
-    command: raw.command.trim(),
-    requiresEnv: toStringArray(raw.requiresEnv),
-    requiresCommands: toStringArray(raw.requiresCommands)
+    command,
+    requiresEnv,
+    requiresCommands: requiresCommands ?? (inferredCommand ? [inferredCommand] : undefined),
+    requiresAnyCommands
   }
 }
 
@@ -95,8 +104,8 @@ async function loadCustomChecks(cwd: string): Promise<VerificationCheck[] | null
       const checks = (parsed.checks ?? [])
         .map((item) => normalizeCheck(item))
         .filter((item): item is VerificationCheck => item !== null)
-      if (checks.length > 0) return checks
-      return null
+      // Explicit config file (even empty checks) means "do not auto-discover".
+      return checks
     } catch {
       return null
     }
@@ -136,9 +145,10 @@ function buildCheck(
   id: string,
   name: string,
   command: string,
-  extras?: { requiresEnv?: string[]; requiresCommands?: string[] }
+  extras?: { requiresEnv?: string[]; requiresCommands?: string[]; requiresAnyCommands?: string[] }
 ): VerificationCheck {
   const requiresCommands = extras?.requiresCommands ?? (() => {
+    if (extras?.requiresAnyCommands) return undefined
     const inferred = inferCommandBinary(command)
     return inferred ? [inferred] : undefined
   })()
@@ -147,8 +157,19 @@ function buildCheck(
     name,
     command,
     requiresEnv: extras?.requiresEnv,
-    requiresCommands
+    requiresCommands,
+    requiresAnyCommands: extras?.requiresAnyCommands
   }
+}
+
+function pythonModuleCommand(moduleAndArgs: string): string {
+  return [
+    'if command -v python3 >/dev/null 2>&1; then',
+    `  python3 -m ${moduleAndArgs};`,
+    'else',
+    `  python -m ${moduleAndArgs};`,
+    'fi'
+  ].join(' ')
 }
 
 function isLikelyVerificationCommand(command: string): boolean {
@@ -324,13 +345,19 @@ async function discoverPythonChecks(cwd: string): Promise<VerificationCheck[]> {
     hasTomlSection(pyprojectText, 'tool.pytest') ||
     hasTomlSection(pyprojectText, 'tool.pytest.ini_options')
   ) {
-    pushUnique(checks, buildCheck('python_test', 'Python Tests', 'python -m pytest -q'))
+    pushUnique(checks, buildCheck('python_test', 'Python Tests', pythonModuleCommand('pytest -q'), {
+      requiresAnyCommands: ['python3', 'python']
+    }))
   }
   if (hasMypyIni || hasTomlSection(pyprojectText, 'tool.mypy')) {
-    pushUnique(checks, buildCheck('python_typecheck', 'Python TypeCheck', 'python -m mypy .'))
+    pushUnique(checks, buildCheck('python_typecheck', 'Python TypeCheck', pythonModuleCommand('mypy .'), {
+      requiresAnyCommands: ['python3', 'python']
+    }))
   }
   if (hasRuffToml || hasTomlSection(pyprojectText, 'tool.ruff')) {
-    pushUnique(checks, buildCheck('python_lint', 'Python Lint', 'python -m ruff check .'))
+    pushUnique(checks, buildCheck('python_lint', 'Python Lint', pythonModuleCommand('ruff check .'), {
+      requiresAnyCommands: ['python3', 'python']
+    }))
   }
 
   return checks
@@ -475,7 +502,7 @@ async function discoverDartChecks(cwd: string): Promise<VerificationCheck[]> {
 
 export async function discoverVerificationChecks(cwd: string): Promise<VerificationCheck[]> {
   const customChecks = await loadCustomChecks(cwd)
-  if (customChecks && customChecks.length > 0) {
+  if (customChecks !== null) {
     return customChecks
   }
 
