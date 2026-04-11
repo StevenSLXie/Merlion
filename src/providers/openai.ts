@@ -85,7 +85,8 @@ export class OpenAICompatProvider implements ModelProvider {
       usage: {
         prompt_tokens: json.usage?.prompt_tokens ?? 0,
         completion_tokens: json.usage?.completion_tokens ?? 0,
-        cached_tokens: extractCachedTokens(json.usage)
+        cached_tokens: extractCachedTokens(json.usage),
+        provider: typeof json.provider === 'string' ? json.provider : undefined
       }
     }
   }

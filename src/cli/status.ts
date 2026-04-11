@@ -9,7 +9,11 @@ function formatPct(numerator: number, denominator: number): string {
   return `${((numerator / denominator) * 100).toFixed(1)}%`
 }
 
-export function formatCliStatusLine(snapshot: UsageSnapshot, estimatedCost?: number): string {
+export function formatCliStatusLine(
+  snapshot: UsageSnapshot,
+  estimatedCost?: number,
+  provider?: string
+): string {
   const cachedPct = formatPct(snapshot.totals.cached_tokens, snapshot.totals.prompt_tokens)
   const parts = [
     `turn ${snapshot.turn}`,
@@ -18,6 +22,9 @@ export function formatCliStatusLine(snapshot: UsageSnapshot, estimatedCost?: num
   ]
   if (snapshot.turn >= 3 && snapshot.totals.cached_tokens === 0) {
     parts.push('no cache hits yet (model/provider may not support caching)')
+  }
+  if (provider && provider.trim() !== '') {
+    parts.push(`provider ${provider}`)
   }
   if (typeof estimatedCost === 'number' && Number.isFinite(estimatedCost) && estimatedCost >= 0) {
     parts.push(`est $${estimatedCost.toFixed(6)}`)

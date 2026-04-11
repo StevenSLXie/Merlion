@@ -17,6 +17,7 @@ export interface UsageEntry {
   timestamp: string
   session_id: string
   model: string
+  provider?: string
   prompt_tokens: number
   completion_tokens: number
   cached_tokens: number | null

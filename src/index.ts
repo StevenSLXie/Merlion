@@ -322,6 +322,7 @@ async function main(): Promise<void> {
           timestamp: new Date().toISOString(),
           session_id: session.sessionId,
           model: options.model,
+          provider: usage.provider,
           prompt_tokens: usage.prompt_tokens,
           completion_tokens: usage.completion_tokens,
           cached_tokens: usage.cached_tokens ?? null,
@@ -329,7 +330,7 @@ async function main(): Promise<void> {
         })
         const snapshot = usageTracker.record(usage)
         const estimatedCost = usageRates ? calculateUsageCostUsd(snapshot.totals, usageRates) : undefined
-        ui.onUsage(snapshot, estimatedCost)
+        ui.onUsage(snapshot, estimatedCost, usage.provider)
       },
       onTurnStart: ({ turn }) => {
         ui.onTurnStart({ turn })

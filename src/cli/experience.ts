@@ -505,8 +505,8 @@ export class CliExperience {
     }
   }
 
-  onUsage(snapshot: UsageSnapshot, estimatedCost?: number): void {
-    const line = formatCliStatusLine(snapshot, estimatedCost)
+  onUsage(snapshot: UsageSnapshot, estimatedCost?: number, provider?: string): void {
+    const line = formatCliStatusLine(snapshot, estimatedCost, provider)
     if (this.tuiEnabled) {
       this.tuiStatusLine = line
       this.renderTuiFrame()

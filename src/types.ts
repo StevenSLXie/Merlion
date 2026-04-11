@@ -23,6 +23,7 @@ export interface Usage {
   prompt_tokens: number
   completion_tokens: number
   cached_tokens?: number | null
+  provider?: string
 }
 
 export interface AssistantResponse {
