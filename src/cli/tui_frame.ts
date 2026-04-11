@@ -1,3 +1,5 @@
+import { clipToWidth, padToWidth } from './char_width.ts'
+
 export interface TuiFrameInput {
   width: number
   height: number
@@ -5,18 +7,6 @@ export interface TuiFrameInput {
   subtitle: string
   status: string
   bodyLines: string[]
-}
-
-function clip(text: string, maxWidth: number): string {
-  if (maxWidth < 1) return ''
-  if (text.length <= maxWidth) return text
-  if (maxWidth === 1) return '…'
-  return `${text.slice(0, maxWidth - 1)}…`
-}
-
-function pad(text: string, width: number): string {
-  if (text.length >= width) return text
-  return `${text}${' '.repeat(width - text.length)}`
 }
 
 function normalizeDimension(value: number, min: number, max: number): number {
@@ -36,17 +26,17 @@ export function createTuiFrame(input: TuiFrameInput): string {
 
   const lines: string[] = [
     `╔${'═'.repeat(inner)}╗`,
-    `║ ${pad(clip(input.title, contentWidth), contentWidth)} ║`,
-    `║ ${pad(clip(input.subtitle, contentWidth), contentWidth)} ║`,
+    `║ ${padToWidth(clipToWidth(input.title, contentWidth), contentWidth)} ║`,
+    `║ ${padToWidth(clipToWidth(input.subtitle, contentWidth), contentWidth)} ║`,
     `╠${'═'.repeat(inner)}╣`,
   ]
 
   for (const line of body) {
-    lines.push(`║ ${pad(clip(line, contentWidth), contentWidth)} ║`)
+    lines.push(`║ ${padToWidth(clipToWidth(line, contentWidth), contentWidth)} ║`)
   }
 
   lines.push(`╠${'═'.repeat(inner)}╣`)
-  lines.push(`║ ${pad(clip(input.status, contentWidth), contentWidth)} ║`)
+  lines.push(`║ ${padToWidth(clipToWidth(input.status, contentWidth), contentWidth)} ║`)
   lines.push(`╚${'═'.repeat(inner)}╝`)
   return lines.join('\n')
 }

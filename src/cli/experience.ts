@@ -5,6 +5,7 @@ import { buildAssistantRenderPlan, type MessageTone } from './message_content.ts
 import { formatCliStatusLine } from './status.ts'
 import { createTuiFrame } from './tui_frame.ts'
 import { parseTuiKeyAction } from './keybindings.ts'
+import { plainDisplayWidth } from './char_width.ts'
 import type { ToolUiPayload } from '../tools/types.ts'
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -54,16 +55,14 @@ function createColors(enabled: boolean): ColorSet {
   }
 }
 
-function plainLength(text: string): number {
-  return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '').length
-}
+// plainDisplayWidth is imported from char_width.ts
 
 function stripAnsi(text: string): string {
   return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
 }
 
 function padRight(text: string, length: number): string {
-  const visible = plainLength(text)
+  const visible = plainDisplayWidth(text)
   if (visible >= length) return text
   return `${text}${' '.repeat(length - visible)}`
 }
@@ -168,8 +167,7 @@ export class CliExperience {
         : process.env.MERLION_CLI_TUI === '1')
     this.useColor =
       interactiveTty &&
-      process.env.NO_COLOR !== '1' &&
-      !this.tuiEnabled
+      process.env.NO_COLOR !== '1'
     this.colors = createColors(this.useColor)
     this.maxDiffLines = parsePositiveInt(process.env.MERLION_CLI_DIFF_MAX_LINES, 120)
     this.markdownEnabled = process.env.MERLION_CLI_MARKDOWN !== '0'
@@ -428,7 +426,7 @@ export class CliExperience {
       const frame = SPINNER_FRAMES[this.spinnerFrame % SPINNER_FRAMES.length]!
       this.spinnerFrame += 1
       const raw = `${this.c('cyan', frame)} ${this.c('dim', this.spinnerText)}`
-      const width = Math.max(this.spinnerWidth, plainLength(raw))
+      const width = Math.max(this.spinnerWidth, plainDisplayWidth(raw))
       this.spinnerWidth = width
       process.stdout.write(`\r${padRight(raw, width)}`)
     }
