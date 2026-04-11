@@ -83,3 +83,30 @@ test('execute preserves output ordering', async () => {
   )
 })
 
+test('execute emits tool start/result hooks', async () => {
+  const registry = new ToolRegistry()
+  registry.register(tool('echo_a', true))
+  registry.register(tool('echo_b', false))
+
+  const events: string[] = []
+  const calls = [call('a', 'echo_a'), call('b', 'echo_b')]
+
+  const result = await executeToolCalls({
+    toolCalls: calls,
+    registry,
+    toolContext: { cwd: process.cwd() },
+    maxConcurrency: 10,
+    onToolCallStart: ({ call, index, total }) => {
+      events.push(`start:${index}/${total}:${call.function.name}`)
+    },
+    onToolCallResult: ({ call, index, total, durationMs }) => {
+      events.push(`done:${index}/${total}:${call.function.name}:${durationMs >= 0}`)
+    },
+  })
+
+  assert.equal(result.length, 2)
+  assert.equal(events.some((e) => e.startsWith('start:1/2:echo_a')), true)
+  assert.equal(events.some((e) => e.startsWith('start:2/2:echo_b')), true)
+  assert.equal(events.some((e) => e.startsWith('done:1/2:echo_a:')), true)
+  assert.equal(events.some((e) => e.startsWith('done:2/2:echo_b:')), true)
+})

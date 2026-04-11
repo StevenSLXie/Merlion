@@ -1,14 +1,14 @@
 # Merlion Tracker
 
-Last updated: 2026-04-11T18:15:00+08:00
+Last updated: 2026-04-11T18:30:00+08:00
 
 ## Active Sprint
 
 - Sprint: `Phase1-CLI-UX-V1`
-- Focus: tool可视化与状态反馈
+- Focus: 输出可读性清洗与成本回归闸门
 - Exit criteria:
-  - CLI 展示 tool 执行进度
-  - CLI 展示运行状态/turn 状态
+  - CLI 输出清洗（长 token/ANSI）
+  - 成本基线与 gate 原型
   - `npm run test:all` 和 `npm run typecheck` 通过
 
 ## Task Board
@@ -37,8 +37,8 @@ Last updated: 2026-04-11T18:15:00+08:00
 | M7-01 | usage aggregator module + tests | done | codex | feature 014 |
 | M7-02 | CLI real-time token usage line | done | codex | in `src/index.ts` |
 | M7-03 | E2E usage archive output | done | codex | `.merlion/e2e-usage` |
-| M8-01 | runtime/executor event hooks | todo | codex | feature 015 |
-| M8-02 | line-based renderer | todo | codex | feature 015 |
+| M8-01 | runtime/executor event hooks | done | codex | feature 017 |
+| M8-02 | line-based renderer | done | codex | feature 017 |
 | M8-03 | output sanitization | todo | codex | feature 015 |
 | M9-01 | cost baseline schema | todo | codex | feature 016 |
 | M9-02 | cost gate checker | todo | codex | feature 016 |

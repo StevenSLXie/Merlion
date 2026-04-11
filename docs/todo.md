@@ -60,8 +60,8 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 
 ## Milestone 8: CLI UX V1 (P1)
 
-- [ ] `M8-01` Runtime/executor event hooks for tool visualization
-- [ ] `M8-02` Line-based renderer for status/tool progress
+- [x] `M8-01` Runtime/executor event hooks for tool visualization
+- [x] `M8-02` Line-based renderer for status/tool progress
 - [ ] `M8-03` Output sanitization for long opaque tokens/ansi noise
 
 ## Milestone 9: Cost Regression Gate (P1)

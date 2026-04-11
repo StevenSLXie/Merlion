@@ -284,3 +284,54 @@ test('loop handles tool_calls finish_reason with empty tool_calls array', async 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'no tools called')
 })
+
+test('loop emits turn/assistant/tool hooks for cli rendering', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'ok' })],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEchoTool())
+  const events: string[] = []
+
+  await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 10,
+    onTurnStart: ({ turn }) => {
+      events.push(`turn:${turn}`)
+    },
+    onAssistantResponse: ({ turn, finish_reason, tool_calls_count }) =>
+      {
+        events.push(`assistant:${turn}:${finish_reason}:${tool_calls_count}`)
+      },
+    onToolCallStart: ({ call }) => {
+      events.push(`tool_start:${call.function.name}`)
+    },
+    onToolCallResult: ({ call }) => {
+      events.push(`tool_done:${call.function.name}`)
+    },
+  })
+
+  assert.equal(events.includes('turn:1'), true)
+  assert.equal(events.includes('assistant:1:tool_calls:1'), true)
+  assert.equal(events.includes('tool_start:echo_tool'), true)
+  assert.equal(events.includes('tool_done:echo_tool'), true)
+  assert.equal(events.includes('turn:2'), true)
+  assert.equal(events.includes('assistant:2:stop:0'), true)
+})

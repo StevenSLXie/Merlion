@@ -42,22 +42,40 @@ async function runToolCall(
   call: ToolCall,
   registry: ToolRegistry,
   toolContext: ToolContext,
-): Promise<ChatMessage> {
+): Promise<{ message: ChatMessage; isError: boolean }> {
   const tool = registry.get(call.function.name)
   if (!tool) {
     return {
-      role: 'tool',
-      tool_call_id: call.id,
-      content: `Unknown tool: ${call.function.name}`
+      message: {
+        role: 'tool',
+        tool_call_id: call.id,
+        content: `Unknown tool: ${call.function.name}`
+      },
+      isError: true
     }
   }
   const args = parseToolArgs(call.function.arguments)
   const result = await tool.execute(args, toolContext)
   return {
-    role: 'tool',
-    tool_call_id: call.id,
-    content: result.content && result.content.trim() !== '' ? result.content : '(no output)'
+    message: {
+      role: 'tool',
+      tool_call_id: call.id,
+      content: result.content && result.content.trim() !== '' ? result.content : '(no output)'
+    },
+    isError: result.isError
   }
+}
+
+export interface ToolCallStartEvent {
+  call: ToolCall
+  index: number
+  total: number
+}
+
+export interface ToolCallResultEvent extends ToolCallStartEvent {
+  message: ChatMessage
+  isError: boolean
+  durationMs: number
 }
 
 async function executeSafeBatch(
@@ -65,8 +83,12 @@ async function executeSafeBatch(
   registry: ToolRegistry,
   toolContext: ToolContext,
   maxConcurrency: number,
-): Promise<ChatMessage[]> {
-  const results: ChatMessage[] = new Array(batch.length)
+  indexById: Map<string, number>,
+  total: number,
+  onToolCallStart?: (event: ToolCallStartEvent) => Promise<void> | void,
+  onToolCallResult?: (event: ToolCallResultEvent) => Promise<void> | void,
+): Promise<Array<{ message: ChatMessage; isError: boolean }>> {
+  const results: Array<{ message: ChatMessage; isError: boolean }> = new Array(batch.length)
   let cursor = 0
 
   async function worker(): Promise<void> {
@@ -74,7 +96,21 @@ async function executeSafeBatch(
       const index = cursor
       cursor += 1
       if (index >= batch.length) return
-      results[index] = await runToolCall(batch[index]!, registry, toolContext)
+      const call = batch[index]!
+      const displayIndex = indexById.get(call.id) ?? index + 1
+      await onToolCallStart?.({ call, index: displayIndex, total })
+      const startedAt = Date.now()
+      const outcome = await runToolCall(call, registry, toolContext)
+      const durationMs = Date.now() - startedAt
+      results[index] = outcome
+      await onToolCallResult?.({
+        call,
+        index: displayIndex,
+        total,
+        message: outcome.message,
+        isError: outcome.isError,
+        durationMs
+      })
     }
   }
 
@@ -88,21 +124,51 @@ export interface ExecuteToolCallsOptions {
   registry: ToolRegistry
   toolContext: ToolContext
   maxConcurrency: number
+  onToolCallStart?: (event: ToolCallStartEvent) => Promise<void> | void
+  onToolCallResult?: (event: ToolCallResultEvent) => Promise<void> | void
 }
 
 export async function executeToolCalls(options: ExecuteToolCallsOptions): Promise<ChatMessage[]> {
   const { toolCalls, registry, toolContext } = options
   const batches = partitionToolCalls(toolCalls, registry)
+  const total = toolCalls.length
+  const indexById = new Map<string, number>()
+  toolCalls.forEach((call, i) => indexById.set(call.id, i + 1))
   const resultsById = new Map<string, ChatMessage>()
 
   for (const batch of batches) {
     if (batch.length === 0) continue
     const safe = batch.every((call) => isConcurrencySafe(call, registry))
-    const batchResults = safe
-      ? await executeSafeBatch(batch, registry, toolContext, options.maxConcurrency)
-      : [await runToolCall(batch[0]!, registry, toolContext)]
+    const batchResults: Array<{ message: ChatMessage; isError: boolean }> = safe
+      ? await executeSafeBatch(
+          batch,
+          registry,
+          toolContext,
+          options.maxConcurrency,
+          indexById,
+          total,
+          options.onToolCallStart,
+          options.onToolCallResult
+        )
+      : await (async () => {
+          const call = batch[0]!
+          const index = indexById.get(call.id) ?? 1
+          await options.onToolCallStart?.({ call, index, total })
+          const startedAt = Date.now()
+          const outcome = await runToolCall(call, registry, toolContext)
+          const durationMs = Date.now() - startedAt
+          await options.onToolCallResult?.({
+            call,
+            index,
+            total,
+            message: outcome.message,
+            isError: outcome.isError,
+            durationMs
+          })
+          return [outcome]
+        })()
 
-    for (const message of batchResults) {
+    for (const { message } of batchResults) {
       if (message.tool_call_id) {
         resultsById.set(message.tool_call_id, message)
       }
@@ -117,4 +183,3 @@ export async function executeToolCalls(options: ExecuteToolCallsOptions): Promis
     }
   ))
 }
-

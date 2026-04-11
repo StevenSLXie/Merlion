@@ -2,6 +2,13 @@ import { cwd as currentCwd } from 'node:process'
 import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 
+import {
+  formatAssistantResponseEvent,
+  formatToolResultEvent,
+  formatToolStartEvent,
+  formatTurnStartEvent,
+  summarizeToolArguments
+} from './cli/render.ts'
 import { runReplSession } from './cli/repl.ts'
 import { createPermissionStore } from './permissions/store.ts'
 import { OpenAICompatProvider } from './providers/openai.ts'
@@ -194,6 +201,34 @@ async function main(): Promise<void> {
         const snapshot = usageTracker.record(usage)
         const estimatedCost = usageRates ? calculateUsageCostUsd(snapshot.totals, usageRates) : undefined
         process.stdout.write(`${formatUsageProgressLine(snapshot, estimatedCost)}\n`)
+      },
+      onTurnStart: ({ turn }) => {
+        process.stdout.write(`${formatTurnStartEvent({ turn })}\n`)
+      },
+      onAssistantResponse: ({ turn, finish_reason, tool_calls_count }) => {
+        process.stdout.write(`${formatAssistantResponseEvent({ turn, finish_reason, tool_calls_count })}\n`)
+      },
+      onToolCallStart: ({ call, index, total }) => {
+        const summary = summarizeToolArguments(call.function.arguments)
+        process.stdout.write(
+          `${formatToolStartEvent({
+            index,
+            total,
+            name: call.function.name,
+            summary
+          })}\n`
+        )
+      },
+      onToolCallResult: ({ call, index, total, durationMs, isError }) => {
+        process.stdout.write(
+          `${formatToolResultEvent({
+            index,
+            total,
+            name: call.function.name,
+            isError,
+            durationMs
+          })}\n`
+        )
       }
     })
     history = result.state.messages

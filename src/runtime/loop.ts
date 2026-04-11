@@ -1,6 +1,6 @@
 import type { ChatMessage, LoopState, LoopTerminal, ModelProvider } from '../types.js'
 import type { PermissionStore, ToolContext } from '../tools/types.js'
-import { executeToolCalls } from './executor.ts'
+import { executeToolCalls, type ToolCallResultEvent, type ToolCallStartEvent } from './executor.ts'
 import { withRetry } from './retry.ts'
 import { ToolRegistry } from '../tools/registry.ts'
 
@@ -16,6 +16,15 @@ export interface RunLoopOptions {
   persistInitialMessages?: boolean
   onMessageAppended?: (message: ChatMessage) => Promise<void> | void
   onUsage?: (usage: { prompt_tokens: number; completion_tokens: number; cached_tokens?: number | null }) => Promise<void> | void
+  onTurnStart?: (event: { turn: number }) => Promise<void> | void
+  onAssistantResponse?: (event: {
+    turn: number
+    finish_reason: string
+    tool_calls_count: number
+    content: string | null
+  }) => Promise<void> | void
+  onToolCallStart?: (event: ToolCallStartEvent) => Promise<void> | void
+  onToolCallResult?: (event: ToolCallResultEvent) => Promise<void> | void
 }
 
 export interface RunLoopResult {
@@ -101,6 +110,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
 
     let assistant
     try {
+      await options.onTurnStart?.({ turn: state.turnCount + 1 })
       assistant = await withRetry(
         () => options.provider.complete(state.messages, options.registry.getAll()),
         { maxAttempts: 5, baseDelayMs: 200, maxDelayMs: 32_000 },
@@ -119,6 +129,12 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     state.messages.push(assistantMessage)
     await options.onMessageAppended?.(assistantMessage)
     await options.onUsage?.(assistant.usage)
+    await options.onAssistantResponse?.({
+      turn: state.turnCount,
+      finish_reason: assistant.finish_reason,
+      tool_calls_count: assistant.tool_calls?.length ?? 0,
+      content: assistant.content
+    })
 
     // ── tool_calls ──────────────────────────────────────────────────────────
     if (
@@ -132,6 +148,8 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         registry: options.registry,
         toolContext,
         maxConcurrency: Number.isFinite(maxConcurrency) ? Math.max(1, Math.floor(maxConcurrency)) : 10,
+        onToolCallStart: options.onToolCallStart,
+        onToolCallResult: options.onToolCallResult,
       })
 
       for (const toolMsg of toolMessages) {
