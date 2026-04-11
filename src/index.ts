@@ -19,6 +19,9 @@ import {
 } from './runtime/session.ts'
 import { calculateUsageCostUsd, createUsageTracker, type UsageRates } from './runtime/usage.ts'
 import { buildDefaultRegistry } from './tools/builtin/index.ts'
+import { discoverVerificationChecks } from './verification/checks.ts'
+import { runVerificationFixRounds } from './verification/fix_round.ts'
+import { runVerificationChecks } from './verification/runner.ts'
 
 interface CliOptions {
   task: string
@@ -28,6 +31,7 @@ interface CliOptions {
   permissionMode: 'interactive' | 'auto_allow' | 'auto_deny'
   resumeSessionId?: string
   repl: boolean
+  verify: boolean
 }
 
 function parseArgs(argv: string[]): CliOptions | null | 'help' {
@@ -38,6 +42,7 @@ function parseArgs(argv: string[]): CliOptions | null | 'help' {
   let permissionMode: CliOptions['permissionMode'] = 'interactive'
   let resumeSessionId: string | undefined
   let repl = false
+  let verify = process.env.MERLION_VERIFY === '1'
   const taskParts: string[] = []
 
   while (args.length > 0) {
@@ -70,6 +75,14 @@ function parseArgs(argv: string[]): CliOptions | null | 'help' {
       repl = true
       continue
     }
+    if (arg === '--verify') {
+      verify = true
+      continue
+    }
+    if (arg === '--no-verify') {
+      verify = false
+      continue
+    }
     if (arg === '--help' || arg === '-h') {
       return 'help'
     }
@@ -85,13 +98,14 @@ function parseArgs(argv: string[]): CliOptions | null | 'help' {
     cwd,
     permissionMode,
     resumeSessionId,
-    repl
+    repl,
+    verify
   }
 }
 
 function printUsage(): void {
   process.stdout.write(
-    'Usage: merlion [--model <id>] [--base-url <url>] [--cwd <path>] [--auto-allow|--auto-deny] [--resume <id>] [--repl] "<task>"\n'
+    'Usage: merlion [--model <id>] [--base-url <url>] [--cwd <path>] [--auto-allow|--auto-deny] [--resume <id>] [--repl] [--verify|--no-verify] "<task>"\n'
   )
 }
 
@@ -329,6 +343,49 @@ async function main(): Promise<void> {
   if (result.terminal !== 'completed') {
     process.stderr.write(`Terminal state: ${result.terminal}\n`)
     process.exitCode = 1
+    return
+  }
+
+  if (!options.repl && options.verify) {
+    const checks = await discoverVerificationChecks(options.cwd)
+    if (checks.length > 0) {
+      const verifyMaxRounds = Math.max(0, Math.floor(parseEnvNumber('MERLION_VERIFY_MAX_ROUNDS') ?? 2))
+      const verifyTimeoutMs = Math.max(1000, Math.floor(parseEnvNumber('MERLION_VERIFY_TIMEOUT_MS') ?? 180_000))
+      process.stdout.write(`[verify] discovered ${checks.length} checks\n`)
+
+      const outcome = await runVerificationFixRounds({
+        maxRounds: verifyMaxRounds,
+        runVerification: async () =>
+          runVerificationChecks({
+            cwd: options.cwd,
+            checks,
+            timeoutMs: verifyTimeoutMs,
+            onCheckResult: (item) => {
+              process.stdout.write(`[verify] ${item.status} ${item.name} (${item.durationMs}ms)\n`)
+            },
+          }),
+        runFixTurn: async (prompt, round) => {
+          ui.renderUserPrompt(`[verification round ${round}] ${prompt}`)
+          const fixResult = await runTurn(prompt)
+          ui.renderAssistantOutput(fixResult.finalText, fixResult.terminal)
+        },
+        onRound: ({ round, action }) => {
+          if (action === 'fix') {
+            process.stdout.write(`[verify] round ${round + 1}: applying automatic fix attempt\n`)
+          }
+          if (action === 'pass') {
+            process.stdout.write('[verify] all checks passed\n')
+          }
+        }
+      })
+
+      if (!outcome.passed) {
+        process.stderr.write('[verify] failed after max fix rounds\n')
+        process.exitCode = 1
+      }
+    } else {
+      process.stdout.write('[verify] no checks discovered\n')
+    }
   }
 }
 

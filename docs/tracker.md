@@ -1,13 +1,13 @@
 # Merlion Tracker
 
-Last updated: 2026-04-11T21:02:00+08:00
+Last updated: 2026-04-11T21:15:00+08:00
 
 ## Active Sprint
 
-- Sprint: `Phase1-Verification`
-- Focus: verification loop
+- Sprint: `Phase1-Hardening`
+- Focus: finish core type cleanup + e2e stability
 - Exit criteria:
-  - 验证链可发现并反馈失败
+  - 剩余 P0 TODO 清零
   - `npm run test:all` 和 `npm run typecheck` 通过
 
 ## Task Board
@@ -46,7 +46,7 @@ Last updated: 2026-04-11T21:02:00+08:00
 | M4-02 | compact summary | done | codex | `src/context/compact.ts` |
 | M5-01 | check discovery | done | codex | `src/verification/checks.ts` |
 | M5-02 | verification runner | done | codex | `src/verification/runner.ts` |
-| M5-03 | fix-round integration | in_progress | codex | next |
+| M5-03 | fix-round integration | done | codex | `src/verification/fix_round.ts` + `src/index.ts` |
 | M4-03 | AGENTS loader | done | codex | `src/artifacts/agents.ts` |
 | M4-04 | progress artifact | done | codex | `src/artifacts/progress.ts` |
 | M4-05 | codebase index loader | done | codex | `src/artifacts/codebase_index.ts` |
