@@ -1,7 +1,7 @@
 import { sanitizeRenderableText } from './sanitize.ts'
 import { looksLikeMarkdown, renderMarkdownLines } from './markdown.ts'
 
-export type MessageTone = 'plain' | 'heading' | 'list' | 'quote' | 'code' | 'rule' | 'table'
+export type MessageTone = 'plain' | 'heading' | 'list' | 'quote' | 'code' | 'code_meta' | 'rule' | 'table'
 
 export interface MessageRenderLine {
   tone: MessageTone

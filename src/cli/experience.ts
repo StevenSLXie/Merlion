@@ -2,6 +2,7 @@ import { sanitizeRenderableText } from './sanitize.ts'
 import type { UsageSnapshot } from '../runtime/usage.ts'
 import { renderEditDiffLines } from './diff.ts'
 import { buildAssistantRenderPlan, type MessageTone } from './message_content.ts'
+import { formatCliStatusLine } from './status.ts'
 import type { ToolUiPayload } from '../tools/types.ts'
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -201,6 +202,7 @@ export class CliExperience {
     if (tone === 'heading') return 'cyan'
     if (tone === 'list') return 'yellow'
     if (tone === 'quote') return 'dim'
+    if (tone === 'code_meta') return 'yellow'
     if (tone === 'code') return 'cyan'
     if (tone === 'rule') return 'dim'
     if (tone === 'table') return 'magenta'
@@ -227,6 +229,11 @@ export class CliExperience {
       }
       const colorCode = this.colorForMessageTone(line.tone)
       if (line.tone === 'heading') {
+        const text = colorCode ? this.c(colorCode, clipped) : clipped
+        this.printRawLine(`${prefix}${this.c('bold', text)}`)
+        continue
+      }
+      if (line.tone === 'code_meta') {
         const text = colorCode ? this.c(colorCode, clipped) : clipped
         this.printRawLine(`${prefix}${this.c('bold', text)}`)
         continue
@@ -387,13 +394,7 @@ export class CliExperience {
   }
 
   onUsage(snapshot: UsageSnapshot, estimatedCost?: number): void {
-    const cost = typeof estimatedCost === 'number' && Number.isFinite(estimatedCost)
-      ? ` · est $${estimatedCost.toFixed(6)}`
-      : ''
-    const line =
-      `${this.c('dim', 'tokens')} in ${snapshot.totals.prompt_tokens} · ` +
-      `out ${snapshot.totals.completion_tokens} · ` +
-      `cached ${snapshot.totals.cached_tokens}${this.c('dim', cost)}`
-    this.printRawLine(line)
+    const line = formatCliStatusLine(snapshot, estimatedCost)
+    this.printRawLine(this.c('dim', line))
   }
 }

@@ -1,7 +1,7 @@
 import { sanitizeRenderableText } from './sanitize.ts'
 
 export interface MarkdownRenderLine {
-  kind: 'plain' | 'heading' | 'list' | 'quote' | 'code' | 'rule' | 'table'
+  kind: 'plain' | 'heading' | 'list' | 'quote' | 'code' | 'code_meta' | 'rule' | 'table'
   text: string
 }
 
@@ -22,11 +22,20 @@ export function renderMarkdownLines(markdown: string): MarkdownRenderLine[] {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n')
   const rendered: MarkdownRenderLine[] = []
   let inCode = false
+  let codeLanguage = 'text'
 
   for (const line of lines) {
     const raw = sanitizeRenderableText(line)
-    if (/^```/.test(raw.trim())) {
-      inCode = !inCode
+    const fence = raw.trim().match(/^```(\S+)?$/)
+    if (fence) {
+      if (!inCode) {
+        codeLanguage = fence[1] ? sanitizeRenderableText(fence[1]) : 'text'
+        rendered.push({ kind: 'code_meta', text: `code:${codeLanguage}` })
+        inCode = true
+      } else {
+        inCode = false
+        codeLanguage = 'text'
+      }
       continue
     }
     if (inCode) {
