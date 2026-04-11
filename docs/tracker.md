@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-12T09:05:00+08:00
+Last updated: 2026-04-12T10:05:00+08:00
 
 ## Active Sprint
 
@@ -52,6 +52,9 @@ Last updated: 2026-04-12T09:05:00+08:00
 | M10-08 | file tool API compatibility alignment | done | codex | feature 046; read/write/edit aliases + replace_all |
 | M10-05 | wave2 advanced tools | todo | codex | pending research/implementation |
 | M11-01 | npm install color parity | done | codex | `bin/merlion.js` force color bootstrap |
+| M12-01 | version changelog policy gate | done | codex | feature 047; test enforces docs/change_log/v<version>.log |
+| M12-02 | codebase index artifact hygiene | done | codex | feature 047; moved to `.merlion/codebase_index.md` |
+| M12-03 | memory/config artifact path audit | done | codex | feature 047; progress/verify/todo defaults reviewed |
 | M7-01 | usage aggregator module + tests | done | codex | feature 014 |
 | M7-02 | CLI real-time token usage line | done | codex | in `src/index.ts` |
 | M7-03 | E2E usage archive output | done | codex | `.merlion/e2e-usage` |

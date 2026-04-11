@@ -98,7 +98,7 @@ export const todoWriteTool: ToolDefinition = {
       return { content: 'Invalid input: provide todos[] or item.', isError: true }
     }
 
-    const validated = validateAndResolveWorkspacePath(ctx.cwd, input.path ?? 'docs/todo.md')
+    const validated = validateAndResolveWorkspacePath(ctx.cwd, input.path ?? '.merlion/todo.md')
     if (!validated.ok) return { content: validated.error, isError: true }
     const checked = input.checked === true
     const line = `- [${checked ? 'x' : ' '}] ${item.trim()}`

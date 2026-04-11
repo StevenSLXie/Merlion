@@ -1,0 +1,20 @@
+Version: 0.1.4
+Date: 2026-04-12
+
+Changes:
+- Added bilingual README (EN + 中文) with recommended quick start:
+  npm install -g merlion
+- Improved bash tool reliability:
+  autocorrect accidental ".git ..." command prefix to "git ..."
+- Wave1 parity hardening:
+  bundled ripgrep integration and search/glob/grep behavior alignment
+- File tool compatibility alignment:
+  read/write/edit support file_path aliases; read supports offset/limit;
+  edit supports replace_all
+- Artifact hygiene:
+  moved generated codebase index from docs/codebase_index.md to
+  .merlion/codebase_index.md to avoid polluting tracked docs
+
+Policy:
+- For every version change in package.json, add:
+  docs/change_log/v<version>.log

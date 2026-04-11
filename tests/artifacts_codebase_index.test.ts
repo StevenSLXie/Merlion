@@ -26,10 +26,10 @@ async function makeRepo(): Promise<string> {
   return root
 }
 
-test('ensureCodebaseIndex creates docs/codebase_index.md', async () => {
+test('ensureCodebaseIndex creates .merlion/codebase_index.md', async () => {
   const repo = await makeRepo()
   const artifact = await ensureCodebaseIndex(repo)
-  assert.match(artifact.path, /docs\/codebase_index\.md$/)
+  assert.match(artifact.path, /\.merlion\/codebase_index\.md$/)
   assert.match(artifact.content, /# Codebase Index/)
   assert.match(artifact.content, /## Dev Scripts/)
   assert.match(artifact.content, /src\/index\.ts/)
@@ -40,7 +40,7 @@ test('updateCodebaseIndexWithChangedFiles records unique recent files', async ()
   await ensureCodebaseIndex(repo)
 
   await updateCodebaseIndexWithChangedFiles(repo, ['src/index.ts', 'tests/a.test.ts', 'src/index.ts'])
-  const text = await readFile(join(repo, 'docs', 'codebase_index.md'), 'utf8')
+  const text = await readFile(join(repo, '.merlion', 'codebase_index.md'), 'utf8')
   assert.match(text, /## Recent Changed Files/)
   const count = (text.match(/- changed: src\/index\.ts/g) ?? []).length
   assert.equal(count, 1)
@@ -48,7 +48,8 @@ test('updateCodebaseIndexWithChangedFiles records unique recent files', async ()
 
 test('readCodebaseIndex truncates by token budget', async () => {
   const repo = await makeRepo()
-  await writeFile(join(repo, 'docs', 'codebase_index.md'), `# Codebase Index\n\n${'x'.repeat(6000)}\n`, 'utf8')
+  await mkdir(join(repo, '.merlion'), { recursive: true })
+  await writeFile(join(repo, '.merlion', 'codebase_index.md'), `# Codebase Index\n\n${'x'.repeat(6000)}\n`, 'utf8')
   const out = await readCodebaseIndex(repo, { maxTokens: 120 })
   assert.equal(out.truncated, true)
   assert.match(out.text, /truncated/)

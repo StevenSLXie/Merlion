@@ -1,6 +1,6 @@
 import { access, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 
 export interface CodebaseIndexArtifact {
   path: string
@@ -125,13 +125,13 @@ function renderIndex(params: {
 
 async function resolveIndexPath(cwd: string): Promise<{ root: string; path: string }> {
   const root = await findProjectRoot(cwd)
-  return { root, path: join(root, 'docs', 'codebase_index.md') }
+  return { root, path: join(root, '.merlion', 'codebase_index.md') }
 }
 
 export async function ensureCodebaseIndex(cwd: string): Promise<CodebaseIndexArtifact> {
   const { root, path } = await resolveIndexPath(cwd)
   if (!(await fileExists(path))) {
-    await mkdir(join(path, '..'), { recursive: true })
+    await mkdir(dirname(path), { recursive: true })
     const topLevel = await listTopLevel(root)
     const scripts = await readScripts(root)
     const fileMap = await walkFiles(root, ['src', 'tests', 'docs'])

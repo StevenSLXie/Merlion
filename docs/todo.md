@@ -97,3 +97,9 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 ## Milestone 11: Packaging Parity (P1)
 
 - [x] `M11-01` npm global install default color parity (`bin/merlion.js` entry bootstrap)
+
+## Milestone 12: Release Governance & Artifact Hygiene (P1)
+
+- [x] `M12-01` Version changelog policy (`docs/change_log/v<version>.log`) + test gate
+- [x] `M12-02` Move generated codebase index to `.merlion/codebase_index.md`
+- [x] `M12-03` Audit memory/config artifacts paths (`progress/verify/todo`)

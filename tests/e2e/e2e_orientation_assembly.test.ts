@@ -7,7 +7,7 @@
  *   2. AGENTS.md content appears in the output text.
  *   3. Section metadata is accurate.
  *   4. Token estimate fits within the default budget.
- *   5. Side effects: progress.md and codebase_index.md are created on disk.
+ *   5. Side effects: progress.md and codebase_index.md are created under .merlion/.
  *
  * Does NOT require an API key — runs as part of the E2E suite for filesystem
  * integration coverage.
@@ -68,7 +68,7 @@ test('buildOrientationContext assembles all three sections and creates artifact 
     const progress = await readFile(join(sandbox, '.merlion', 'progress.md'), 'utf8')
     assert.match(progress, /Merlion Progress/, 'progress.md must be created with template header')
 
-    const index = await readFile(join(sandbox, 'docs', 'codebase_index.md'), 'utf8')
+    const index = await readFile(join(sandbox, '.merlion', 'codebase_index.md'), 'utf8')
     assert.match(index, /Codebase Index/, 'codebase_index.md must be created')
     assert.match(index, /Generated at:/, 'codebase_index.md must have a generation timestamp')
   } finally {

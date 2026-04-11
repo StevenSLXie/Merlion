@@ -14,7 +14,7 @@ async function makeRepo(): Promise<string> {
   await mkdir(join(root, '.merlion'), { recursive: true })
   await writeFile(join(root, 'AGENTS.md'), '# Repo Rules\nAlways run tests.\n', 'utf8')
   await writeFile(join(root, '.merlion', 'progress.md'), '# Merlion Progress\n\n## Objective\nShip it\n', 'utf8')
-  await writeFile(join(root, 'docs', 'codebase_index.md'), '# Codebase Index\n\n- src/index.ts\n', 'utf8')
+  await writeFile(join(root, '.merlion', 'codebase_index.md'), '# Codebase Index\n\n- src/index.ts\n', 'utf8')
   await writeFile(join(root, 'src', 'index.ts'), 'console.log("hi")\n', 'utf8')
   return root
 }

@@ -1,7 +1,7 @@
 /**
  * Integration: Codebase index lifecycle (no LLM required).
  *
- * Exercises the full generate → update → read lifecycle of docs/codebase_index.md:
+ * Exercises the full generate → update → read lifecycle of .merlion/codebase_index.md:
  *   1. ensureCodebaseIndex creates the file with top-level structure and file map.
  *   2. updateCodebaseIndexWithChangedFiles appends a "Recent Changed Files" section.
  *   3. Re-running update with a path already present deduplicates it (keeps once).
@@ -31,7 +31,7 @@ test('codebase index: generate, track changed files, deduplicate, and read with 
     assert.match(initial.content, /Top-level/, 'Index must have Top-level section')
 
     // File must be on disk
-    const rawFile = await readFile(join(sandbox, 'docs', 'codebase_index.md'), 'utf8')
+    const rawFile = await readFile(join(sandbox, '.merlion', 'codebase_index.md'), 'utf8')
     assert.match(rawFile, /Codebase Index/, 'File on disk must contain header')
 
     // ── Track changed files ───────────────────────────────────────────────────
@@ -39,7 +39,7 @@ test('codebase index: generate, track changed files, deduplicate, and read with 
       'src/runtime/loop.ts',
       'src/tools/builtin/bash.ts',
     ])
-    const afterFirst = await readFile(join(sandbox, 'docs', 'codebase_index.md'), 'utf8')
+    const afterFirst = await readFile(join(sandbox, '.merlion', 'codebase_index.md'), 'utf8')
     assert.match(afterFirst, /Recent Changed Files/, '"Recent Changed Files" section must appear')
     assert.match(afterFirst, /src\/runtime\/loop\.ts/, 'First changed file must appear')
     assert.match(afterFirst, /src\/tools\/builtin\/bash\.ts/, 'Second changed file must appear')
@@ -48,7 +48,7 @@ test('codebase index: generate, track changed files, deduplicate, and read with 
     await updateCodebaseIndexWithChangedFiles(sandbox, [
       'src/runtime/loop.ts',  // already tracked — must not appear twice
     ])
-    const afterSecond = await readFile(join(sandbox, 'docs', 'codebase_index.md'), 'utf8')
+    const afterSecond = await readFile(join(sandbox, '.merlion', 'codebase_index.md'), 'utf8')
     const occurrences = (afterSecond.match(/src\/runtime\/loop\.ts/g) ?? []).length
     assert.equal(occurrences, 1, 'Duplicate path must appear exactly once after merge')
     assert.match(

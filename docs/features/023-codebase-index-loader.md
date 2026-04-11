@@ -9,7 +9,7 @@ Type: `P0 context artifact`
 
 ## Scope
 
-1. 自动生成 `docs/codebase_index.md`（首次）
+1. 自动生成 `.merlion/codebase_index.md`（首次）
 2. 读取接口支持预算截断
 3. 增量更新接口：记录最近 changed files（供 runtime/tool 回调更新）
 
