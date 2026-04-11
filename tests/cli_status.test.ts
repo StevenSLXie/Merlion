@@ -59,13 +59,14 @@ test('formatPromptObservabilityLine includes role breakdown and stable hash', ()
   const line = formatPromptObservabilityLine(snapshot(), {
     turn: 3,
     estimated_input_tokens: 10_000,
+    tool_schema_tokens_estimate: 0,
     role_tokens: { system: 1200, user: 900, assistant: 3400, tool: 4500 },
     role_delta_tokens: { system: 0, user: 120, assistant: 700, tool: 1800 },
     stable_prefix_tokens: 7600,
     stable_prefix_ratio: 0.76,
     stable_prefix_hash: 'abc123def456'
   } satisfies PromptObservabilitySnapshot)
-  assert.match(line, /prompt ~10,000 tok/)
+  assert.match(line, /prompt ~10,000 tok \(tools ~0\)/)
   assert.match(line, /roles s 1,200 u 900 a 3,400 t 4,500/)
   assert.match(line, /Δroles s 0 u \+120 a \+700 t \+1,800/)
   assert.match(line, /stable 7,600 \(76\.0%\)/)

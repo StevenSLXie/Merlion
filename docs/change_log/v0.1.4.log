@@ -18,6 +18,8 @@ Changes:
   added per-turn prompt diagnostics (estimated input tokens, role breakdown,
   role delta, stable-prefix tokens/ratio/hash, provider cache ratio for turn)
   and persisted these metrics into usage jsonl as prompt_observability
+  (follow-up fix: tracker now persists across REPL turns and includes tool
+  schema tokens in prompt estimate)
 
 Policy:
 - For every version change in package.json, add:

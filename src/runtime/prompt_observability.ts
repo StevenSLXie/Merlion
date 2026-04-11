@@ -12,6 +12,7 @@ export interface PromptRoleTokens {
 export interface PromptObservabilitySnapshot {
   turn: number
   estimated_input_tokens: number
+  tool_schema_tokens_estimate: number
   role_tokens: PromptRoleTokens
   role_delta_tokens: PromptRoleTokens
   stable_prefix_tokens: number
@@ -22,6 +23,7 @@ export interface PromptObservabilitySnapshot {
 interface PromptTrackerState {
   signatures: string[]
   roleTokens: PromptRoleTokens
+  initialized: boolean
 }
 
 function estimateTokensFromChars(chars: number): number {
@@ -86,9 +88,18 @@ function roleDelta(current: PromptRoleTokens, previous: PromptRoleTokens): Promp
 }
 
 export function createPromptObservabilityTracker() {
+  return createPromptObservabilityTrackerWithToolSchema()
+}
+
+export function createPromptObservabilityTrackerWithToolSchema(toolSchemaSerialized?: string) {
+  const toolSchemaTokensEstimate = toolSchemaSerialized
+    ? estimateTokensFromChars(toolSchemaSerialized.length)
+    : 0
+  const toolSchemaHash = toolSchemaSerialized ? shortHash(toolSchemaSerialized) : null
   let previousState: PromptTrackerState = {
     signatures: [],
-    roleTokens: emptyRoleTokens()
+    roleTokens: emptyRoleTokens(),
+    initialized: false
   }
 
   return {
@@ -106,15 +117,27 @@ export function createPromptObservabilityTracker() {
         else roleTokens.tool += tokens
       }
 
-      const estimatedInputTokens = roleTokens.system + roleTokens.user + roleTokens.assistant + roleTokens.tool
+      const estimatedInputTokens =
+        roleTokens.system + roleTokens.user + roleTokens.assistant + roleTokens.tool + toolSchemaTokensEstimate
       const stableCount = stablePrefixCount(previousState.signatures, signatures)
-      const stableTokens = messageTokens.slice(0, stableCount).reduce((sum, value) => sum + value, 0)
-      const stableHash = stableCount > 0 ? shortHash(signatures.slice(0, stableCount).join('\n---\n')) : null
+      const stableMessageTokens = messageTokens.slice(0, stableCount).reduce((sum, value) => sum + value, 0)
+      const stableTokens =
+        previousState.initialized
+          ? stableMessageTokens + toolSchemaTokensEstimate
+          : 0
+      const stableHash =
+        previousState.initialized && (stableCount > 0 || toolSchemaHash !== null)
+          ? shortHash([
+              toolSchemaHash ?? '',
+              signatures.slice(0, stableCount).join('\n---\n')
+            ].join('\n===\n'))
+          : null
       const ratio = estimatedInputTokens > 0 ? stableTokens / estimatedInputTokens : 0
 
       const snapshot: PromptObservabilitySnapshot = {
         turn,
         estimated_input_tokens: estimatedInputTokens,
+        tool_schema_tokens_estimate: toolSchemaTokensEstimate,
         role_tokens: roleTokens,
         role_delta_tokens: roleDelta(roleTokens, previousState.roleTokens),
         stable_prefix_tokens: stableTokens,
@@ -124,7 +147,8 @@ export function createPromptObservabilityTracker() {
 
       previousState = {
         signatures,
-        roleTokens
+        roleTokens,
+        initialized: true
       }
       return snapshot
     }

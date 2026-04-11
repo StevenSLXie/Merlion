@@ -52,7 +52,7 @@ export function formatPromptObservabilityLine(
   const prefixPct = formatPct(prompt.stable_prefix_tokens, prompt.estimated_input_tokens)
   const providerPct = formatPct(cachedTurn, prompt.estimated_input_tokens)
   const parts = [
-    `prompt ~${formatInt(prompt.estimated_input_tokens)} tok`,
+    `prompt ~${formatInt(prompt.estimated_input_tokens)} tok (tools ~${formatInt(prompt.tool_schema_tokens_estimate)})`,
     `roles s ${formatInt(prompt.role_tokens.system)} u ${formatInt(prompt.role_tokens.user)} a ${formatInt(prompt.role_tokens.assistant)} t ${formatInt(prompt.role_tokens.tool)}`,
     `Δroles s ${formatSignedInt(prompt.role_delta_tokens.system)} u ${formatSignedInt(prompt.role_delta_tokens.user)} a ${formatSignedInt(prompt.role_delta_tokens.assistant)} t ${formatSignedInt(prompt.role_delta_tokens.tool)}`,
     `stable ${formatInt(prompt.stable_prefix_tokens)} (${prefixPct})`,

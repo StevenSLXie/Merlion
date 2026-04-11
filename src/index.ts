@@ -21,6 +21,7 @@ import {
 } from './runtime/session.ts'
 import { calculateUsageCostUsd, createUsageTracker, type UsageRates } from './runtime/usage.ts'
 import type { PromptObservabilitySnapshot } from './runtime/prompt_observability.ts'
+import { createPromptObservabilityTrackerWithToolSchema } from './runtime/prompt_observability.ts'
 import { buildDefaultRegistry } from './tools/builtin/index.ts'
 import { discoverVerificationChecks } from './verification/checks.ts'
 import { runVerificationFixRounds } from './verification/fix_round.ts'
@@ -139,12 +140,16 @@ function printUsage(): void {
   )
 }
 
-function estimateToolSchemaTokens(registry: ReturnType<typeof buildDefaultRegistry>): number {
-  const serialized = JSON.stringify(registry.getAll().map((tool) => ({
+function serializeToolSchema(registry: ReturnType<typeof buildDefaultRegistry>): string {
+  return JSON.stringify(registry.getAll().map((tool) => ({
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters
   })))
+}
+
+function estimateToolSchemaTokens(registry: ReturnType<typeof buildDefaultRegistry>): number {
+  const serialized = serializeToolSchema(registry)
   return Math.ceil(serialized.length / 4)
 }
 
@@ -274,6 +279,7 @@ async function main(): Promise<void> {
     model: options.model
   })
   const registry = buildDefaultRegistry()
+  const toolSchemaSerialized = serializeToolSchema(registry)
   const permissions = createPermissionStore(options.permissionMode)
   const session = options.resumeSessionId
     ? await getSessionFilesForResume(options.cwd, options.resumeSessionId)
@@ -282,6 +288,7 @@ async function main(): Promise<void> {
     await appendSessionMeta(session.transcriptPath, session.sessionId, options.model, options.cwd)
   }
   const toolSchemaTokensEstimate = estimateToolSchemaTokens(registry)
+  const promptObservabilityTracker = createPromptObservabilityTrackerWithToolSchema(toolSchemaSerialized)
   const initialMessagesFromResume = options.resumeSessionId
     ? await loadSessionMessages(session.transcriptPath)
     : undefined
@@ -355,6 +362,7 @@ async function main(): Promise<void> {
       onPromptObservability: (snapshot) => {
         latestPromptObservability = snapshot
       },
+      promptObservabilityTracker,
       onTurnStart: ({ turn }) => {
         ui.onTurnStart({ turn })
       },

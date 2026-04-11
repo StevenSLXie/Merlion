@@ -24,6 +24,9 @@ export interface RunLoopOptions {
     provider?: string
   }) => Promise<void> | void
   onPromptObservability?: (snapshot: PromptObservabilitySnapshot) => Promise<void> | void
+  promptObservabilityTracker?: {
+    record: (turn: number, messages: ChatMessage[]) => PromptObservabilitySnapshot
+  }
   onTurnStart?: (event: { turn: number }) => Promise<void> | void
   onAssistantResponse?: (event: {
     turn: number
@@ -109,7 +112,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   let finalText = ''
   let emptyStopRecoveryCount = 0
   let awaitingPostToolSummary = false
-  const promptObservability = createPromptObservabilityTracker()
+  const promptObservability = options.promptObservabilityTracker ?? createPromptObservabilityTracker()
 
   const defaultPermissions: PermissionStore = { ask: async () => 'allow' }
   const toolContext: ToolContext = {

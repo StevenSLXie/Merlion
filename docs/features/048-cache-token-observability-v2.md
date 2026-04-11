@@ -18,11 +18,13 @@ Type: `P0 observability`
 - 新增 `src/runtime/prompt_observability.ts`
 - 每轮 provider 调用前计算：
   - `estimated_input_tokens`
+  - `tool_schema_tokens_estimate`
   - `role_tokens`（system/user/assistant/tool）
   - `role_delta_tokens`（相对上一轮增量）
   - `stable_prefix_tokens`
   - `stable_prefix_ratio`
   - `stable_prefix_hash`
+- prompt tracker 在会话内跨轮复用（不在每个 runLoop 调用中重置）
 
 ### Loop hooks
 
