@@ -19,7 +19,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M2-01` `read_file` tool with TDD
 - [x] `M2-02` `search` tool with TDD
 - [x] `M2-03` `create_file` tool (workspace boundary enforced) with TDD
-- [ ] `M2-04` `edit_file` tool (workspace boundary enforced) with TDD
+- [x] `M2-04` `edit_file` tool (workspace boundary enforced) with TDD
 - [ ] `M2-05` `bash` tool (risk assessment + timeout) with TDD
 - [ ] `M2-06` `fetch` tool with TDD
 
