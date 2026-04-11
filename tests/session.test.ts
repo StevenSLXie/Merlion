@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { appendFile, mkdtemp, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
@@ -81,6 +81,28 @@ test('loads messages from existing transcript', async () => {
   assert.equal(loaded.length, 3)
   assert.equal(loaded[0]?.role, 'system')
   assert.equal(loaded[2]?.content, 'a')
+})
+
+test('ignores malformed transcript lines and invalid message role on load', async () => {
+  const cwd = await makeTempDir()
+  process.env.MERLION_DATA_DIR = cwd
+  const session = await createSessionFiles('/project/d')
+
+  await appendFile(
+    session.transcriptPath,
+    [
+      JSON.stringify({ type: 'session_meta', id: 'x', createdAt: new Date().toISOString(), model: 'm', projectPath: '/project/d' }),
+      '{not-json}',
+      JSON.stringify({ type: 'message', role: 'alien', content: 'bad role' }),
+      JSON.stringify({ type: 'message', role: 'user', content: 'good' })
+    ].join('\n') + '\n',
+    'utf8'
+  )
+
+  const loaded = await loadSessionMessages(session.transcriptPath)
+  assert.equal(loaded.length, 1)
+  assert.equal(loaded[0]?.role, 'user')
+  assert.equal(loaded[0]?.content, 'good')
 })
 
 test('throws when session transcript not found', async () => {

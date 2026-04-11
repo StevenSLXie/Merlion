@@ -48,3 +48,20 @@ export interface LoopState {
 }
 
 export type LoopTerminal = 'completed' | 'max_turns_exceeded' | 'model_error'
+
+export interface SessionMetadata {
+  id: string
+  createdAt: string
+  model: string
+  projectPath: string
+}
+
+export interface SessionMetaEntry extends SessionMetadata {
+  type: 'session_meta'
+}
+
+export interface TranscriptMessageEntry extends ChatMessage {
+  type: 'message'
+}
+
+export type TranscriptEntry = SessionMetaEntry | TranscriptMessageEntry

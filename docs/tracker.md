@@ -1,11 +1,11 @@
 # Merlion Tracker
 
-Last updated: 2026-04-11T21:15:00+08:00
+Last updated: 2026-04-11T23:35:00+08:00
 
 ## Active Sprint
 
 - Sprint: `Phase1-Hardening`
-- Focus: finish core type cleanup + e2e stability
+- Focus: phase1 closeout + maintain test green
 - Exit criteria:
   - 剩余 P0 TODO 清零
   - `npm run test:all` 和 `npm run typecheck` 通过
@@ -17,6 +17,7 @@ Last updated: 2026-04-11T21:15:00+08:00
 | M0-01 | Project baseline files | done | codex | package/tsconfig/gitignore created |
 | M0-02 | Test baseline scripts | done | codex | `npm test` + `npm run typecheck` passing |
 | M0-03 | Source skeleton | done | codex | `src/` + `tests/` initialized |
+| M1-01 | Core shared types hardening | done | codex | feature 030; transcript parse validation added |
 | M2-01 | read_file tool with TDD | done | codex | 6 tests pass |
 | M1-02 | Tool registry + tests | done | codex | 3 tests pass |
 | M2-03 | create_file tool + boundary guard | done | codex | 5 tests pass |
