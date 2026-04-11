@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-11T15:42:00+08:00
+Last updated: 2026-04-11T15:46:00+08:00
 
 ## Active Sprint
 
@@ -33,7 +33,8 @@ Last updated: 2026-04-11T15:42:00+08:00
 | M3-07 | usage ledger | done | codex | `.usage.jsonl` append per turn |
 | M3-06 | resume reconstruction | done | codex | `--resume <session-id>` supported |
 | M3-03 | tool executor batching | done | codex | partition + ordered results |
-| M3-02 | retry strategy | todo | codex | next feature |
+| M3-02 | retry strategy | done | codex | transient errors retried |
+| M4-01 | tool-result budget truncation | todo | codex | next feature |
 
 ## Commit Log
 
@@ -51,3 +52,4 @@ Last updated: 2026-04-11T15:42:00+08:00
 | (pending) | feature 009 session logging | red->green tests + implementation |
 | (pending) | feature 010 session resume | red->green tests + implementation |
 | (pending) | feature 011 tool executor batching | red->green tests + implementation |
+| (pending) | feature 012 retry strategy | red->green tests + implementation |

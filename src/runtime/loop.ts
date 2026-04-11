@@ -1,6 +1,7 @@
 import type { ChatMessage, LoopState, LoopTerminal, ModelProvider } from '../types.js'
 import type { PermissionStore, ToolContext } from '../tools/types.js'
 import { executeToolCalls } from './executor.ts'
+import { withRetry } from './retry.ts'
 import { ToolRegistry } from '../tools/registry.ts'
 
 export interface RunLoopOptions {
@@ -66,7 +67,10 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
 
     let assistant
     try {
-      assistant = await options.provider.complete(state.messages, options.registry.getAll())
+      assistant = await withRetry(
+        () => options.provider.complete(state.messages, options.registry.getAll()),
+        { maxAttempts: 5, baseDelayMs: 200, maxDelayMs: 32_000 },
+      )
     } catch {
       return { terminal: 'model_error', finalText, state }
     }
