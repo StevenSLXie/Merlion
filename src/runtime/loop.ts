@@ -49,17 +49,24 @@ export interface RunLoopResult {
 }
 
 // Patterns that signal the model promised action but made no tool calls.
-// Only tested on responses ≥50 chars to avoid flagging conversational short replies.
+// Includes English + Chinese phrasing to reduce false-start stalls.
 const WILL_DO_PATTERNS: RegExp[] = [
   /\bi('ll| will)\s+(start|begin|look|check|read|analyze|examine|fix|help|try|write|create|update|run|search|find)/i,
   /\blet me\s+(start|begin|look|check|read|analyze|examine|fix|help|try|write|create|update|run|search|find)/i,
   /\bi('m| am) going to\s+\w/i,
   /\bfirst,?\s+i('ll| will)\s+\w/i,
   /\bto (start|begin|proceed),?\s+i('ll| will)\s+\w/i,
+  /(我来|让我|我会|我将|我先|首先).{0,8}(查看|检查|读取|搜索|查找|分析|修复|修改|创建|运行|执行|看看|浏览)/,
+  /(先|首先).{0,8}(查看|检查|读取|搜索|查找|分析|修复|修改|创建|运行|执行)/,
 ]
 
 const REPEATED_TOOL_ERROR_THRESHOLD = 3
 const MAX_AUTO_TOOL_ERROR_HINTS = 3
+const COMPLETION_HINT_PATTERNS: RegExp[] = [
+  /\b(done|finished|completed)\b/i,
+  /已(完成|处理|修复|解决)/,
+  /已经(完成|处理|修复|解决)/,
+]
 
 function looksLikeAuthError(message: string): boolean {
   const normalized = message.toLowerCase()
@@ -102,12 +109,16 @@ export function shouldNudge(text: string, state: LoopState): boolean {
   // Hard cap: never nudge more than twice per session
   if (state.nudgeCount >= 2) return false
 
-  // Very short text is always conversational — never nudge
-  // "在", "done", "ok", "yes", "finished", etc.
-  if (text.trim().length < 50) return false
+  const trimmed = text.trim()
+
+  // Very short text is conversational/ack-like — never nudge.
+  if (trimmed.length < 8) return false
+
+  // Don't nudge explicit completion statements.
+  if (COMPLETION_HINT_PATTERNS.some((p) => p.test(trimmed))) return false
 
   // Core signal: contains a "will do X" promise without having done X
-  return WILL_DO_PATTERNS.some((p) => p.test(text))
+  return WILL_DO_PATTERNS.some((p) => p.test(trimmed))
 }
 
 function createState(

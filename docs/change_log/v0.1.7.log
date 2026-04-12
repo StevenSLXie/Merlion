@@ -2,6 +2,10 @@ Version: 0.1.7
 Date: 2026-04-12
 
 Changes:
+- Runtime anti-stall nudge (multilingual):
+  false-start detection now recognizes Chinese action-promises (for example,
+  “我先查看目录”), reducing one-turn stalls where the model says it will
+  use tools but stops without calling any tool.
 - Existing-repo generated map bootstrap:
   when a project has no real `AGENTS.md`, Merlion now auto-generates
   layered fallback maps under `.merlion/maps` on new session start,
@@ -29,3 +33,4 @@ Related docs:
 - docs/features/053-commit-time-agents-auto-maintenance.md
 - docs/features/054-path-guided-prompt-policy.md
 - docs/features/055-generated-map-bootstrap-for-existing-repos.md
+- docs/features/056-multilingual-false-start-nudge.md

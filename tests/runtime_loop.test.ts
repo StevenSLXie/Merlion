@@ -309,6 +309,20 @@ test('shouldNudge: detects "let me" false start', () => {
   )
 })
 
+test('shouldNudge: detects chinese false-start promise', () => {
+  const baseState = {
+    messages: [],
+    turnCount: 0,
+    maxOutputTokensRecoveryCount: 0,
+    hasAttemptedReactiveCompact: false,
+    nudgeCount: 0
+  }
+  assert.equal(
+    shouldNudge('我来为你构建这个页面。首先让我查看一下当前目录结构。', baseState),
+    true,
+  )
+})
+
 test('shouldNudge: does not nudge genuine past-tense completion', () => {
   const baseState = {
     messages: [],
@@ -321,6 +335,17 @@ test('shouldNudge: does not nudge genuine past-tense completion', () => {
     shouldNudge('The function has been updated successfully. The type error on line 42 is fixed.', baseState),
     false,
   )
+})
+
+test('shouldNudge: does not nudge short ack-like chinese reply', () => {
+  const baseState = {
+    messages: [],
+    turnCount: 0,
+    maxOutputTokensRecoveryCount: 0,
+    hasAttemptedReactiveCompact: false,
+    nudgeCount: 0
+  }
+  assert.equal(shouldNudge('在的', baseState), false)
 })
 
 test('shouldNudge: cap at 2 nudges prevents infinite nudge loop', () => {
