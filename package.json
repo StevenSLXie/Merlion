@@ -1,6 +1,6 @@
 {
   "name": "merlion",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "A coding agent for OpenAI-compatible providers",
   "type": "module",
   "engines": {
@@ -20,7 +20,12 @@
     "test:e2e": "node --experimental-strip-types --test --test-concurrency=1 'tests/e2e/*.test.ts'",
     "test:all": "node --experimental-strip-types --test --test-concurrency=1 'tests/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
-    "merlion": "node --experimental-strip-types src/index.ts"
+    "merlion": "node --experimental-strip-types src/index.ts",
+    "agents:update": "node --experimental-strip-types scripts/agents/update.ts",
+    "agents:update:staged": "node --experimental-strip-types scripts/agents/update.ts --staged",
+    "agents:lint": "node --experimental-strip-types scripts/agents/lint.ts",
+    "agents:check-drift": "node --experimental-strip-types scripts/agents/update.ts --all --check",
+    "hooks:install": "git config core.hooksPath .githooks && echo '[hooks] core.hooksPath=.githooks'"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

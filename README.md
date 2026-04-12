@@ -56,6 +56,21 @@ merlion --repl
 merlion --resume <session-id>
 ```
 
+## AGENTS Map Automation
+
+Merlion supports layered `AGENTS.md` maps with commit-time auto maintenance.
+
+```bash
+# enable repository hooks once
+npm run hooks:install
+
+# update AGENTS AUTO blocks from staged files
+npm run agents:update:staged
+
+# validate AGENTS contract (MANUAL/AUTO markers + required auto fields)
+npm run agents:lint
+```
+
 ---
 
 # Merlion（中文）
@@ -114,4 +129,19 @@ merlion --repl
 
 # 恢复历史会话
 merlion --resume <session-id>
+```
+
+## AGENTS 地图自动维护
+
+Merlion 支持分层 `AGENTS.md` 地图，并可在提交时自动更新 `AUTO` 区块。
+
+```bash
+# 首次启用仓库 hooks
+npm run hooks:install
+
+# 根据 staged 改动更新 AGENTS AUTO 区块
+npm run agents:update:staged
+
+# 校验 AGENTS 协议（MANUAL/AUTO 标记 + 必填自动区块）
+npm run agents:lint
 ```

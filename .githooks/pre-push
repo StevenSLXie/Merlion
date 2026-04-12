@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+npm run -s agents:lint
+npm run -s agents:check-drift

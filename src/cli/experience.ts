@@ -532,6 +532,17 @@ export class CliExperience {
     if (promptLine !== '') this.printRawLine(this.c('dim', promptLine))
   }
 
+  onMapUpdated(summary: string): void {
+    const text = sanitizeRenderableText(summary.trim())
+    if (text === '') return
+    if (this.tuiEnabled) {
+      this.tuiStatusLine = `map · ${text}`
+      this.renderTuiFrame()
+      return
+    }
+    this.printRawLine(this.c('dim', `[map] ${text}`))
+  }
+
   setToolDetailMode(mode: 'full' | 'compact'): void {
     this.toolDetailMode = mode
     if (this.tuiEnabled) {

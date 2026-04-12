@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+node --experimental-strip-types scripts/agents/update.ts --staged
+npm run -s agents:lint

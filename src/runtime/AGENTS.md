@@ -1,0 +1,54 @@
+# Runtime AGENTS Guidance
+
+<!-- BEGIN MANUAL -->
+## Purpose
+- Owns model turn loop, tool execution sequencing, and session-side state transitions.
+
+## Key Files / Entry Points
+- `loop.ts`: core state machine.
+- `executor.ts`: tool batch execution and concurrency.
+- `session.ts`: transcript + usage persistence and resume loading.
+- `prompt_observability.ts`: stable prefix and role token breakdown.
+
+## Local Constraints
+- Keep terminal semantics stable: `completed | max_turns_exceeded | model_error`.
+- New recovery branches must be bounded to prevent loops.
+- Keep transcript/usage hooks consistent with tests.
+<!-- END MANUAL -->
+
+<!-- BEGIN AUTO -->
+## Subareas
+- (managed by directory AGENTS files)
+
+## EntryPoints
+- (keep in MANUAL if needed)
+
+## RecentChanges
+- src/runtime/loop.ts
+- src/runtime/prompt_observability.ts
+- src/runtime/session.ts
+- src/runtime/executor.ts
+- src/runtime/budget.ts
+- src/runtime/cost_gate.ts
+- src/runtime/usage.ts
+- src/runtime/retry.ts
+
+## HighChurnFiles
+- src/runtime/loop.ts (changes=14)
+- src/runtime/session.ts (changes=5)
+- src/runtime/executor.ts (changes=4)
+- src/runtime/prompt_observability.ts (changes=2)
+- src/runtime/budget.ts (changes=1)
+- src/runtime/cost_gate.ts (changes=1)
+
+## RecentCommits
+- 2026-04-12 2d4c240 fix(observability): persist prompt cache tracker across turns and include tool schema tokens
+- 2026-04-12 9e4dc64 feat(observability): add prompt-level cache/token diagnostics in cli
+- 2026-04-12 362e07a feat(tools): implement wave1 top-priority builtins from free-code survey
+- 2026-04-11 d52ea25 feat(usage): surface provider route and cache-hit diagnostics
+- 2026-04-11 0e8eb40 fix(loop): recover empty stop replies after tool execution
+
+## LastUpdated
+- 2026-04-12
+- directory: src/runtime
+<!-- END AUTO -->

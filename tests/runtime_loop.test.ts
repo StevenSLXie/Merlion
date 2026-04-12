@@ -22,6 +22,16 @@ class StubProvider implements ModelProvider {
   }
 }
 
+class ThrowProvider implements ModelProvider {
+  private readonly error: Error
+  constructor(message: string) {
+    this.error = new Error(message)
+  }
+  async complete(): Promise<AssistantResponse> {
+    throw this.error
+  }
+}
+
 function call(name: string, args: Record<string, unknown>, id = 'call_1'): ToolCall {
   return {
     id,
@@ -38,6 +48,18 @@ function makeEchoTool(): ToolDefinition {
     concurrencySafe: true,
     async execute(input) {
       return { content: `echo:${String(input.value)}`, isError: false }
+    }
+  }
+}
+
+function makeAlwaysFailTool(): ToolDefinition {
+  return {
+    name: 'always_fail',
+    description: 'always fails',
+    parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+    concurrencySafe: true,
+    async execute(input) {
+      return { content: `File not found: ${String(input.path)}`, isError: true }
     }
   }
 }
@@ -372,6 +394,24 @@ test('loop returns model_error for content_filter finish_reason', async () => {
   assert.equal(result.terminal, 'model_error')
 })
 
+test('loop returns auth-specific remediation when provider key is invalid', async () => {
+  const provider = new ThrowProvider('Provider error 401: Invalid API key')
+  const result = await runLoop({
+    provider,
+    registry: new ToolRegistry(),
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 5,
+  })
+
+  assert.equal(result.terminal, 'model_error')
+  assert.match(result.finalText, /authentication failed/i)
+  assert.match(result.finalText, /merlion config/)
+  assert.match(result.finalText, /~\/\.config\/merlion\/config\.json/)
+  assert.match(result.finalText, /MERLION_API_KEY/)
+})
+
 test('loop handles tool_calls finish_reason with empty tool_calls array', async () => {
   // Model says tool_calls but sends empty array — should fall through to stop handling
   const provider = new StubProvider([
@@ -495,4 +535,103 @@ test('loop compacts oversized context once before provider call', async () => {
     }
     delete process.env.MERLION_COMPACT_KEEP_RECENT
   }
+})
+
+test('loop injects correction hint after repeated identical tool errors', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('always_fail', { path: '.merlion/nanobot/channels/weixin.py' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('always_fail', { path: '.merlion/nanobot/channels/weixin.py' }, 'call_2')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('always_fail', { path: '.merlion/nanobot/channels/weixin.py' }, 'call_3')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeAlwaysFailTool())
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: '/workspace/nanobot',
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'done')
+  const hintMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Repeated tool failure detected')
+  ))
+  assert.equal(hintMessages.length, 1)
+  assert.match(hintMessages[0]?.content ?? '', /always_fail/)
+  assert.match(hintMessages[0]?.content ?? '', /workspace root/)
+  assert.match(hintMessages[0]?.content ?? '', /\/workspace\/nanobot\/\.merlion/)
+  assert.match(hintMessages[0]?.content ?? '', /Do not use `~\/\.merlion`/)
+})
+
+test('loop appends post-tool batch messages from callback', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'ok' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEchoTool())
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 6,
+    onToolBatchComplete: () => [
+      {
+        role: 'system',
+        content: 'Path guidance update: narrowed to src/runtime'
+      }
+    ]
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(
+    result.state.messages.some((m) => m.role === 'system' && (m.content ?? '').includes('Path guidance update')),
+    true
+  )
 })

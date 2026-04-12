@@ -9,13 +9,19 @@ import { OpenAICompatProvider } from './providers/openai.ts'
 import { readConfig, mergeConfig, type MerlionProvider } from './config/store.ts'
 import {
   runConfigWizard,
-  DEFAULT_MODEL,
   DEFAULT_PROVIDER,
-  OPENAI_BASE_URL,
-  OPENROUTER_BASE_URL
+  normalizeProvider,
+  defaultBaseURLForProvider,
+  defaultModelForProvider
 } from './config/wizard.ts'
+import { loadAgentsGuidance } from './artifacts/agents.ts'
 import { ensureCodebaseIndex, updateCodebaseIndexWithChangedFiles } from './artifacts/codebase_index.ts'
 import { buildOrientationContext } from './context/orientation.ts'
+import {
+  buildPathGuidanceDelta,
+  createPathGuidanceState,
+  extractCandidatePathsFromToolEvent,
+} from './context/path_guidance.ts'
 import { runLoop } from './runtime/loop.ts'
 import {
   appendSessionMeta,
@@ -59,6 +65,11 @@ interface CliOptions {
   resumeSessionId?: string
   repl: boolean
   verify: boolean
+}
+
+function isAuthFailureResult(result: { output: string; terminal: string }): boolean {
+  if (result.terminal !== 'model_error') return false
+  return /Provider authentication failed \(401\/403\)\./i.test(result.output)
 }
 
 function parseArgs(argv: string[]): CliFlags | null | 'help' | 'version' {
@@ -167,26 +178,6 @@ function parseEnvNumber(name: string): number | undefined {
   return parsed
 }
 
-function normalizeProvider(value: unknown): MerlionProvider | undefined {
-  if (typeof value !== 'string') return undefined
-  const normalized = value.trim().toLowerCase()
-  if (normalized === 'openrouter' || normalized === 'or' || normalized === '1') return 'openrouter'
-  if (normalized === 'openai' || normalized === 'oa' || normalized === '2') return 'openai'
-  if (normalized === 'custom' || normalized === 'other' || normalized === 'compatible' || normalized === '3') return 'custom'
-  return undefined
-}
-
-function defaultBaseURLForProvider(provider: MerlionProvider): string {
-  if (provider === 'openai') return OPENAI_BASE_URL
-  if (provider === 'openrouter') return OPENROUTER_BASE_URL
-  return ''
-}
-
-function defaultModelForProvider(provider: MerlionProvider): string {
-  if (provider === 'openai') return 'gpt-4.1-mini'
-  return DEFAULT_MODEL
-}
-
 function inferProviderFromEnv(): MerlionProvider | undefined {
   const explicit = normalizeProvider(process.env.MERLION_PROVIDER)
   if (explicit) return explicit
@@ -244,6 +235,21 @@ function loadOrientationBudgetsFromEnv(): Partial<{
     agentsTokens,
     progressTokens,
     indexTokens
+  }
+}
+
+function loadPathGuidanceBudgetsFromEnv(): Partial<{
+  totalTokens: number
+  perFileTokens: number
+  maxFiles: number
+}> {
+  const totalTokens = parseEnvNumber('MERLION_PATH_GUIDANCE_TOTAL_TOKENS')
+  const perFileTokens = parseEnvNumber('MERLION_PATH_GUIDANCE_PER_FILE_TOKENS')
+  const maxFiles = parseEnvNumber('MERLION_PATH_GUIDANCE_MAX_FILES')
+  return {
+    totalTokens,
+    perFileTokens,
+    maxFiles
   }
 }
 
@@ -319,7 +325,7 @@ async function main(): Promise<void> {
   const missingRequiredConfig =
     merged.apiKey === '' ||
     merged.model === '' ||
-    merged.provider === 'custom' && merged.baseURL === ''
+    (merged.provider === 'custom' && merged.baseURL === '')
 
   if (missingRequiredConfig) {
     const result = await runConfigWizard({
@@ -350,7 +356,7 @@ async function main(): Promise<void> {
     verify: resolvedFlags.verify
   }
 
-  const provider = new OpenAICompatProvider({
+  let provider = new OpenAICompatProvider({
     apiKey: options.apiKey,
     baseURL: options.baseURL,
     model: options.model
@@ -392,10 +398,19 @@ async function main(): Promise<void> {
     }
   }
 
-  const systemPrompt = 'You are Merlion, a coding agent. Use tools to complete the task.'
+  const systemPrompt = [
+    'You are Merlion, a coding agent. Use tools to complete the task.',
+    'Use path-guided exploration:',
+    '1) pick 1-3 candidate directories from loaded AGENTS/context before broad search,',
+    '2) search/read inside candidates first,',
+    '3) widen scope only when evidence is insufficient,',
+    '4) when AGENTS guidance conflicts, nearest directory scope wins.'
+  ].join(' ')
   let history = initialMessages
   const usageTracker = createUsageTracker()
   const usageRates = loadUsageRatesFromEnv()
+  const pathGuidanceBudgets = loadPathGuidanceBudgetsFromEnv()
+  const pathGuidanceState = createPathGuidanceState()
   const ui = new CliExperience({
     model: options.model,
     sessionId: session.sessionId,
@@ -404,8 +419,40 @@ async function main(): Promise<void> {
 
   ui.renderBanner()
 
+  try {
+    const seeded = await loadAgentsGuidance(options.cwd, { maxTokens: 1 })
+    for (const file of seeded.files) {
+      pathGuidanceState.loadedAgentFiles.add(file)
+    }
+  } catch (error) {
+    process.stderr.write(`Path guidance seed warning: ${String(error)}\n`)
+  }
+
+  async function applyWizardConfig(): Promise<boolean> {
+    const result = await runConfigWizard({
+      provider: merged.provider,
+      apiKey: options.apiKey,
+      model: options.model,
+      baseURL: options.baseURL
+    })
+    if (!result.ok) return false
+
+    if (result.config.provider) merged.provider = result.config.provider
+    if (result.config.apiKey) options.apiKey = result.config.apiKey
+    if (result.config.model) options.model = result.config.model
+    if (typeof result.config.baseURL === 'string') options.baseURL = result.config.baseURL
+
+    provider = new OpenAICompatProvider({
+      apiKey: options.apiKey,
+      baseURL: options.baseURL,
+      model: options.model
+    })
+    return true
+  }
+
   const runTurn = async (prompt: string) => {
     const changedFiles = new Set<string>()
+    const toolPathSignals = new Set<string>()
     let latestPromptObservability: PromptObservabilitySnapshot | undefined
     const result = await runLoop({
       provider,
@@ -454,7 +501,7 @@ async function main(): Promise<void> {
           summary: call.function.arguments
         })
       },
-      onToolCallResult: ({ call, index, total, durationMs, isError, uiPayload }) => {
+      onToolCallResult: async ({ call, index, total, durationMs, isError, uiPayload, message }) => {
         ui.onToolResult({
           index,
           total,
@@ -467,11 +514,40 @@ async function main(): Promise<void> {
           const path = extractPathArg(call.function.arguments)
           if (path) changedFiles.add(path)
         }
-      }
+        const candidates = await extractCandidatePathsFromToolEvent(options.cwd, {
+          call,
+          message
+        })
+        for (const candidate of candidates) toolPathSignals.add(candidate)
+      },
+      onToolBatchComplete: async ({ results }) => {
+        if (results.length === 0 && toolPathSignals.size === 0) return
+        const delta = await buildPathGuidanceDelta(
+          options.cwd,
+          [...toolPathSignals],
+          pathGuidanceState,
+          pathGuidanceBudgets,
+        )
+        if (delta.text.trim() === '') return
+        ui.onMapUpdated(
+          `guidance updated (${delta.loadedFiles.length} file${delta.loadedFiles.length === 1 ? '' : 's'}): ${delta.loadedFiles.join(', ')}`
+        )
+        return [
+          {
+            role: 'system' as const,
+            content:
+              'Path guidance update. Use this to narrow your next tool calls before broad scans.\n\n' +
+              delta.text
+          }
+        ]
+      },
     })
     if (changedFiles.size > 0) {
       try {
         await updateCodebaseIndexWithChangedFiles(options.cwd, [...changedFiles])
+        ui.onMapUpdated(
+          `codebase index updated (${changedFiles.size} changed file${changedFiles.size === 1 ? '' : 's'})`
+        )
       } catch (error) {
         process.stderr.write(`Codebase index update warning: ${String(error)}\n`)
       }
@@ -481,7 +557,7 @@ async function main(): Promise<void> {
   }
 
   if (options.repl) {
-    const rl = createInterface({ input, output })
+    let rl = createInterface({ input, output })
     await runReplSession({
       readLine: async () => {
         try {
@@ -503,8 +579,26 @@ async function main(): Promise<void> {
         ui.clearTypedInputLine()
         ui.renderUserPrompt(prompt)
       },
-      onTurnResult: (result) => {
+      onTurnResult: async (result) => {
         ui.renderAssistantOutput(result.output, result.terminal)
+        if (!isAuthFailureResult(result)) return
+        const answer = await rl.question('Provider auth failed. Re-run setup wizard now? [y/N]: ')
+        const yes = /^(y|yes)$/i.test(answer.trim())
+        if (!yes) {
+          process.stdout.write('Tip: run `merlion config` any time to update your key/provider/model.\n')
+          return
+        }
+        rl.close()
+        try {
+          const ok = await applyWizardConfig()
+          if (ok) {
+            process.stdout.write('[config] Updated. Continue in REPL.\n')
+          } else {
+            process.stdout.write('[config] Setup aborted. Continue in REPL.\n')
+          }
+        } finally {
+          rl = createInterface({ input, output })
+        }
       },
       onSetDetailMode: (mode) => {
         ui.setToolDetailMode(mode)
@@ -516,8 +610,29 @@ async function main(): Promise<void> {
   }
 
   ui.renderUserPrompt(options.task)
-  const result = await runTurn(options.task)
+  let result = await runTurn(options.task)
   ui.renderAssistantOutput(result.finalText, result.terminal)
+  if (isAuthFailureResult({ output: result.finalText, terminal: result.terminal })) {
+    const rl = createInterface({ input, output })
+    let answer = ''
+    try {
+      answer = await rl.question('Provider auth failed. Re-run setup wizard now? [y/N]: ')
+    } finally {
+      rl.close()
+    }
+    if (/^(y|yes)$/i.test(answer.trim())) {
+      const ok = await applyWizardConfig()
+      if (ok) {
+        process.stdout.write('[config] Updated. Retrying your request once...\n')
+        result = await runTurn(options.task)
+        ui.renderAssistantOutput(result.finalText, result.terminal)
+      } else {
+        process.stdout.write('[config] Setup aborted. You can run `merlion config` later.\n')
+      }
+    } else {
+      process.stdout.write('Tip: run `merlion config` any time to update your key/provider/model.\n')
+    }
+  }
   if (result.terminal !== 'completed') {
     process.stderr.write(`Terminal state: ${result.terminal}\n`)
     process.exitCode = 1
