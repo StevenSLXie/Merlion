@@ -73,15 +73,17 @@ describe('config/store', () => {
       process.env.XDG_CONFIG_HOME = subDir
     })
 
-    test('saves and loads apiKey, model, baseURL', async () => {
+    test('saves and loads provider, apiKey, model, baseURL', async () => {
       const { writeConfig, readConfig } = await freshStore()
       const input = {
+        provider: 'openrouter' as const,
         apiKey: 'sk-or-test-key',
         model: 'google/gemini-flash',
         baseURL: 'https://openrouter.ai/api/v1'
       }
       await writeConfig(input)
       const loaded = await readConfig()
+      assert.equal(loaded.provider, input.provider)
       assert.equal(loaded.apiKey, input.apiKey)
       assert.equal(loaded.model, input.model)
       assert.equal(loaded.baseURL, input.baseURL)
@@ -101,6 +103,7 @@ describe('config/store', () => {
       const { writeConfig, readConfig } = await freshStore()
       await writeConfig({ apiKey: 'only-key' })
       const loaded = await readConfig()
+      assert.equal(loaded.provider, undefined)
       assert.equal(loaded.apiKey, 'only-key')
       assert.equal(loaded.model, undefined)
       assert.equal(loaded.baseURL, undefined)
@@ -111,10 +114,11 @@ describe('config/store', () => {
     test('overrides take precedence over file config and defaults', async () => {
       const { mergeConfig } = await freshStore()
       const result = mergeConfig(
-        { apiKey: 'override-key', model: 'override-model', baseURL: 'override-url' },
-        { apiKey: 'file-key', model: 'file-model', baseURL: 'file-url' },
-        { apiKey: 'default-key', model: 'default-model', baseURL: 'default-url' }
+        { provider: 'custom', apiKey: 'override-key', model: 'override-model', baseURL: 'override-url' },
+        { provider: 'openai', apiKey: 'file-key', model: 'file-model', baseURL: 'file-url' },
+        { provider: 'openrouter', apiKey: 'default-key', model: 'default-model', baseURL: 'default-url' }
       )
+      assert.equal(result.provider, 'custom')
       assert.equal(result.apiKey, 'override-key')
       assert.equal(result.model, 'override-model')
       assert.equal(result.baseURL, 'override-url')
@@ -124,9 +128,10 @@ describe('config/store', () => {
       const { mergeConfig } = await freshStore()
       const result = mergeConfig(
         {},
-        { apiKey: 'file-key', model: 'file-model', baseURL: 'file-url' },
-        { apiKey: 'default-key', model: 'default-model', baseURL: 'default-url' }
+        { provider: 'openai', apiKey: 'file-key', model: 'file-model', baseURL: 'file-url' },
+        { provider: 'openrouter', apiKey: 'default-key', model: 'default-model', baseURL: 'default-url' }
       )
+      assert.equal(result.provider, 'openai')
       assert.equal(result.apiKey, 'file-key')
       assert.equal(result.model, 'file-model')
       assert.equal(result.baseURL, 'file-url')
@@ -137,8 +142,9 @@ describe('config/store', () => {
       const result = mergeConfig(
         {},
         {},
-        { apiKey: 'default-key', model: 'default-model', baseURL: 'default-url' }
+        { provider: 'openrouter', apiKey: 'default-key', model: 'default-model', baseURL: 'default-url' }
       )
+      assert.equal(result.provider, 'openrouter')
       assert.equal(result.apiKey, 'default-key')
       assert.equal(result.model, 'default-model')
       assert.equal(result.baseURL, 'default-url')
@@ -149,7 +155,7 @@ describe('config/store', () => {
       const result = mergeConfig(
         { model: '' },
         { model: 'file-model' },
-        { apiKey: '', model: 'default-model', baseURL: '' }
+        { provider: 'openrouter', apiKey: '', model: 'default-model', baseURL: '' }
       )
       assert.equal(result.model, 'file-model')
     })
@@ -159,7 +165,7 @@ describe('config/store', () => {
       const result = mergeConfig(
         { apiKey: '   ' },
         { apiKey: 'file-key' },
-        { apiKey: 'default-key', model: '', baseURL: '' }
+        { provider: 'openrouter', apiKey: 'default-key', model: '', baseURL: '' }
       )
       assert.equal(result.apiKey, 'file-key')
     })

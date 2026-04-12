@@ -1,6 +1,6 @@
 # Merlion Tracker
 
-Last updated: 2026-04-12T11:05:00+08:00
+Last updated: 2026-04-12T16:48:00+08:00
 
 ## Active Sprint
 
@@ -43,6 +43,9 @@ Last updated: 2026-04-12T11:05:00+08:00
 | M6-09 | interactive detail toggle in REPL | done | codex | feature 040; `:detail full|compact` without restart |
 | M6-10 | keyboard-driven detail toggle in TUI | done | codex | feature 041; keys `f/c/?` + Ctrl+C passthrough |
 | M6-11 | structured scrollback panes (assistant/tool split) | todo | codex | pending renderer refactor |
+| M6-12 | first-run config wizard | done | codex | feature 042; initial key+model setup |
+| M6-13 | provider-agnostic first-run wizard | done | codex | feature 049; openrouter/openai/custom + MERLION_* env compatibility |
+| M6-14 | AST-based markdown renderer | todo | codex | pending raw-markdown marker removal and richer formatting |
 | M10-01 | free-code tool survey + ranking | done | codex | feature 043 |
 | M10-02 | wave1 core fs/navigation tools | done | codex | list_dir/glob/grep/write/append/delete/move/copy/mkdir/stat_path |
 | M10-03 | wave1 execution/meta tools | done | codex | list_scripts/run_script/git_status/git_diff/git_log |

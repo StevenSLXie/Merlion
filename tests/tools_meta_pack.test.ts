@@ -112,6 +112,15 @@ test('config_set/config_get roundtrip in temp XDG dir', async () => {
     const get = await configGetTool.execute({ key: 'model' }, { cwd })
     assert.equal(get.isError, false)
     assert.match(get.content, /qwen\/qwen3-coder/)
+
+    const setProvider = await configSetTool.execute(
+      { key: 'provider', value: 'openrouter' },
+      { cwd, permissions: permission('allow') }
+    )
+    assert.equal(setProvider.isError, false)
+    const getProvider = await configGetTool.execute({ key: 'provider' }, { cwd })
+    assert.equal(getProvider.isError, false)
+    assert.match(getProvider.content, /provider=openrouter/)
   } finally {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME
     else process.env.XDG_CONFIG_HOME = previous
@@ -141,6 +150,38 @@ test('config tool supports get, set and reset', async () => {
     )
     assert.equal(reset.isError, false)
     assert.match(reset.content, /Reset model to default/)
+
+    const setProvider = await configTool.execute(
+      { setting: 'provider', value: 'openai' },
+      { cwd, permissions: permission('allow') }
+    )
+    assert.equal(setProvider.isError, false)
+    assert.match(setProvider.content, /Set provider=openai/)
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previous
+  }
+})
+
+test('config provider rejects unsupported value', async () => {
+  const cwd = await makeTempDir()
+  const xdg = join(cwd, 'xdg')
+  const previous = process.env.XDG_CONFIG_HOME
+  process.env.XDG_CONFIG_HOME = xdg
+  try {
+    const viaConfig = await configTool.execute(
+      { setting: 'provider', value: 'bad-provider' },
+      { cwd, permissions: permission('allow') }
+    )
+    assert.equal(viaConfig.isError, true)
+    assert.match(viaConfig.content, /Invalid provider/)
+
+    const viaConfigSet = await configSetTool.execute(
+      { key: 'provider', value: 'bad-provider' },
+      { cwd, permissions: permission('allow') }
+    )
+    assert.equal(viaConfigSet.isError, true)
+    assert.match(viaConfigSet.content, /Invalid provider/)
   } finally {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME
     else process.env.XDG_CONFIG_HOME = previous

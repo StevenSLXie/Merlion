@@ -64,6 +64,8 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M6-10` Keyboard-driven detail toggle in fullscreen TUI (`f`/`c`/`?`)
 - [ ] `M6-11` Structured scrollback panes (assistant/tool split view)
 - [x] `M6-12` First-run configuration wizard (API key + model, saved to `~/.config/merlion/config.json`)
+- [x] `M6-13` Provider-agnostic first-run wizard (`openrouter/openai/custom`) + unified env compatibility
+- [ ] `M6-14` AST-based Markdown renderer (remove raw markers, improve headings/lists/code/table)
 
 ## Milestone 7: Token/Cost Observability (P0)
 

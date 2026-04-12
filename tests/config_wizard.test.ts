@@ -4,7 +4,13 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import { runConfigWizard, DEFAULT_MODEL, DEFAULT_BASE_URL, type WizardIO } from '../src/config/wizard.ts'
+import {
+  runConfigWizard,
+  DEFAULT_MODEL,
+  OPENAI_BASE_URL,
+  OPENROUTER_BASE_URL,
+  type WizardIO
+} from '../src/config/wizard.ts'
 import { readConfig } from '../src/config/store.ts'
 
 describe('config/wizard', () => {
@@ -50,49 +56,53 @@ describe('config/wizard', () => {
     const subDir = await mkdtemp(join(tmpDir, 'test1-'))
     process.env.XDG_CONFIG_HOME = subDir
 
-    const { io } = makeIO({ secret: 'sk-or-testkey123', prompts: [''] })
+    const { io } = makeIO({ secret: 'sk-or-testkey123', prompts: ['1', ''] })
     const result = await runConfigWizard({}, io)
 
     assert.equal(result.ok, true)
+    assert.equal(result.config.provider, 'openrouter')
     assert.equal(result.config.apiKey, 'sk-or-testkey123')
     assert.equal(result.config.model, DEFAULT_MODEL)
-    assert.equal(result.config.baseURL, DEFAULT_BASE_URL)
+    assert.equal(result.config.baseURL, OPENROUTER_BASE_URL)
 
     // Verify file was actually written
     const saved = await readConfig()
+    assert.equal(saved.provider, 'openrouter')
     assert.equal(saved.apiKey, 'sk-or-testkey123')
     assert.equal(saved.model, DEFAULT_MODEL)
   })
 
-  test('wizard with custom model saves the provided model', async () => {
+  test('wizard with openai provider uses openai base url', async () => {
     const subDir = await mkdtemp(join(tmpDir, 'test2-'))
     process.env.XDG_CONFIG_HOME = subDir
 
-    const { io } = makeIO({ secret: 'sk-or-mykey', prompts: ['anthropic/claude-opus-4'] })
+    const { io } = makeIO({ secret: 'sk-openai-key', prompts: ['2', 'gpt-4.1-mini'] })
     const result = await runConfigWizard({}, io)
 
     assert.equal(result.ok, true)
-    assert.equal(result.config.model, 'anthropic/claude-opus-4')
+    assert.equal(result.config.provider, 'openai')
+    assert.equal(result.config.baseURL, OPENAI_BASE_URL)
+    assert.equal(result.config.model, 'gpt-4.1-mini')
   })
 
   test('wizard aborts when API key is blank', async () => {
     const subDir = await mkdtemp(join(tmpDir, 'test3-'))
     process.env.XDG_CONFIG_HOME = subDir
 
-    const { io, output } = makeIO({ secret: '', prompts: [] })
+    const { io, output } = makeIO({ secret: '', prompts: ['1'] })
     const result = await runConfigWizard({}, io)
 
     assert.equal(result.ok, false)
     assert.deepEqual(result.config, {})
     const allOutput = output.join('')
-    assert.ok(allOutput.includes('aborted') || allOutput.includes('OPENROUTER_API_KEY'))
+    assert.ok(allOutput.includes('aborted') || allOutput.includes('MERLION_API_KEY'))
   })
 
-  test('wizard aborts when API key is whitespace-only', async () => {
+  test('wizard aborts when custom provider URL is blank', async () => {
     const subDir = await mkdtemp(join(tmpDir, 'test4-'))
     process.env.XDG_CONFIG_HOME = subDir
 
-    const { io } = makeIO({ secret: '   ', prompts: [] })
+    const { io } = makeIO({ secret: 'sk-abc', prompts: ['3', ''] })
     const result = await runConfigWizard({}, io)
 
     assert.equal(result.ok, false)
@@ -115,29 +125,35 @@ describe('config/wizard', () => {
       }
     }
 
-    const result = await runConfigWizard({ apiKey: 'sk-or-existing', model: 'some/model' }, io)
+    const result = await runConfigWizard({ provider: 'openrouter', apiKey: 'sk-or-existing', model: 'some/model' }, io)
 
     assert.equal(secretCalled, false, 'promptSecret should not be called when key already exists')
     assert.equal(result.ok, true)
+    assert.equal(result.config.provider, 'openrouter')
     assert.equal(result.config.apiKey, 'sk-or-existing')
   })
 
-  test('wizard uses existingConfig model as default when provided', async () => {
+  test('wizard custom provider accepts explicit base url and custom model', async () => {
     const subDir = await mkdtemp(join(tmpDir, 'test6-'))
     process.env.XDG_CONFIG_HOME = subDir
 
-    const { io } = makeIO({ secret: 'sk-or-key', prompts: [''] }) // empty → accept default
-    const result = await runConfigWizard({ model: 'openai/gpt-4o' }, io)
+    const { io } = makeIO({
+      secret: 'sk-custom-key',
+      prompts: ['3', 'https://llm.example.com/v1', 'acme/dev-model']
+    })
+    const result = await runConfigWizard({}, io)
 
     assert.equal(result.ok, true)
-    assert.equal(result.config.model, 'openai/gpt-4o')
+    assert.equal(result.config.provider, 'custom')
+    assert.equal(result.config.baseURL, 'https://llm.example.com/v1')
+    assert.equal(result.config.model, 'acme/dev-model')
   })
 
   test('output contains config file path on success', async () => {
     const subDir = await mkdtemp(join(tmpDir, 'test7-'))
     process.env.XDG_CONFIG_HOME = subDir
 
-    const { io, output } = makeIO({ secret: 'sk-or-key', prompts: [''] })
+    const { io, output } = makeIO({ secret: 'sk-or-key', prompts: ['1', ''] })
     await runConfigWizard({}, io)
 
     const allOutput = output.join('')

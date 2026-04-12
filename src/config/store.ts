@@ -2,7 +2,10 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
+export type MerlionProvider = 'openrouter' | 'openai' | 'custom'
+
 export interface MerlionConfig {
+  provider?: MerlionProvider
   apiKey?: string
   model?: string
   baseURL?: string
@@ -63,9 +66,10 @@ export async function writeConfig(config: MerlionConfig): Promise<void> {
 export function mergeConfig(
   overrides: Partial<MerlionConfig>,
   fileConfig: MerlionConfig,
-  defaults: Required<MerlionConfig>
+  defaults: { provider: MerlionProvider; apiKey: string; model: string; baseURL: string }
 ): Required<MerlionConfig> {
   return {
+    provider: firstNonEmpty(overrides.provider, fileConfig.provider, defaults.provider) as MerlionProvider,
     apiKey: firstNonEmpty(overrides.apiKey, fileConfig.apiKey, defaults.apiKey),
     model: firstNonEmpty(overrides.model, fileConfig.model, defaults.model),
     baseURL: firstNonEmpty(overrides.baseURL, fileConfig.baseURL, defaults.baseURL)

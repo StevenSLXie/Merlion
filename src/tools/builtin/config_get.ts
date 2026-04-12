@@ -17,8 +17,8 @@ export const configGetTool: ToolDefinition = {
     if (key === '') {
       return { content: JSON.stringify(config, null, 2), isError: false }
     }
-    if (key !== 'apiKey' && key !== 'model' && key !== 'baseURL') {
-      return { content: 'Invalid key. Allowed: apiKey, model, baseURL.', isError: true }
+    if (key !== 'provider' && key !== 'apiKey' && key !== 'model' && key !== 'baseURL') {
+      return { content: 'Invalid key. Allowed: provider, apiKey, model, baseURL.', isError: true }
     }
     const value = config[key]
     return { content: value ? `${key}=${value}` : `${key} is not set`, isError: false }

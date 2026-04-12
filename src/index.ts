@@ -6,8 +6,15 @@ import { CliExperience } from './cli/experience.ts'
 import { runReplSession } from './cli/repl.ts'
 import { createPermissionStore } from './permissions/store.ts'
 import { OpenAICompatProvider } from './providers/openai.ts'
-import { readConfig, mergeConfig } from './config/store.ts'
-import { runConfigWizard, DEFAULT_MODEL, DEFAULT_BASE_URL } from './config/wizard.ts'
+import { readConfig, mergeConfig, type MerlionProvider } from './config/store.ts'
+import {
+  runConfigWizard,
+  DEFAULT_MODEL,
+  DEFAULT_BASE_URL,
+  DEFAULT_PROVIDER,
+  OPENAI_BASE_URL,
+  OPENROUTER_BASE_URL
+} from './config/wizard.ts'
 import { ensureCodebaseIndex, updateCodebaseIndexWithChangedFiles } from './artifacts/codebase_index.ts'
 import { buildOrientationContext } from './context/orientation.ts'
 import { runLoop } from './runtime/loop.ts'
@@ -161,6 +168,56 @@ function parseEnvNumber(name: string): number | undefined {
   return parsed
 }
 
+function normalizeProvider(value: unknown): MerlionProvider | undefined {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'openrouter' || normalized === 'or' || normalized === '1') return 'openrouter'
+  if (normalized === 'openai' || normalized === 'oa' || normalized === '2') return 'openai'
+  if (normalized === 'custom' || normalized === 'other' || normalized === 'compatible' || normalized === '3') return 'custom'
+  return undefined
+}
+
+function defaultBaseURLForProvider(provider: MerlionProvider): string {
+  if (provider === 'openai') return OPENAI_BASE_URL
+  if (provider === 'openrouter') return OPENROUTER_BASE_URL
+  return ''
+}
+
+function defaultModelForProvider(provider: MerlionProvider): string {
+  if (provider === 'openai') return 'gpt-4.1-mini'
+  return DEFAULT_MODEL
+}
+
+function inferProviderFromEnv(): MerlionProvider | undefined {
+  const explicit = normalizeProvider(process.env.MERLION_PROVIDER)
+  if (explicit) return explicit
+  const hasOpenRouterKey = typeof process.env.OPENROUTER_API_KEY === 'string' && process.env.OPENROUTER_API_KEY.trim() !== ''
+  const hasOpenAIKey = typeof process.env.OPENAI_API_KEY === 'string' && process.env.OPENAI_API_KEY.trim() !== ''
+  if (hasOpenRouterKey) return 'openrouter'
+  if (hasOpenAIKey) return 'openai'
+  return undefined
+}
+
+function envConfigOverrides(flags: { modelFlag?: string; baseURLFlag?: string }): Partial<{
+  provider: MerlionProvider
+  apiKey: string
+  model: string
+  baseURL: string
+}> {
+  const provider = inferProviderFromEnv()
+  const apiKey =
+    process.env.MERLION_API_KEY ??
+    process.env.OPENROUTER_API_KEY ??
+    process.env.OPENAI_API_KEY
+
+  return {
+    provider,
+    apiKey,
+    model: flags.modelFlag ?? process.env.MERLION_MODEL,
+    baseURL: flags.baseURLFlag ?? process.env.MERLION_BASE_URL
+  }
+}
+
 function loadUsageRatesFromEnv(): UsageRates | undefined {
   const input = parseEnvNumber('MERLION_COST_INPUT_PER_1M')
   const output = parseEnvNumber('MERLION_COST_OUTPUT_PER_1M')
@@ -243,19 +300,40 @@ async function main(): Promise<void> {
     fileConfig = result.config
   }
 
+  const mergedProviderSeed =
+    normalizeProvider(process.env.MERLION_PROVIDER) ??
+    normalizeProvider(fileConfig.provider) ??
+    DEFAULT_PROVIDER
+
   const merged = mergeConfig(
-    { apiKey: process.env.OPENROUTER_API_KEY, model: resolvedFlags.modelFlag, baseURL: resolvedFlags.baseURLFlag },
+    envConfigOverrides({ modelFlag: resolvedFlags.modelFlag, baseURLFlag: resolvedFlags.baseURLFlag }),
     fileConfig,
-    { apiKey: '', model: DEFAULT_MODEL, baseURL: DEFAULT_BASE_URL }
+    {
+      provider: mergedProviderSeed,
+      apiKey: '',
+      model: defaultModelForProvider(mergedProviderSeed),
+      baseURL: defaultBaseURLForProvider(mergedProviderSeed) || DEFAULT_BASE_URL
+    }
   )
 
-  // If still no API key, run the setup wizard.
-  if (merged.apiKey === '') {
-    const result = await runConfigWizard(fileConfig)
+  // If still missing required fields, run the setup wizard.
+  const missingRequiredConfig =
+    merged.apiKey === '' ||
+    merged.model === '' ||
+    merged.provider === 'custom' && merged.baseURL === ''
+
+  if (missingRequiredConfig) {
+    const result = await runConfigWizard({
+      provider: merged.provider,
+      apiKey: merged.apiKey,
+      model: merged.model,
+      baseURL: merged.baseURL
+    })
     if (!result.ok) {
       process.exitCode = 1
       return
     }
+    merged.provider = result.config.provider ?? merged.provider
     merged.apiKey = result.config.apiKey ?? ''
     merged.model = result.config.model ?? merged.model
     merged.baseURL = result.config.baseURL ?? merged.baseURL
