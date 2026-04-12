@@ -1,0 +1,22 @@
+Version: 0.1.5
+Date: 2026-04-12
+
+Changes:
+- Provider-agnostic first-run configuration wizard:
+  supports provider selection `openrouter / openai / custom`,
+  prompts for custom base URL when `custom` is selected,
+  then prompts for API key and model.
+- Runtime/config compatibility upgrade for provider routing:
+  added `provider` in config and unified env support for
+  `MERLION_PROVIDER`, `MERLION_API_KEY`, `MERLION_MODEL`,
+  `MERLION_BASE_URL`, while keeping compatibility with
+  `OPENROUTER_API_KEY` and `OPENAI_API_KEY`.
+- CLI markdown renderer upgraded from regex line parsing to AST rendering
+  via `marked`, removing raw markdown marker output in common cases:
+  headings no longer print leading `#`, unordered lists render as `•`,
+  blockquotes render with `│`, code fences render as code blocks with
+  language meta, and tables render in aligned row format.
+
+Related docs:
+- docs/features/049-provider-agnostic-first-run-wizard.md
+- docs/features/050-ast-markdown-renderer-v2.md
