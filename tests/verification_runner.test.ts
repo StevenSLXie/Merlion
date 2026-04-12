@@ -162,3 +162,20 @@ test('runVerificationChecks records correct exitCode and durationMs', async () =
   assert.equal(result.results[0]?.exitCode, 5)
   assert.ok((result.results[0]?.durationMs ?? -1) >= 0, 'durationMs should be non-negative')
 })
+
+test('runVerificationChecks settles promptly when parent exits and background child remains', async () => {
+  const cwd = await makeDir()
+  const checks: VerificationCheck[] = [
+    {
+      id: 'bg_stdio',
+      name: 'Background stdio holder',
+      command: 'node -e "setTimeout(() => {}, 2200)" & echo started',
+    },
+  ]
+
+  const result = await runVerificationChecks({ cwd, checks, timeoutMs: 5_000 })
+  const only = result.results[0]
+  assert.equal(only?.status, 'passed')
+  assert.match(only?.output ?? '', /started/)
+  assert.ok((only?.durationMs ?? 9_999) < 1_800, `Expected fast settlement, got ${only?.durationMs ?? -1}ms`)
+})

@@ -82,9 +82,17 @@ async function runCommand(
     let output = ''
     let timedOut = false
     let settled = false
+    let exitCode: number | null = null
 
     const append = (chunk: unknown) => {
       output = trimOutput(`${output}${String(chunk)}`, maxOutputChars)
+    }
+
+    const settle = (code: number | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ exitCode: code, output, timedOut })
     }
 
     const timer = setTimeout(() => {
@@ -95,21 +103,17 @@ async function runCommand(
 
     child.stdout.on('data', append)
     child.stderr.on('data', append)
+    child.on('exit', (code) => {
+      exitCode = code
+      settle(code)
+    })
+    // Fallback for environments where only `close` is emitted first.
     child.on('close', (code) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      resolve({ exitCode: code, output, timedOut })
+      settle(code ?? exitCode)
     })
     child.on('error', (error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      resolve({
-        exitCode: -1,
-        output: trimOutput(`${output}\n${String(error)}`, maxOutputChars),
-        timedOut: false
-      })
+      output = trimOutput(`${output}\n${String(error)}`, maxOutputChars)
+      settle(-1)
     })
   })
 }

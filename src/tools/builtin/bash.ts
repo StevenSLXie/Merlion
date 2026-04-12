@@ -58,6 +58,14 @@ function runBash(command: string, cwd: string, timeoutMs: number): Promise<{ con
     let combined = ''
     let timedOut = false
     let done = false
+    let exitCode: number | null = null
+
+    const settle = (code: number): void => {
+      if (done) return
+      done = true
+      clearTimeout(killTimer)
+      resolve({ content: combined, exit: code, timedOut })
+    }
 
     const killTimer = setTimeout(() => {
       timedOut = true
@@ -74,17 +82,17 @@ function runBash(command: string, cwd: string, timeoutMs: number): Promise<{ con
 
     child.stdout.on('data', append)
     child.stderr.on('data', append)
+    child.on('exit', (code) => {
+      exitCode = code
+      settle(code ?? -1)
+    })
+    // Fallback for environments where only `close` arrives.
     child.on('close', (code) => {
-      if (done) return
-      done = true
-      clearTimeout(killTimer)
-      resolve({ content: combined, exit: code ?? -1, timedOut })
+      settle(code ?? exitCode ?? -1)
     })
     child.on('error', (error) => {
-      if (done) return
-      done = true
-      clearTimeout(killTimer)
-      resolve({ content: String(error), exit: -1, timedOut: false })
+      combined += String(error)
+      settle(-1)
     })
   })
 }

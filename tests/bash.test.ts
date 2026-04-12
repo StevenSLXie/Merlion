@@ -101,3 +101,18 @@ test('uses pipefail so failed pipeline returns error', async () => {
   assert.match(result.content, /missing\.txt/)
   assert.match(result.content, /\[exit: 1\]/)
 })
+
+test('returns promptly when command exits but background child keeps stdio open', async () => {
+  const cwd = await makeTempDir()
+  const startedAt = Date.now()
+  const result = await bashTool.execute(
+    { command: 'node -e "setTimeout(() => {}, 2200)" & echo started', timeout: 5_000 },
+    { cwd, permissions: permission('allow') }
+  )
+  const elapsedMs = Date.now() - startedAt
+
+  assert.equal(result.isError, false)
+  assert.match(result.content, /started/)
+  assert.match(result.content, /\[exit: 0\]/)
+  assert.ok(elapsedMs < 1_800, `Expected fast settlement, got ${elapsedMs}ms`)
+})

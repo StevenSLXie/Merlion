@@ -1,0 +1,16 @@
+Version: 0.1.11
+Date: 2026-04-12
+
+Changes:
+- Fixed a P0 shell-tool hang where tool calls could wait indefinitely on `close`
+  when parent processes exited but background descendants kept stdio open.
+- Updated process settlement strategy across runtime shell execution paths to
+  settle on `exit` first, with `close` as fallback:
+  - `src/tools/builtin/bash.ts`
+  - `src/tools/builtin/process_common.ts`
+  - `src/verification/runner.ts`
+- Added regression tests for background-child stdio inheritance scenarios,
+  ensuring tool calls and verification checks return promptly.
+
+Related commits:
+- fix(runtime): settle shell executions on process exit to avoid background stdio hangs
