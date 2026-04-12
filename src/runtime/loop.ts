@@ -84,10 +84,8 @@ const ACK_HINT_PATTERNS: RegExp[] = [
 
 const CONCRETE_OUTPUT_PATTERNS: RegExp[] = [
   /```/,
-  /`[^`]+`/,
   /\b(found|identified|updated|created|edited|ran|implemented)\b/i,
   /(已(找到|读取|更新|修复)|已经(找到|读取|更新|修复)|发现了|已定位)/,
-  /(?:^|\s)(?:\.{1,2}\/|\/)?[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/,
 ]
 
 function hasAnyPattern(text: string, patterns: RegExp[]): boolean {

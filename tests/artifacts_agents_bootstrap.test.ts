@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import { ensureGeneratedAgentsMaps } from '../src/artifacts/agents_bootstrap.ts'
 import { loadAgentsGuidance } from '../src/artifacts/agents.ts'
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK)
+    return true
+  } catch {
+    return false
+  }
+}
 
 async function makeRepo(withRealAgents = false): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'merlion-agents-bootstrap-'))
@@ -46,4 +56,15 @@ test('bootstrap skips when real AGENTS.md exists in project', async () => {
   const guidance = await loadAgentsGuidance(repo)
   assert.match(guidance.text, /Real map/)
   assert.equal(guidance.text.includes('(generated map)'), false)
+})
+
+test('bootstrap does not execute shell substitutions from directory names', async () => {
+  const repo = await makeRepo(false)
+  await mkdir(join(repo, '$(touch SHOULD_NOT_EXIST)'), { recursive: true })
+
+  const marker = join(repo, 'SHOULD_NOT_EXIST')
+  assert.equal(await exists(marker), false)
+
+  await ensureGeneratedAgentsMaps(repo)
+  assert.equal(await exists(marker), false)
 })

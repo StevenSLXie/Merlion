@@ -1,6 +1,6 @@
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
-import { execSync } from 'node:child_process'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { basename, dirname, join, relative, resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
 
 import { fileExists, findProjectRoot } from './agents.ts'
 
@@ -29,9 +29,9 @@ const DEFAULTS: Required<AgentsBootstrapOptions> = {
   maxSecondLevelDirs: 10,
 }
 
-function runGit(root: string, command: string): string {
+function runGit(root: string, args: string[]): string {
   try {
-    return execSync(command, {
+    return execFileSync('git', args, {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf8'
@@ -166,7 +166,7 @@ async function buildTargetDirectories(root: string, options: Required<AgentsBoot
   }
 
   const parents = topDirs.filter((dir) => {
-    const name = dir.slice(dir.lastIndexOf('/') + 1)
+    const name = basename(dir)
     return name === 'src' || name === 'app' || name === 'packages' || name === 'services'
   })
 
@@ -200,7 +200,7 @@ export async function ensureGeneratedAgentsMaps(
 
   const mapsDir = join(root, '.merlion', 'maps')
   const metaPath = join(mapsDir, '.meta.json')
-  const head = runGit(root, 'git rev-parse HEAD') || 'no-head'
+  const head = runGit(root, ['rev-parse', 'HEAD']) || 'no-head'
   const meta = await readBootstrapMeta(metaPath)
   if (meta && meta.head === head) {
     let allPresent = true
@@ -226,11 +226,11 @@ export async function ensureGeneratedAgentsMaps(
     const subareas = (await listChildrenDirs(dir, 8)).map((child) => relative(root, child).replace(/\\/g, '/'))
     const entryPoints = await detectEntryPoints(dir, root)
     const recentChanges = uniqueNonEmpty(
-      runGit(root, `git log --name-only --pretty=format: -n 20 -- ${JSON.stringify(pathArg)}`).split('\n'),
+      runGit(root, ['log', '--name-only', '--pretty=format:', '-n', '20', '--', pathArg]).split('\n'),
       8
     )
     const recentCommits = summarizeCommits(
-      runGit(root, `git log --date=short --pretty=format:%h%x20%ad%x20%s -n 5 -- ${JSON.stringify(pathArg)}`)
+      runGit(root, ['log', '--date=short', '--pretty=format:%h%x20%ad%x20%s', '-n', '5', '--', pathArg])
     )
 
     const content = renderGeneratedGuidance({

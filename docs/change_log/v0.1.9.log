@@ -1,0 +1,23 @@
+Version: 0.1.9
+Date: 2026-04-12
+
+Changes:
+- Security hardening for generated-map bootstrap git calls:
+  replaced shell-string `execSync` invocation with argument-array
+  `execFileSync('git', [...])`, eliminating shell interpolation risk
+  from crafted directory names.
+- Cross-platform path handling fix in bootstrap target expansion:
+  replaced slash-based basename extraction with `path.basename`,
+  so second-level scope discovery works correctly on Windows paths.
+- Runtime false-start nudge precision fix:
+  removed overly broad concrete-output heuristics that treated inline
+  code/path mentions as execution evidence, restoring nudge behavior
+  when the assistant promises actions without tool calls.
+- Regression coverage:
+  added tests to verify bootstrap does not execute shell substitutions
+  from directory names and that path/code mentions still trigger
+  false-start nudge when no actual execution evidence exists.
+
+Related commits:
+- fix(bootstrap): secure git invocation + path basename compatibility
+- fix(loop): avoid false negatives in shouldNudge with path/code mentions

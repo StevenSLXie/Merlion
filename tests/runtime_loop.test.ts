@@ -357,6 +357,20 @@ test('shouldNudge: detects generic action-plan phrasing', () => {
   )
 })
 
+test('shouldNudge: path mention without execution evidence still nudges', () => {
+  const baseState = {
+    messages: [],
+    turnCount: 0,
+    maxOutputTokensRecoveryCount: 0,
+    hasAttemptedReactiveCompact: false,
+    nudgeCount: 0
+  }
+  assert.equal(
+    shouldNudge("I'll inspect `src/runtime/loop.ts` first and then update the fix.", baseState),
+    true,
+  )
+})
+
 test('shouldNudge: does not nudge genuine past-tense completion', () => {
   const baseState = {
     messages: [],
