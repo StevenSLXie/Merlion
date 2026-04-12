@@ -35,29 +35,29 @@
 - (keep in MANUAL if needed)
 
 ## RecentChanges
-- src/index.ts
-- docs/change_log/v0.1.5.log
+- docs/change_log/v0.1.7.log
 - package-lock.json
 - package.json
-- README.md
-- docs/features/050-ast-markdown-renderer-v2.md
-- docs/todo.md
-- docs/tracker.md
+- tests/e2e/e2e_agents_auto_maintenance.test.ts
+- tests/e2e/e2e_path_guidance_lifecycle.test.ts
+- docs/change_log/v0.1.6.log
+- src/config/wizard.ts
+- src/tools/builtin/bash.ts
 
 ## HighChurnFiles
 - docs/todo.md (changes=45)
 - docs/tracker.md (changes=44)
-- src/index.ts (changes=21)
-- package.json (changes=14)
-- src/cli/experience.ts (changes=14)
-- src/runtime/loop.ts (changes=14)
+- src/index.ts (changes=22)
+- package.json (changes=16)
+- src/cli/experience.ts (changes=15)
+- src/runtime/loop.ts (changes=15)
 
 ## RecentCommits
+- 2026-04-12 6fa8b4c chore(release): bump version to 0.1.7
+- 2026-04-12 8715a15 test(e2e): cover path guidance and AGENTS auto maintenance
+- 2026-04-12 675a944 chore(release): finalize 0.1.6 residual changes
+- 2026-04-12 4d9ff8f feat(context): path-guided AGENTS maps and commit-time maintenance
 - 2026-04-12 a321d19 fix(config): custom provider without baseURL now triggers setup wizard
-- 2026-04-12 938f316 chore(release): bump version to 0.1.5
-- 2026-04-12 8ec99d3 feat(cli): ast markdown rendering without raw markers
-- 2026-04-12 323f80e feat(config): provider-agnostic onboarding wizard
-- 2026-04-12 2d4c240 fix(observability): persist prompt cache tracker across turns and include tool schema tokens
 
 ## LastUpdated
 - 2026-04-12

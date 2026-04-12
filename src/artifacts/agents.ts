@@ -17,7 +17,7 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
 }
 
-async function fileExists(path: string): Promise<boolean> {
+export async function fileExists(path: string): Promise<boolean> {
   try {
     await access(path, constants.F_OK)
     return true
@@ -26,7 +26,7 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-async function findProjectRoot(startCwd: string): Promise<string> {
+export async function findProjectRoot(startCwd: string): Promise<string> {
   let cursor = resolve(startCwd)
   for (;;) {
     const gitPath = join(cursor, '.git')
@@ -57,6 +57,34 @@ function ancestorsFromRoot(projectRoot: string, cwd: string): string[] {
   return paths
 }
 
+function generatedAgentsPathForDirectory(projectRoot: string, directory: string): string {
+  const rel = relative(projectRoot, directory)
+  if (rel === '') return join(projectRoot, '.merlion', 'maps', 'AGENTS.md')
+  return join(projectRoot, '.merlion', 'maps', rel, 'AGENTS.md')
+}
+
+export interface ResolvedAgentsGuidanceFile {
+  path: string
+  source: 'project' | 'generated'
+}
+
+export async function resolveAgentsGuidanceFileForDirectory(
+  projectRoot: string,
+  directory: string
+): Promise<ResolvedAgentsGuidanceFile | null> {
+  const realPath = join(directory, 'AGENTS.md')
+  if (await fileExists(realPath)) {
+    return { path: realPath, source: 'project' }
+  }
+
+  const generatedPath = generatedAgentsPathForDirectory(projectRoot, directory)
+  if (await fileExists(generatedPath)) {
+    return { path: generatedPath, source: 'generated' }
+  }
+
+  return null
+}
+
 function truncateByTokenBudget(text: string, maxTokens: number): { text: string; truncated: boolean } {
   if (maxTokens <= 0) return { text: '', truncated: text.length > 0 }
   const maxChars = maxTokens * 4
@@ -78,12 +106,14 @@ export async function loadAgentsGuidance(
   const files: string[] = []
   const blocks: string[] = []
   for (const dir of searchDirs) {
-    const path = join(dir, 'AGENTS.md')
-    if (!(await fileExists(path))) continue
-    const content = await readFile(path, 'utf8')
-    files.push(path)
-    const rel = relative(projectRoot, path) || 'AGENTS.md'
-    blocks.push(`## ${rel}\n${content.trim()}`)
+    const resolved = await resolveAgentsGuidanceFileForDirectory(projectRoot, dir)
+    if (!resolved) continue
+    const content = await readFile(resolved.path, 'utf8')
+    files.push(resolved.path)
+    const relDir = relative(projectRoot, dir).replace(/\\/g, '/')
+    const rel = relDir === '' ? 'AGENTS.md' : `${relDir}/AGENTS.md`
+    const sourceLabel = resolved.source === 'generated' ? ' (generated map)' : ''
+    blocks.push(`## ${rel}${sourceLabel}\n${content.trim()}`)
   }
 
   const merged = blocks.join('\n\n')

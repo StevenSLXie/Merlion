@@ -2,6 +2,10 @@ Version: 0.1.7
 Date: 2026-04-12
 
 Changes:
+- Existing-repo generated map bootstrap:
+  when a project has no real `AGENTS.md`, Merlion now auto-generates
+  layered fallback maps under `.merlion/maps` on new session start,
+  then uses them in orientation and path-guided loading.
 - Path-guided context loading:
   runtime now collects path signals from tool calls/results and injects
   incremental AGENTS guidance along `root -> target` directory chains,
@@ -24,3 +28,4 @@ Related docs:
 - docs/features/052-agents-md-manual-auto-contract.md
 - docs/features/053-commit-time-agents-auto-maintenance.md
 - docs/features/054-path-guided-prompt-policy.md
+- docs/features/055-generated-map-bootstrap-for-existing-repos.md

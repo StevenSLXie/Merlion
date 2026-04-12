@@ -24,29 +24,29 @@
 - (keep in MANUAL if needed)
 
 ## RecentChanges
+- src/tools/builtin/bash.ts
+- src/tools/builtin/AGENTS.md
 - src/tools/builtin/config.ts
 - src/tools/builtin/config_get.ts
 - src/tools/builtin/config_set.ts
 - src/tools/builtin/todo_write.ts
-- src/tools/builtin/bash.ts
 - src/tools/builtin/glob.ts
 - src/tools/builtin/grep.ts
-- src/tools/builtin/edit_file.ts
 
 ## HighChurnFiles
+- src/tools/builtin/bash.ts (changes=4)
 - src/tools/builtin/edit_file.ts (changes=4)
-- src/tools/builtin/bash.ts (changes=3)
 - src/tools/builtin/glob.ts (changes=3)
 - src/tools/builtin/grep.ts (changes=3)
 - src/tools/builtin/index.ts (changes=3)
 - src/tools/builtin/todo_write.ts (changes=3)
 
 ## RecentCommits
+- 2026-04-12 675a944 chore(release): finalize 0.1.6 residual changes
+- 2026-04-12 4d9ff8f feat(context): path-guided AGENTS maps and commit-time maintenance
 - 2026-04-12 323f80e feat(config): provider-agnostic onboarding wizard
 - 2026-04-12 5e4e56b feat(policy): enforce version changelog and move runtime artifacts under .merlion
 - 2026-04-12 9fc8376 docs: add bilingual README and fix bash .git command autocorrect
-- 2026-04-12 ee075e2 fix(wave1): grep case-sensitivity default + glob ** fallback regex; add E2E
-- 2026-04-12 68d8c53 feat(wave1): align file tool api with file_path/offset/limit/replace_all
 
 ## LastUpdated
 - 2026-04-12

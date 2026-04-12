@@ -13,7 +13,7 @@ async function listAgents(root: string): Promise<string[]> {
   async function walk(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true })
     for (const entry of entries) {
-      if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === 'dist') continue
+      if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.merlion') continue
       const full = join(dir, entry.name)
       if (entry.isDirectory()) {
         await walk(full)

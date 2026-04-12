@@ -59,6 +59,8 @@ merlion --resume <session-id>
 ## AGENTS Map Automation
 
 Merlion supports layered `AGENTS.md` maps with commit-time auto maintenance.
+For existing repos without any `AGENTS.md`, Merlion also auto-bootstraps
+fallback maps under `.merlion/maps` on first new session.
 
 ```bash
 # enable repository hooks once

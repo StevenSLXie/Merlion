@@ -15,6 +15,7 @@ import {
   defaultModelForProvider
 } from './config/wizard.ts'
 import { loadAgentsGuidance } from './artifacts/agents.ts'
+import { ensureGeneratedAgentsMaps } from './artifacts/agents_bootstrap.ts'
 import { ensureCodebaseIndex, updateCodebaseIndexWithChangedFiles } from './artifacts/codebase_index.ts'
 import { buildOrientationContext } from './context/orientation.ts'
 import {
@@ -378,7 +379,18 @@ async function main(): Promise<void> {
   const initialMessages = initialMessagesFromResume ?? [
     { role: 'system' as const, content: 'You are Merlion, a coding agent. Use tools to complete the task.' }
   ]
+  let startupMapSummary: string | null = null
   if (!options.resumeSessionId && initialMessages.length > 0) {
+    try {
+      const bootstrap = await ensureGeneratedAgentsMaps(options.cwd)
+      if (bootstrap.created) {
+        startupMapSummary =
+          `initialized generated project map (${bootstrap.generatedFiles.length} scope` +
+          `${bootstrap.generatedFiles.length === 1 ? '' : 's'})`
+      }
+    } catch (error) {
+      process.stderr.write(`Agents map bootstrap warning: ${String(error)}\n`)
+    }
     await appendTranscriptMessage(session.transcriptPath, initialMessages[0]!)
     try {
       await ensureCodebaseIndex(options.cwd)
@@ -418,6 +430,9 @@ async function main(): Promise<void> {
   })
 
   ui.renderBanner()
+  if (startupMapSummary) {
+    ui.onMapUpdated(startupMapSummary)
+  }
 
   try {
     const seeded = await loadAgentsGuidance(options.cwd, { maxTokens: 1 })

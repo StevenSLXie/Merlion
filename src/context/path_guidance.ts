@@ -1,6 +1,6 @@
-import { access, readFile } from 'node:fs/promises'
-import { constants } from 'node:fs'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { findProjectRoot, resolveAgentsGuidanceFileForDirectory } from '../artifacts/agents.ts'
 
 export interface PathGuidanceState {
   loadedAgentFiles: Set<string>
@@ -69,25 +69,6 @@ function looksPathLike(value: string): boolean {
   if (/^https?:\/\//i.test(value)) return false
   if (value.includes('..') || value.startsWith('./') || value.startsWith('../') || value.startsWith('/') || value.startsWith('~')) return true
   return value.includes('/')
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.F_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function findProjectRoot(startCwd: string): Promise<string> {
-  let cursor = resolve(startCwd)
-  for (;;) {
-    if (await fileExists(join(cursor, '.git'))) return cursor
-    const parent = resolve(cursor, '..')
-    if (parent === cursor) return resolve(startCwd)
-    cursor = parent
-  }
 }
 
 function isWithinRoot(root: string, target: string): boolean {
@@ -222,15 +203,16 @@ export async function buildPathGuidanceDelta(
       break
     }
 
-    const agentsPath = join(dir, 'AGENTS.md')
-    const normalizedAgentsPath = resolve(agentsPath)
+    const resolvedGuidance = await resolveAgentsGuidanceFileForDirectory(root, dir)
+    if (!resolvedGuidance) continue
+    const normalizedAgentsPath = resolve(resolvedGuidance.path)
     if (state.loadedAgentFiles.has(normalizedAgentsPath)) continue
-    if (!(await fileExists(normalizedAgentsPath))) continue
 
-    const raw = await readFile(normalizedAgentsPath, 'utf8')
+    const raw = await readFile(resolvedGuidance.path, 'utf8')
     const clipped = truncateToTokens(raw.trim(), merged.perFileTokens, '[...AGENTS path section truncated...]')
     const rel = relAgentPath(root, normalizedAgentsPath)
-    const block = `## ${rel}\n${clipped.text}`
+    const sourceLabel = resolvedGuidance.source === 'generated' ? ' (generated map)' : ''
+    const block = `## ${rel}${sourceLabel}\n${clipped.text}`
 
     const blockTokens = estimateTokens(block)
     if (usedTokens + blockTokens > merged.totalTokens) {

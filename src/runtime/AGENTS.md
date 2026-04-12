@@ -24,6 +24,7 @@
 - (keep in MANUAL if needed)
 
 ## RecentChanges
+- src/runtime/AGENTS.md
 - src/runtime/loop.ts
 - src/runtime/prompt_observability.ts
 - src/runtime/session.ts
@@ -31,22 +32,21 @@
 - src/runtime/budget.ts
 - src/runtime/cost_gate.ts
 - src/runtime/usage.ts
-- src/runtime/retry.ts
 
 ## HighChurnFiles
-- src/runtime/loop.ts (changes=14)
+- src/runtime/loop.ts (changes=15)
 - src/runtime/session.ts (changes=5)
 - src/runtime/executor.ts (changes=4)
 - src/runtime/prompt_observability.ts (changes=2)
+- src/runtime/AGENTS.md (changes=1)
 - src/runtime/budget.ts (changes=1)
-- src/runtime/cost_gate.ts (changes=1)
 
 ## RecentCommits
+- 2026-04-12 4d9ff8f feat(context): path-guided AGENTS maps and commit-time maintenance
 - 2026-04-12 2d4c240 fix(observability): persist prompt cache tracker across turns and include tool schema tokens
 - 2026-04-12 9e4dc64 feat(observability): add prompt-level cache/token diagnostics in cli
 - 2026-04-12 362e07a feat(tools): implement wave1 top-priority builtins from free-code survey
 - 2026-04-11 d52ea25 feat(usage): surface provider route and cache-hit diagnostics
-- 2026-04-11 0e8eb40 fix(loop): recover empty stop replies after tool execution
 
 ## LastUpdated
 - 2026-04-12
