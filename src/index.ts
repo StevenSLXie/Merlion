@@ -10,7 +10,6 @@ import { readConfig, mergeConfig, type MerlionProvider } from './config/store.ts
 import {
   runConfigWizard,
   DEFAULT_MODEL,
-  DEFAULT_BASE_URL,
   DEFAULT_PROVIDER,
   OPENAI_BASE_URL,
   OPENROUTER_BASE_URL
@@ -312,7 +311,7 @@ async function main(): Promise<void> {
       provider: mergedProviderSeed,
       apiKey: '',
       model: defaultModelForProvider(mergedProviderSeed),
-      baseURL: defaultBaseURLForProvider(mergedProviderSeed) || DEFAULT_BASE_URL
+      baseURL: defaultBaseURLForProvider(mergedProviderSeed)
     }
   )
 
