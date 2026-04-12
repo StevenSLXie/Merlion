@@ -22,9 +22,28 @@ const BLOCK_PATTERNS: RegExp[] = [
 
 type RiskLevel = 'safe' | 'warn' | 'block'
 
-function normalizeCommand(raw: string): { command: string; normalized: boolean } {
-  const rewritten = raw.replace(/(^|[;&|]\s*)\.git(?=\s+)/g, '$1git')
-  return { command: rewritten, normalized: rewritten !== raw }
+interface NormalizedCommand {
+  command: string
+  notes: string[]
+}
+
+function normalizeCommand(raw: string): NormalizedCommand {
+  let rewritten = raw
+  const notes: string[] = []
+
+  // Common LLM slip: includes shell prompt marker as part of command text.
+  if (/^\s*>>?\s+/.test(rewritten)) {
+    rewritten = rewritten.replace(/^\s*>>?\s+/, '')
+    notes.push('stripped leading shell prompt marker (`>`/`>>`)')
+  }
+
+  const dotGitNormalized = rewritten.replace(/(^|[;&|]\s*)\.git(?=\s+)/g, '$1git')
+  if (dotGitNormalized !== rewritten) {
+    rewritten = dotGitNormalized
+    notes.push('normalized `.git` to `git`')
+  }
+
+  return { command: rewritten, notes }
 }
 
 function assessCommandRisk(command: string): RiskLevel {
@@ -35,7 +54,7 @@ function assessCommandRisk(command: string): RiskLevel {
 
 function runBash(command: string, cwd: string, timeoutMs: number): Promise<{ content: string; exit: number; timedOut: boolean }> {
   return new Promise((resolve) => {
-    const child = spawn('bash', ['-c', command], { cwd })
+    const child = spawn('bash', ['-o', 'pipefail', '-c', command], { cwd })
     let combined = ''
     let timedOut = false
     let done = false
@@ -110,7 +129,7 @@ export const bashTool: ToolDefinition = {
     const result = await runBash(effectiveCommand, ctx.cwd, timeout)
     if (result.timedOut) {
       return {
-        content: `${normalized.normalized ? '[autocorrect] normalized `.git` to `git`\n' : ''}${result.content}\n[Command timed out after ${timeout} ms]`,
+        content: `${normalized.notes.map((note) => `[autocorrect] ${note}\n`).join('')}${result.content}\n[Command timed out after ${timeout} ms]`,
         isError: true
       }
     }
@@ -119,7 +138,7 @@ export const bashTool: ToolDefinition = {
       ? `${result.content}\n[exit: ${result.exit}]`
       : `[exit: ${result.exit}]`
     return {
-      content: `${normalized.normalized ? '[autocorrect] normalized `.git` to `git`\n' : ''}${text}`,
+      content: `${normalized.notes.map((note) => `[autocorrect] ${note}\n`).join('')}${text}`,
       isError: result.exit !== 0
     }
   }

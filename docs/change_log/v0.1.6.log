@@ -1,0 +1,26 @@
+Version: 0.1.6
+Date: 2026-04-12
+
+Changes:
+- Bash tool robustness improvements:
+  strips accidental leading shell prompt markers (`>` / `>>`) from
+  generated commands and enables `pipefail`, so pipeline failures are
+  reported as errors instead of false `exit: 0` success.
+- Repeated tool-error self-correction in loop runtime:
+  when the same tool call arguments fail repeatedly, Merlion injects
+  a correction hint to stop retry loops and re-anchor path discovery
+  from the workspace root.
+- `.merlion` path guidance hardening:
+  repeated-failure correction now explicitly requires project-local
+  `${cwd}/.merlion` paths only, and forbids `~/.merlion` and
+  `.merlion/<project>/...` path constructions.
+- Auth failure remediation UX:
+  provider auth/key failures now return actionable guidance including
+  `merlion config`, config file location, and supported API key env vars.
+- Interactive recovery for invalid/expired key:
+  when auth failure occurs, CLI now asks whether to reopen setup wizard;
+  in REPL it resumes after reconfiguration, and in one-shot mode it
+  retries the user request once after successful reconfiguration.
+
+Related docs:
+- docs/features/047-release-changelog-policy-and-artifact-hygiene.md

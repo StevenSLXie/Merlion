@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
@@ -75,4 +75,29 @@ test('autocorrects accidental .git prefix', async () => {
   assert.match(result.content, /autocorrect/i)
   assert.match(result.content, /git version/i)
   assert.match(result.content, /\[exit: 0\]/)
+})
+
+test('autocorrects accidental shell prompt marker prefix', async () => {
+  const cwd = await makeTempDir()
+  const result = await bashTool.execute(
+    { command: '>> pwd' },
+    { cwd, permissions: permission('allow') }
+  )
+
+  assert.equal(result.isError, false)
+  assert.match(result.content, /autocorrect/i)
+  assert.match(result.content, /\[exit: 0\]/)
+  await assert.rejects(stat(join(cwd, 'pwd')))
+})
+
+test('uses pipefail so failed pipeline returns error', async () => {
+  const cwd = await makeTempDir()
+  const result = await bashTool.execute(
+    { command: 'cat missing.txt | head -1' },
+    { cwd, permissions: permission('allow') }
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /missing\.txt/)
+  assert.match(result.content, /\[exit: 1\]/)
 })

@@ -70,18 +70,18 @@ function parseProvider(value: string): MerlionProvider | null {
   return null
 }
 
-function normalizeProvider(value: unknown): MerlionProvider | null {
+export function normalizeProvider(value: unknown): MerlionProvider | null {
   if (typeof value !== 'string') return null
   return parseProvider(value)
 }
 
-function defaultBaseURLForProvider(provider: MerlionProvider): string {
+export function defaultBaseURLForProvider(provider: MerlionProvider): string {
   if (provider === 'openai') return OPENAI_BASE_URL
   if (provider === 'openrouter') return OPENROUTER_BASE_URL
   return ''
 }
 
-function defaultModelForProvider(provider: MerlionProvider): string {
+export function defaultModelForProvider(provider: MerlionProvider): string {
   if (provider === 'openai') return 'gpt-4.1-mini'
   return DEFAULT_MODEL
 }
