@@ -3,6 +3,12 @@ import { basename, dirname, join, relative, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 import { fileExists, findProjectRoot, GUIDANCE_FILENAMES } from './agents.ts'
+import {
+  bootstrapDepthForFileCount,
+  collectDirectorySignals,
+  estimateRepositoryFileCount,
+  inferDirectoryPurpose,
+} from './repo_semantics.ts'
 
 export interface AgentsBootstrapOptions {
   maxTopDirs?: number
@@ -134,6 +140,7 @@ async function detectEntryPoints(directory: string, root: string): Promise<strin
 function renderGeneratedGuidance(params: {
   root: string
   directory: string
+  purpose: string
   subareas: string[]
   entryPoints: string[]
   recentChanges: string[]
@@ -142,11 +149,14 @@ function renderGeneratedGuidance(params: {
 }): string {
   const relDir = relative(params.root, params.directory).replace(/\\/g, '/') || '.'
   const lines: string[] = []
-  lines.push('# Generated AGENTS Guidance')
+  lines.push('# Generated MERLION Guidance')
   lines.push('')
   lines.push('## Scope')
   lines.push(`- directory: ${relDir}`)
   lines.push('- source: generated map bootstrap (verify with tools before edits)')
+  lines.push('')
+  lines.push('## Purpose')
+  lines.push(`- ${params.purpose}`)
   lines.push('')
   lines.push('## Subareas')
   lines.push(...(params.subareas.length > 0 ? params.subareas.map((x) => `- ${x}`) : ['- (none)']))
@@ -197,9 +207,14 @@ export async function ensureGeneratedAgentsMaps(
   options?: AgentsBootstrapOptions
 ): Promise<AgentsBootstrapResult> {
   const root = await findProjectRoot(cwd)
+  const estimatedFileCount = await estimateRepositoryFileCount(root, 3000)
+  const adaptive = bootstrapDepthForFileCount(estimatedFileCount)
   const merged = {
-    maxTopDirs: Math.max(0, Math.floor(options?.maxTopDirs ?? DEFAULTS.maxTopDirs)),
-    maxSecondLevelDirs: Math.max(0, Math.floor(options?.maxSecondLevelDirs ?? DEFAULTS.maxSecondLevelDirs)),
+    maxTopDirs: Math.max(0, Math.floor(options?.maxTopDirs ?? adaptive.maxTopDirs ?? DEFAULTS.maxTopDirs)),
+    maxSecondLevelDirs: Math.max(
+      0,
+      Math.floor(options?.maxSecondLevelDirs ?? adaptive.maxSecondLevelDirs ?? DEFAULTS.maxSecondLevelDirs)
+    ),
     force: options?.force === true,
   }
 
@@ -227,6 +242,12 @@ export async function ensureGeneratedAgentsMaps(
 
     const subareas = (await listChildrenDirs(dir, 8)).map((child) => relative(root, child).replace(/\\/g, '/'))
     const entryPoints = await detectEntryPoints(dir, root)
+    const signals = await collectDirectorySignals(dir, 90)
+    const purpose = inferDirectoryPurpose({
+      root,
+      directory: dir,
+      signals,
+    })
     const recentChanges = uniqueNonEmpty(
       runGit(root, ['log', '--name-only', '--pretty=format:', '-n', '20', '--', pathArg]).split('\n'),
       8
@@ -238,6 +259,7 @@ export async function ensureGeneratedAgentsMaps(
     const content = renderGeneratedGuidance({
       root,
       directory: dir,
+      purpose,
       subareas,
       entryPoints,
       recentChanges,

@@ -1,6 +1,7 @@
-import { loadAgentsGuidance } from '../artifacts/agents.ts'
+import { findProjectRoot, loadAgentsGuidance } from '../artifacts/agents.ts'
 import { ensureCodebaseIndex, readCodebaseIndex } from '../artifacts/codebase_index.ts'
 import { ensureProgressArtifact, readProgressArtifact } from '../artifacts/progress.ts'
+import { estimateRepositoryFileCount, orientationBudgetsForFileCount } from '../artifacts/repo_semantics.ts'
 
 export interface OrientationBudgets {
   totalTokens: number
@@ -21,7 +22,7 @@ export interface OrientationResult {
   }>
 }
 
-const DEFAULT_BUDGETS: OrientationBudgets = {
+const FALLBACK_BUDGETS: OrientationBudgets = {
   totalTokens: 1200,
   agentsTokens: 500,
   progressTokens: 300,
@@ -42,14 +43,26 @@ function truncateToTokens(text: string, maxTokens: number): { text: string; trun
   }
 }
 
+async function defaultBudgetsForCwd(cwd: string): Promise<OrientationBudgets> {
+  try {
+    const root = await findProjectRoot(cwd)
+    const fileCount = await estimateRepositoryFileCount(root, 3000)
+    return orientationBudgetsForFileCount(fileCount)
+  } catch {
+    return FALLBACK_BUDGETS
+  }
+}
+
 export async function buildOrientationContext(
   cwd: string,
   options?: Partial<OrientationBudgets>
 ): Promise<OrientationResult> {
+  const baseline = await defaultBudgetsForCwd(cwd)
   const budgets: OrientationBudgets = {
-    ...DEFAULT_BUDGETS,
+    ...baseline,
     ...options,
   }
+
   const safeBudgets: OrientationBudgets = {
     totalTokens: Math.max(0, Math.floor(budgets.totalTokens)),
     agentsTokens: Math.max(0, Math.floor(budgets.agentsTokens)),
@@ -61,56 +74,72 @@ export async function buildOrientationContext(
   await ensureCodebaseIndex(cwd)
 
   const [agents, progress, index] = await Promise.all([
-    loadAgentsGuidance(cwd, { maxTokens: safeBudgets.agentsTokens }),
+    loadAgentsGuidance(cwd, {
+      maxTokens: safeBudgets.agentsTokens,
+      includeMajorScopes: true,
+      maxMajorScopes: 4,
+    }),
     readProgressArtifact(cwd, { maxTokens: safeBudgets.progressTokens }),
     readCodebaseIndex(cwd, { maxTokens: safeBudgets.indexTokens }),
   ])
 
-  let sectionStates: OrientationResult['sections'] = [
-    {
-      name: 'agents',
-      tokensEstimate: agents.tokensEstimate,
-      included: agents.text.trim() !== '',
-      truncated: agents.truncated,
-    },
-    {
-      name: 'progress',
-      tokensEstimate: progress.tokensEstimate,
-      included: progress.text.trim() !== '',
-      truncated: progress.truncated,
-    },
-    {
-      name: 'index',
-      tokensEstimate: index.tokensEstimate,
-      included: index.text.trim() !== '',
-      truncated: index.truncated,
-    },
+  const sections: Array<{
+    name: 'agents' | 'progress' | 'index'
+    header: string
+    text: string
+    truncated: boolean
+  }> = [
+    { name: 'agents', header: '### AGENTS Guidance', text: agents.text, truncated: agents.truncated },
+    { name: 'progress', header: '### Progress Snapshot', text: progress.text, truncated: progress.truncated },
+    { name: 'index', header: '### Codebase Index', text: index.text, truncated: index.truncated },
   ]
 
-  let sections = [
-    agents.text.trim() !== '' ? `### AGENTS Guidance\n${agents.text}` : '',
-    progress.text.trim() !== '' ? `### Progress Snapshot\n${progress.text}` : '',
-    index.text.trim() !== '' ? `### Codebase Index\n${index.text}` : '',
-  ].filter((x) => x !== '')
+  const assembled = sections
+    .filter((section) => section.text.trim() !== '')
+    .map((section) => `${section.header}\n${section.text}`)
 
-  let merged = sections.join('\n\n')
-  let truncated = sectionStates.some((s) => s.truncated)
+  let merged = assembled.join('\n\n')
   let totalTokens = estimateTokens(merged)
+  let truncated = sections.some((section) => section.truncated)
+
+  let sectionStates: OrientationResult['sections'] = sections.map((section) => {
+    const payload = section.text.trim() === '' ? '' : `${section.header}\n${section.text}`
+    return {
+      name: section.name,
+      tokensEstimate: estimateTokens(payload),
+      included: payload.trim() !== '',
+      truncated: section.truncated,
+    }
+  })
 
   if (totalTokens > safeBudgets.totalTokens) {
-    const keepAgents = sections[0] ?? ''
-    const keepProgress = sections[1] ?? ''
-    const keepIndex = sections[2] ?? ''
+    const agentsSection = sections.find((section) => section.name === 'agents')
+    const progressSection = sections.find((section) => section.name === 'progress')
+    const indexSection = sections.find((section) => section.name === 'index')
 
-    const agentsTokens = estimateTokens(keepAgents)
-    const remaining = Math.max(0, safeBudgets.totalTokens - agentsTokens)
-    const progressBudget = Math.min(estimateTokens(keepProgress), Math.floor(remaining * 0.45))
+    const keepAgents = agentsSection && agentsSection.text.trim() !== ''
+      ? `${agentsSection.header}\n${agentsSection.text}`
+      : ''
+    const keepAgentsTokens = estimateTokens(keepAgents)
+    const remaining = Math.max(0, safeBudgets.totalTokens - keepAgentsTokens)
+
+    const rawProgress = progressSection && progressSection.text.trim() !== ''
+      ? `${progressSection.header}\n${progressSection.text}`
+      : ''
+    const rawIndex = indexSection && indexSection.text.trim() !== ''
+      ? `${indexSection.header}\n${indexSection.text}`
+      : ''
+
+    const rawProgressTokens = estimateTokens(rawProgress)
+    const rawIndexTokens = estimateTokens(rawIndex)
+    const denominator = Math.max(1, rawProgressTokens + rawIndexTokens)
+    const progressBudget = Math.floor((rawProgressTokens / denominator) * remaining)
     const indexBudget = Math.max(0, remaining - progressBudget)
 
-    const clippedProgress = truncateToTokens(keepProgress, progressBudget)
-    const clippedIndex = truncateToTokens(keepIndex, indexBudget)
+    const clippedProgress = truncateToTokens(rawProgress, progressBudget)
+    const clippedIndex = truncateToTokens(rawIndex, indexBudget)
 
-    const rebuilt = [keepAgents, clippedProgress.text, clippedIndex.text].filter((x) => x.trim() !== '')
+    const rebuilt = [keepAgents, clippedProgress.text, clippedIndex.text].filter((item) => item.trim() !== '')
     merged = rebuilt.join('\n\n')
     totalTokens = estimateTokens(merged)
     truncated = true

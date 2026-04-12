@@ -41,8 +41,8 @@ test('codebase index: generate, track changed files, deduplicate, and read with 
     ])
     const afterFirst = await readFile(join(sandbox, '.merlion', 'codebase_index.md'), 'utf8')
     assert.match(afterFirst, /Recent Changed Files/, '"Recent Changed Files" section must appear')
-    assert.match(afterFirst, /src\/runtime\/loop\.ts/, 'First changed file must appear')
-    assert.match(afterFirst, /src\/tools\/builtin\/bash\.ts/, 'Second changed file must appear')
+    assert.match(afterFirst, /changed: src\/runtime\/loop\.ts — /, 'First changed file must appear')
+    assert.match(afterFirst, /changed: src\/tools\/builtin\/bash\.ts — /, 'Second changed file must appear')
 
     // ── Deduplication ─────────────────────────────────────────────────────────
     await updateCodebaseIndexWithChangedFiles(sandbox, [

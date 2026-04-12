@@ -22,6 +22,8 @@ import {
   refreshCodebaseIndex,
   updateCodebaseIndexWithChangedFiles
 } from './artifacts/codebase_index.ts'
+import { updateProgressFromRuntimeSignals } from './artifacts/progress_auto.ts'
+import { detectPotentialStaleGuidance } from './artifacts/guidance_staleness.ts'
 import { buildOrientationContext } from './context/orientation.ts'
 import {
   buildPathGuidanceDelta,
@@ -334,6 +336,27 @@ function collectGitWorkingTreePaths(cwd: string): string[] {
   }
 }
 
+function collectLatestCommitPaths(cwd: string): string[] {
+  try {
+    const output = execSync('git show --name-only --pretty=format: --diff-filter=ACMR --no-renames -n 1 HEAD', {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+    }).trim()
+    if (output === '') return []
+    const out: string[] = []
+    for (const raw of output.split('\n')) {
+      const normalized = decodePorcelainPath(raw).replace(/\\/g, '/').trim()
+      if (normalized === '' || normalized.startsWith('..')) continue
+      if (!out.includes(normalized)) out.push(normalized)
+      if (out.length >= 80) break
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
 async function main(): Promise<void> {
   const flags = parseArgs(process.argv.slice(2))
   if (flags === 'version') {
@@ -460,6 +483,10 @@ async function main(): Promise<void> {
       if (bootstrap.created) {
         startupMapSummary =
           `initialized generated project map (${bootstrap.generatedFiles.length} scope` +
+          `${bootstrap.generatedFiles.length === 1 ? '' : 's'})`
+      } else if (bootstrap.generatedFiles.length > 0) {
+        startupMapSummary =
+          `generated project map up to date (${bootstrap.generatedFiles.length} scope` +
           `${bootstrap.generatedFiles.length === 1 ? '' : 's'})`
       }
     } catch (error) {
@@ -659,6 +686,12 @@ async function main(): Promise<void> {
         }
       }
     }
+    if (sawSuccessfulGitCommit) {
+      for (const path of collectLatestCommitPaths(options.cwd)) {
+        changedFiles.add(path)
+      }
+    }
+
     if (changedFiles.size > 0) {
       try {
         await updateCodebaseIndexWithChangedFiles(options.cwd, [...changedFiles])
@@ -669,6 +702,31 @@ async function main(): Promise<void> {
         process.stderr.write(`Codebase index update warning: ${String(error)}\n`)
       }
     }
+
+    try {
+      const progressUpdate = await updateProgressFromRuntimeSignals(options.cwd, {
+        changedPaths: [...changedFiles],
+        sawSuccessfulGitCommit,
+      })
+      if (progressUpdate.updated) {
+        ui.onPhaseUpdate('阶段更新：progress 快照已同步到 .merlion/progress.md。')
+      }
+    } catch (error) {
+      process.stderr.write(`Progress auto-update warning: ${String(error)}\n`)
+    }
+
+    if (changedFiles.size > 0) {
+      try {
+        const staleHints = await detectPotentialStaleGuidance(options.cwd, [...changedFiles])
+        if (staleHints.length > 0) {
+          const preview = staleHints.map((hint) => hint.guidanceFile).join(', ')
+          ui.onMapUpdated(`guidance may be stale after code changes: ${preview}`)
+        }
+      } catch (error) {
+        process.stderr.write(`Guidance staleness warning: ${String(error)}\n`)
+      }
+    }
+
     if (generatedMapMode && (sawSuccessfulGitCommit || workingTreeSnapshotChanged)) {
       try {
         const refreshed = await ensureGeneratedAgentsMaps(options.cwd, {
@@ -678,6 +736,8 @@ async function main(): Promise<void> {
           ui.onMapUpdated(
             `generated project map refreshed (${refreshed.generatedFiles.length} scope${refreshed.generatedFiles.length === 1 ? '' : 's'})`
           )
+        } else if (sawSuccessfulGitCommit) {
+          ui.onMapUpdated('generated project map checked (up to date)')
         }
       } catch (error) {
         process.stderr.write(`Generated map refresh warning: ${String(error)}\n`)

@@ -36,8 +36,10 @@ test('ensureCodebaseIndex creates .merlion/codebase_index.md', async () => {
   const artifact = await ensureCodebaseIndex(repo)
   assert.match(artifact.path, /\.merlion\/codebase_index\.md$/)
   assert.match(artifact.content, /# Codebase Index/)
+  assert.match(artifact.content, /## Directory Summary/)
+  assert.match(artifact.content, /## Guidance Scopes/)
   assert.match(artifact.content, /## Dev Scripts/)
-  assert.match(artifact.content, /src\/index\.ts/)
+  assert.match(artifact.content, /src\/index\.ts \(scope: src\)/)
   assert.doesNotMatch(artifact.content, /__pycache__|\.pyc|\.pytest_cache/)
 })
 
@@ -48,7 +50,7 @@ test('updateCodebaseIndexWithChangedFiles records unique recent files', async ()
   await updateCodebaseIndexWithChangedFiles(repo, ['src/index.ts', 'tests/a.test.ts', 'src/index.ts'])
   const text = await readFile(join(repo, '.merlion', 'codebase_index.md'), 'utf8')
   assert.match(text, /## Recent Changed Files/)
-  const count = (text.match(/- changed: src\/index\.ts/g) ?? []).length
+  const count = (text.match(/- changed: src\/index\.ts — /g) ?? []).length
   assert.equal(count, 1)
 })
 
@@ -58,9 +60,9 @@ test('refreshCodebaseIndex rebuilds structure and keeps recent-changed section',
   await writeFile(join(repo, 'docs', 'new.md'), '# new\n', 'utf8')
 
   const out = await refreshCodebaseIndex(repo)
-  assert.match(out.content, /docs\/new\.md/)
+  assert.match(out.content, /docs\/new\.md \(scope: docs\)/)
   assert.match(out.content, /## Recent Changed Files/)
-  assert.match(out.content, /- changed: src\/index\.ts/)
+  assert.match(out.content, /- changed: src\/index\.ts — /)
 })
 
 test('readCodebaseIndex truncates by token budget', async () => {

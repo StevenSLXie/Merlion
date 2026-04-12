@@ -41,7 +41,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M4-04` Progress artifact
 - [x] `M4-05` Codebase index loader
 - [x] `M4-06` Orientation context assembly
-- [ ] `M4-07` Path-guided map/index trigger hardening (focus):
+- [x] `M4-07` Path-guided map/index trigger hardening (focus):
   - strengthen first-session bootstrap -> exploration -> commit refresh chain
   - reduce stale guidance windows after bash-heavy scaffolding
   - add E2E for "existing repo, no AGENTS -> scaffold -> commit -> guidance refresh"

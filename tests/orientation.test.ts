@@ -41,3 +41,13 @@ test('buildOrientationContext respects total budget', async () => {
   assert.equal(orientation.tokensEstimate <= 230, true)
   assert.equal(orientation.truncated, true)
 })
+
+test('buildOrientationContext proactively includes major scope guidance', async () => {
+  const repo = await makeRepo()
+  await writeFile(join(repo, 'MERLION.md'), '# Root map\n', 'utf8')
+  await writeFile(join(repo, 'src', 'MERLION.md'), '# Src map\n', 'utf8')
+
+  const orientation = await buildOrientationContext(repo)
+  assert.match(orientation.text, /Root map/)
+  assert.match(orientation.text, /Src map/)
+})

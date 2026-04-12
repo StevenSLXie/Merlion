@@ -40,6 +40,7 @@ test('bootstrap generates fallback maps when project has no AGENTS.md', async ()
   const guidance = await loadAgentsGuidance(join(repo, 'src', 'runtime'))
   assert.equal(guidance.text.includes('(generated map)'), true)
   assert.equal(guidance.files.length > 0, true)
+  assert.match(guidance.text, /## Purpose/)
 
   const second = await ensureGeneratedAgentsMaps(repo)
   assert.equal(second.created, false)

@@ -11,6 +11,8 @@ export interface AgentsGuidance {
 
 export interface LoadAgentsGuidanceOptions {
   maxTokens?: number
+  includeMajorScopes?: boolean
+  maxMajorScopes?: number
 }
 
 export const GUIDANCE_FILENAMES = ['MERLION.md', 'AGENTS.md'] as const
@@ -95,6 +97,22 @@ export async function resolveAgentsGuidanceFileForDirectory(
   return null
 }
 
+async function listMajorScopeDirectories(
+  projectRoot: string,
+  maxMajorScopes: number
+): Promise<string[]> {
+  if (maxMajorScopes <= 0) return []
+  const preferred = ['src', 'app', 'packages', 'services', 'lib', 'libs', 'docs', 'tests']
+  const out: string[] = []
+  for (const name of preferred) {
+    const candidate = join(projectRoot, name)
+    if (!(await fileExists(candidate))) continue
+    if (!out.includes(candidate)) out.push(candidate)
+    if (out.length >= maxMajorScopes) break
+  }
+  return out
+}
+
 function truncateByTokenBudget(text: string, maxTokens: number): { text: string; truncated: boolean } {
   if (maxTokens <= 0) return { text: '', truncated: text.length > 0 }
   const maxChars = maxTokens * 4
@@ -110,8 +128,15 @@ export async function loadAgentsGuidance(
   options?: LoadAgentsGuidanceOptions
 ): Promise<AgentsGuidance> {
   const maxTokens = options?.maxTokens ?? 500
+  const includeMajorScopes = options?.includeMajorScopes === true
+  const maxMajorScopes = Math.max(0, Math.floor(options?.maxMajorScopes ?? 4))
   const projectRoot = await findProjectRoot(cwd)
   const searchDirs = ancestorsFromRoot(projectRoot, cwd)
+  if (includeMajorScopes) {
+    for (const dir of await listMajorScopeDirectories(projectRoot, maxMajorScopes)) {
+      if (!searchDirs.includes(dir)) searchDirs.push(dir)
+    }
+  }
 
   const files: string[] = []
   const blocks: string[] = []
