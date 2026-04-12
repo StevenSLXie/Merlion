@@ -1,0 +1,25 @@
+Version: 0.1.12
+Date: 2026-04-12
+
+Changes:
+- Guidance filename strategy upgraded for lower collision risk:
+  `MERLION.md` is now the primary map file, while existing `AGENTS.md`
+  remains fully compatible for loading and maintenance workflows.
+- Path-guided map bootstrap behavior fixed:
+  map generation no longer short-circuits when any nested guidance file exists.
+  Merlion now fills missing guidance per target directory, so root guidance and
+  generated subdirectory maps can coexist.
+- Generated fallback maps now default to `.merlion/maps/**/MERLION.md`.
+- Session storage localized by default:
+  transcripts and usage logs now write to `<project>/.merlion/sessions`.
+  Resume remains backward-compatible with legacy global session storage under
+  `~/.merlion/projects/<hash>` when no local session match is found.
+- Agents maintenance scripts (`update`/`lint`) now support both `MERLION.md`
+  and `AGENTS.md` guidance files.
+- Documentation updates:
+  README and feature specs updated to reflect guidance-file compatibility,
+  map-generation behavior, and local session defaults.
+
+Related commits:
+- feat(runtime): phase milestones, map refresh, and code index hygiene
+- feat(context): MERLION.md guidance compatibility + local session storage defaults

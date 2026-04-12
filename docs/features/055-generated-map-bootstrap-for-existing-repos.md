@@ -10,11 +10,11 @@ Type: `P0 Context`
 ## Implementation
 
 - 新增 `src/artifacts/agents_bootstrap.ts`：
-  - 当项目内不存在真实 `AGENTS.md` 时，自动生成 `.merlion/maps/**/AGENTS.md`。
+  - 为缺失局部 guidance 的目录自动生成 `.merlion/maps/**/MERLION.md`（兼容历史 `AGENTS.md` 读取）。
   - 生成根目录 + top-level + 部分 second-level 的轻量分层地图（非全仓）。
   - 写入 `.merlion/maps/.meta.json`，按 `HEAD` 做幂等跳过。
 - `src/artifacts/agents.ts` 升级为双来源加载：
-  - 优先真实 `AGENTS.md`。
+  - 优先真实 `MERLION.md`，兼容 `AGENTS.md`。
   - 缺失时 fallback 到 `.merlion/maps` 对应目录。
 - `src/context/path_guidance.ts` 升级：
   - 路径链加载时同样支持 generated map fallback。

@@ -454,7 +454,9 @@ async function main(): Promise<void> {
   if (!options.resumeSessionId && initialMessages.length > 0) {
     try {
       const bootstrap = await ensureGeneratedAgentsMaps(options.cwd)
-      generatedMapMode = bootstrap.reason !== 'project_agents_exists'
+      generatedMapMode =
+        bootstrap.created ||
+        bootstrap.generatedFiles.some((file) => file.replace(/\\/g, '/').includes('.merlion/maps/'))
       if (bootstrap.created) {
         startupMapSummary =
           `initialized generated project map (${bootstrap.generatedFiles.length} scope` +

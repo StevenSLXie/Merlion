@@ -58,8 +58,8 @@ merlion --resume <session-id>
 
 ## AGENTS Map Automation
 
-Merlion supports layered `AGENTS.md` maps with commit-time auto maintenance.
-For existing repos without any `AGENTS.md`, Merlion also auto-bootstraps
+Merlion supports layered `MERLION.md` maps (compatible with `AGENTS.md`) with commit-time auto maintenance.
+For existing repos without root guidance, Merlion also auto-bootstraps
 fallback maps under `.merlion/maps` on first new session.
 
 ```bash
@@ -135,7 +135,7 @@ merlion --resume <session-id>
 
 ## AGENTS 地图自动维护
 
-Merlion 支持分层 `AGENTS.md` 地图，并可在提交时自动更新 `AUTO` 区块。
+Merlion 支持分层 `MERLION.md` 地图（兼容 `AGENTS.md`），并可在提交时自动更新 `AUTO` 区块。
 
 ```bash
 # 首次启用仓库 hooks

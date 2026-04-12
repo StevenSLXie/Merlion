@@ -23,7 +23,10 @@ test('bootstrap generated map appears in orientation when project has no AGENTS.
 
     const bootstrap = await ensureGeneratedAgentsMaps(sandbox)
     assert.equal(bootstrap.created, true)
-    assert.equal(bootstrap.generatedFiles.some((x) => x.endsWith('/AGENTS.md')), true)
+    assert.equal(
+      bootstrap.generatedFiles.some((x) => x.endsWith('/MERLION.md') || x.endsWith('/AGENTS.md')),
+      true
+    )
 
     const orientation = await buildOrientationContext(join(sandbox, 'src', 'runtime'))
     assert.match(orientation.text, /### AGENTS Guidance/)

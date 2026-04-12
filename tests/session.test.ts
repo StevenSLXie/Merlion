@@ -17,6 +17,10 @@ async function makeTempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'merlion-session-'))
 }
 
+function clearSessionDirOverride(): void {
+  delete process.env.MERLION_DATA_DIR
+}
+
 test('redacts bearer and key patterns', () => {
   const raw = [
     'Authorization: Bearer abc.def.ghi',
@@ -113,4 +117,14 @@ test('throws when session transcript not found', async () => {
     () => getSessionFilesForResume('/project/missing', 'nope'),
     /not found/i
   )
+})
+
+test('defaults to project-local .merlion/sessions when MERLION_DATA_DIR is unset', async () => {
+  clearSessionDirOverride()
+  const repo = await makeTempDir()
+  await appendFile(join(repo, '.git'), '', 'utf8')
+
+  const session = await createSessionFiles(repo)
+  assert.match(session.projectDir.replace(/\\/g, '/'), /\.merlion\/sessions$/)
+  assert.match(session.transcriptPath.replace(/\\/g, '/'), /\.merlion\/sessions\//)
 })

@@ -1,5 +1,5 @@
 import { access, readFile } from 'node:fs/promises'
-import { join, relative, resolve, sep } from 'node:path'
+import { basename, join, relative, resolve, sep } from 'node:path'
 import { constants } from 'node:fs'
 
 export interface AgentsGuidance {
@@ -12,6 +12,8 @@ export interface AgentsGuidance {
 export interface LoadAgentsGuidanceOptions {
   maxTokens?: number
 }
+
+export const GUIDANCE_FILENAMES = ['MERLION.md', 'AGENTS.md'] as const
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
@@ -57,10 +59,14 @@ function ancestorsFromRoot(projectRoot: string, cwd: string): string[] {
   return paths
 }
 
-function generatedAgentsPathForDirectory(projectRoot: string, directory: string): string {
+function generatedGuidancePathForDirectory(
+  projectRoot: string,
+  directory: string,
+  filename: string
+): string {
   const rel = relative(projectRoot, directory)
-  if (rel === '') return join(projectRoot, '.merlion', 'maps', 'AGENTS.md')
-  return join(projectRoot, '.merlion', 'maps', rel, 'AGENTS.md')
+  if (rel === '') return join(projectRoot, '.merlion', 'maps', filename)
+  return join(projectRoot, '.merlion', 'maps', rel, filename)
 }
 
 export interface ResolvedAgentsGuidanceFile {
@@ -72,14 +78,18 @@ export async function resolveAgentsGuidanceFileForDirectory(
   projectRoot: string,
   directory: string
 ): Promise<ResolvedAgentsGuidanceFile | null> {
-  const realPath = join(directory, 'AGENTS.md')
-  if (await fileExists(realPath)) {
-    return { path: realPath, source: 'project' }
+  for (const filename of GUIDANCE_FILENAMES) {
+    const realPath = join(directory, filename)
+    if (await fileExists(realPath)) {
+      return { path: realPath, source: 'project' }
+    }
   }
 
-  const generatedPath = generatedAgentsPathForDirectory(projectRoot, directory)
-  if (await fileExists(generatedPath)) {
-    return { path: generatedPath, source: 'generated' }
+  for (const filename of GUIDANCE_FILENAMES) {
+    const generatedPath = generatedGuidancePathForDirectory(projectRoot, directory, filename)
+    if (await fileExists(generatedPath)) {
+      return { path: generatedPath, source: 'generated' }
+    }
   }
 
   return null
@@ -111,7 +121,8 @@ export async function loadAgentsGuidance(
     const content = await readFile(resolved.path, 'utf8')
     files.push(resolved.path)
     const relDir = relative(projectRoot, dir).replace(/\\/g, '/')
-    const rel = relDir === '' ? 'AGENTS.md' : `${relDir}/AGENTS.md`
+    const filename = basename(resolved.path)
+    const rel = relDir === '' ? filename : `${relDir}/${filename}`
     const sourceLabel = resolved.source === 'generated' ? ' (generated map)' : ''
     blocks.push(`## ${rel}${sourceLabel}\n${content.trim()}`)
   }

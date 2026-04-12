@@ -9,6 +9,8 @@ import {
   type RecentCommit,
 } from '../../src/artifacts/agents_auto.ts'
 
+const GUIDANCE_FILENAMES = ['MERLION.md', 'AGENTS.md'] as const
+
 interface Args {
   staged: boolean
   all: boolean
@@ -56,7 +58,7 @@ async function listAgentsFiles(root: string): Promise<string[]> {
         await walk(full)
         continue
       }
-      if (entry.isFile() && entry.name === 'AGENTS.md') {
+      if (entry.isFile() && GUIDANCE_FILENAMES.includes(entry.name as (typeof GUIDANCE_FILENAMES)[number])) {
         result.push(full)
       }
     }
@@ -134,8 +136,13 @@ async function collectTargetAgentFiles(root: string, args: Args): Promise<string
   const targets = new Set<string>()
   for (const file of changedFiles) {
     for (const ancestor of ancestors(file)) {
-      const candidate = resolve(root, ancestor, 'AGENTS.md')
-      if (await exists(candidate)) targets.add(candidate)
+      for (const filename of GUIDANCE_FILENAMES) {
+        const candidate = resolve(root, ancestor, filename)
+        if (await exists(candidate)) {
+          targets.add(candidate)
+          break
+        }
+      }
     }
   }
 
@@ -191,7 +198,7 @@ async function main(): Promise<void> {
   const targets = await collectTargetAgentFiles(root, args)
 
   if (targets.length === 0) {
-    process.stdout.write('[agents] no AGENTS.md targets found\n')
+    process.stdout.write('[agents] no guidance targets found\n')
     return
   }
 
@@ -223,7 +230,7 @@ async function main(): Promise<void> {
     return
   }
 
-  process.stdout.write(`[agents] updated ${changed}/${targets.length} AGENTS.md files\n`)
+  process.stdout.write(`[agents] updated ${changed}/${targets.length} guidance files\n`)
   for (const target of dirtyTargets) {
     process.stdout.write(`- ${relative(root, target)}\n`)
   }

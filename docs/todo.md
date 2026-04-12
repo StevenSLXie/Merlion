@@ -41,6 +41,10 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M4-04` Progress artifact
 - [x] `M4-05` Codebase index loader
 - [x] `M4-06` Orientation context assembly
+- [ ] `M4-07` Path-guided map/index trigger hardening (focus):
+  - strengthen first-session bootstrap -> exploration -> commit refresh chain
+  - reduce stale guidance windows after bash-heavy scaffolding
+  - add E2E for "existing repo, no AGENTS -> scaffold -> commit -> guidance refresh"
 
 ## Milestone 5: Verification Loop (P1)
 
@@ -66,6 +70,7 @@ Status workflow: `todo` -> `in_progress` -> `blocked` -> `done`
 - [x] `M6-12` First-run configuration wizard (API key + model, saved to `~/.config/merlion/config.json`)
 - [x] `M6-13` Provider-agnostic first-run wizard (`openrouter/openai/custom`) + unified env compatibility
 - [x] `M6-14` AST-based Markdown renderer (remove raw markers, improve headings/lists/code/table)
+- [ ] `M6-15` Async LLM phase-summary sidecar (low priority, rule-based fallback retained)
 
 ## Milestone 7: Token/Cost Observability (P0)
 

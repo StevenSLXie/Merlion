@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-import { fileExists, findProjectRoot } from './agents.ts'
+import { fileExists, findProjectRoot, GUIDANCE_FILENAMES } from './agents.ts'
 
 export interface AgentsBootstrapOptions {
   maxTopDirs?: number
@@ -13,7 +13,7 @@ export interface AgentsBootstrapOptions {
 export interface AgentsBootstrapResult {
   created: boolean
   generatedFiles: string[]
-  reason: 'generated' | 'project_agents_exists' | 'up_to_date'
+  reason: 'generated' | 'up_to_date'
 }
 
 interface BootstrapMeta {
@@ -25,6 +25,7 @@ interface BootstrapMeta {
 
 const BOOTSTRAP_META_VERSION = 1
 const IGNORE_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '.merlion'])
+const GENERATED_GUIDANCE_FILENAME = 'MERLION.md'
 const DEFAULTS: Required<AgentsBootstrapOptions> = {
   maxTopDirs: 12,
   maxSecondLevelDirs: 10,
@@ -43,10 +44,10 @@ function runGit(root: string, args: string[]): string {
   }
 }
 
-function generatedMapPath(root: string, directory: string): string {
+function generatedMapPath(root: string, directory: string, filename: string): string {
   const rel = relative(root, directory)
-  if (rel === '') return join(root, '.merlion', 'maps', 'AGENTS.md')
-  return join(root, '.merlion', 'maps', rel, 'AGENTS.md')
+  if (rel === '') return join(root, '.merlion', 'maps', filename)
+  return join(root, '.merlion', 'maps', rel, filename)
 }
 
 function summarizeCommits(raw: string): string[] {
@@ -66,22 +67,27 @@ function uniqueNonEmpty(lines: string[], limit: number): string[] {
   return out
 }
 
-async function hasAnyProjectAgents(root: string): Promise<boolean> {
-  const stack = [root]
-  while (stack.length > 0) {
-    const dir = stack.pop()!
-    const entries = await readdir(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (entry.name === 'AGENTS.md' && dir !== join(root, '.merlion', 'maps')) {
-        return true
-      }
-      if (!entry.isDirectory()) continue
-      if (IGNORE_DIRS.has(entry.name)) continue
-      if (entry.name.startsWith('.')) continue
-      stack.push(join(dir, entry.name))
-    }
+async function hasGuidanceFileInDirectory(dir: string): Promise<boolean> {
+  for (const filename of GUIDANCE_FILENAMES) {
+    if (await fileExists(join(dir, filename))) return true
   }
   return false
+}
+
+async function hasAllFiles(root: string, files: string[]): Promise<boolean> {
+  for (const rel of files) {
+    if (!(await fileExists(join(root, rel)))) return false
+  }
+  return true
+}
+
+async function hasCoverageForTargets(root: string, targets: string[]): Promise<boolean> {
+  for (const dir of targets) {
+    if (await hasGuidanceFileInDirectory(dir)) continue
+    const generated = generatedMapPath(root, dir, GENERATED_GUIDANCE_FILENAME)
+    if (!(await fileExists(generated))) return false
+  }
+  return true
 }
 
 async function readBootstrapMeta(path: string): Promise<BootstrapMeta | null> {
@@ -197,32 +203,25 @@ export async function ensureGeneratedAgentsMaps(
     force: options?.force === true,
   }
 
-  if (await hasAnyProjectAgents(root)) {
-    return { created: false, generatedFiles: [], reason: 'project_agents_exists' }
-  }
-
+  const targets = await buildTargetDirectories(root, merged)
   const mapsDir = join(root, '.merlion', 'maps')
   const metaPath = join(mapsDir, '.meta.json')
   const head = runGit(root, ['rev-parse', 'HEAD']) || 'no-head'
   const meta = await readBootstrapMeta(metaPath)
   if (!merged.force && meta && meta.head === head) {
-    let allPresent = true
-    for (const rel of meta.files) {
-      if (!(await fileExists(join(root, rel)))) {
-        allPresent = false
-        break
-      }
-    }
-    if (allPresent) {
+    const allPresent = await hasAllFiles(root, meta.files)
+    const covered = allPresent ? await hasCoverageForTargets(root, targets) : false
+    if (allPresent && covered) {
       return { created: false, generatedFiles: meta.files, reason: 'up_to_date' }
     }
   }
 
   const generatedAt = new Date().toISOString().slice(0, 10)
-  const targets = await buildTargetDirectories(root, merged)
   const generatedFiles: string[] = []
 
   for (const dir of targets) {
+    if (await hasGuidanceFileInDirectory(dir)) continue
+
     const relDir = relative(root, dir).replace(/\\/g, '/')
     const pathArg = relDir === '' ? '.' : relDir
 
@@ -246,7 +245,7 @@ export async function ensureGeneratedAgentsMaps(
       generatedAt,
     })
 
-    const mapPath = generatedMapPath(root, dir)
+    const mapPath = generatedMapPath(root, dir, GENERATED_GUIDANCE_FILENAME)
     await mkdir(dirname(mapPath), { recursive: true })
     await writeFile(mapPath, content, 'utf8')
     generatedFiles.push(relative(root, mapPath).replace(/\\/g, '/'))
@@ -264,6 +263,6 @@ export async function ensureGeneratedAgentsMaps(
   return {
     created: generatedFiles.length > 0,
     generatedFiles,
-    reason: 'generated'
+    reason: generatedFiles.length > 0 ? 'generated' : 'up_to_date'
   }
 }

@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { findProjectRoot, resolveAgentsGuidanceFileForDirectory } from '../artifacts/agents.ts'
 
 export interface PathGuidanceState {
@@ -128,9 +128,10 @@ function directoryChainFromRoot(root: string, targetDir: string): string[] {
   return chain
 }
 
-function relAgentPath(root: string, absoluteAgentPath: string): string {
-  const rel = relative(root, absoluteAgentPath).replace(/\\/g, '/')
-  return rel === '' ? 'AGENTS.md' : rel
+function logicalGuidancePath(root: string, directory: string, absoluteGuidancePath: string): string {
+  const relDir = relative(root, directory).replace(/\\/g, '/')
+  const filename = basename(absoluteGuidancePath)
+  return relDir === '' ? filename : `${relDir}/${filename}`
 }
 
 export function createPathGuidanceState(initialAgentFiles?: string[]): PathGuidanceState {
@@ -210,7 +211,7 @@ export async function buildPathGuidanceDelta(
 
     const raw = await readFile(resolvedGuidance.path, 'utf8')
     const clipped = truncateToTokens(raw.trim(), merged.perFileTokens, '[...AGENTS path section truncated...]')
-    const rel = relAgentPath(root, normalizedAgentsPath)
+    const rel = logicalGuidancePath(root, dir, normalizedAgentsPath)
     const sourceLabel = resolvedGuidance.source === 'generated' ? ' (generated map)' : ''
     const block = `## ${rel}${sourceLabel}\n${clipped.text}`
 

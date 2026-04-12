@@ -45,3 +45,13 @@ test('truncates by token budget', async () => {
   assert.match(result.text, /truncated by budget/)
   assert.equal(result.tokensEstimate <= 120, true)
 })
+
+test('prefers MERLION.md over AGENTS.md when both exist', async () => {
+  const { root, cwd } = await makeRepo()
+  await writeFile(join(root, 'AGENTS.md'), '# AGENTS\nlegacy\n', 'utf8')
+  await writeFile(join(root, 'MERLION.md'), '# MERLION\npreferred\n', 'utf8')
+
+  const result = await loadAgentsGuidance(cwd)
+  assert.match(result.text, /preferred/)
+  assert.doesNotMatch(result.text, /legacy/)
+})

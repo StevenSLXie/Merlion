@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, stat } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import type { ChatMessage, SessionMetaEntry, TranscriptEntry, TranscriptMessageEntry } from '../types.js'
 import type { PromptObservabilitySnapshot } from './prompt_observability.ts'
@@ -104,15 +104,57 @@ function redactMessage(message: ChatMessage): ChatMessage {
   return redacted
 }
 
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function findProjectRoot(startCwd: string): Promise<string> {
+  let cursor = resolve(startCwd)
+  for (;;) {
+    if (await pathExists(join(cursor, '.git'))) return cursor
+    const parent = resolve(cursor, '..')
+    if (parent === cursor) return resolve(startCwd)
+    cursor = parent
+  }
+}
+
+interface SessionPathLayout {
+  projectRoot: string
+  projectHash: string
+  defaultProjectDir: string
+  overrideProjectDir: string | null
+  legacyProjectDir: string
+}
+
+async function resolveSessionPathLayout(cwd: string): Promise<SessionPathLayout> {
+  const projectRoot = await findProjectRoot(cwd)
+  const projectHash = createHash('sha256').update(projectRoot).digest('hex').slice(0, 16)
+  const defaultProjectDir = join(projectRoot, '.merlion', 'sessions')
+  const overrideDataDir = process.env.MERLION_DATA_DIR
+  const overrideProjectDir = overrideDataDir ? join(overrideDataDir, 'projects', projectHash) : null
+  const legacyProjectDir = join(homedir(), '.merlion', 'projects', projectHash)
+  return {
+    projectRoot,
+    projectHash,
+    defaultProjectDir,
+    overrideProjectDir,
+    legacyProjectDir
+  }
+}
+
 export async function createSessionFiles(cwd: string): Promise<SessionFiles> {
-  const dataDir = process.env.MERLION_DATA_DIR ?? join(homedir(), '.merlion')
-  const projectHash = createHash('sha256').update(cwd).digest('hex').slice(0, 16)
+  const layout = await resolveSessionPathLayout(cwd)
+  const projectDir = layout.overrideProjectDir ?? layout.defaultProjectDir
   const sessionId = randomUUID()
-  const projectDir = join(dataDir, 'projects', projectHash)
   await mkdir(projectDir, { recursive: true })
   return {
     sessionId,
-    projectHash,
+    projectHash: layout.projectHash,
     projectDir,
     transcriptPath: join(projectDir, `${sessionId}.jsonl`),
     usagePath: join(projectDir, `${sessionId}.usage.jsonl`)
@@ -120,19 +162,25 @@ export async function createSessionFiles(cwd: string): Promise<SessionFiles> {
 }
 
 export async function getSessionFilesForResume(cwd: string, sessionId: string): Promise<SessionFiles> {
-  const dataDir = process.env.MERLION_DATA_DIR ?? join(homedir(), '.merlion')
-  const projectHash = createHash('sha256').update(cwd).digest('hex').slice(0, 16)
-  const projectDir = join(dataDir, 'projects', projectHash)
-  const transcriptPath = join(projectDir, `${sessionId}.jsonl`)
-  const usagePath = join(projectDir, `${sessionId}.usage.jsonl`)
+  const layout = await resolveSessionPathLayout(cwd)
+  const candidates = layout.overrideProjectDir
+    ? [layout.overrideProjectDir]
+    : [layout.defaultProjectDir, layout.legacyProjectDir]
 
-  try {
-    await stat(transcriptPath)
-  } catch {
-    throw new Error(`Session transcript not found: ${sessionId}`)
+  for (const projectDir of candidates) {
+    const transcriptPath = join(projectDir, `${sessionId}.jsonl`)
+    if (!(await pathExists(transcriptPath))) continue
+    const usagePath = join(projectDir, `${sessionId}.usage.jsonl`)
+    return {
+      sessionId,
+      projectHash: layout.projectHash,
+      projectDir,
+      transcriptPath,
+      usagePath
+    }
   }
 
-  return { sessionId, projectHash, projectDir, transcriptPath, usagePath }
+  throw new Error(`Session transcript not found: ${sessionId}`)
 }
 
 export async function appendSessionMeta(

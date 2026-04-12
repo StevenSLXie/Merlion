@@ -4,6 +4,8 @@ import { execSync } from 'node:child_process'
 
 import { validateAgentsSections, AUTO_BEGIN, AUTO_END } from '../../src/artifacts/agents_auto.ts'
 
+const GUIDANCE_FILENAMES = ['MERLION.md', 'AGENTS.md'] as const
+
 function gitRoot(cwd: string): string {
   return execSync('git rev-parse --show-toplevel', { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' }).trim()
 }
@@ -19,7 +21,7 @@ async function listAgents(root: string): Promise<string[]> {
         await walk(full)
         continue
       }
-      if (entry.isFile() && entry.name === 'AGENTS.md') out.push(full)
+      if (entry.isFile() && GUIDANCE_FILENAMES.includes(entry.name as (typeof GUIDANCE_FILENAMES)[number])) out.push(full)
     }
   }
   await walk(root)
