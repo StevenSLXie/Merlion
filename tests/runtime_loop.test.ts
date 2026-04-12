@@ -323,6 +323,20 @@ test('shouldNudge: detects chinese false-start promise', () => {
   )
 })
 
+test('shouldNudge: detects generic action-plan phrasing', () => {
+  const baseState = {
+    messages: [],
+    turnCount: 0,
+    maxOutputTokensRecoveryCount: 0,
+    hasAttemptedReactiveCompact: false,
+    nudgeCount: 0
+  }
+  assert.equal(
+    shouldNudge('Next I need to inspect the project structure and then run a quick search.', baseState),
+    true,
+  )
+})
+
 test('shouldNudge: does not nudge genuine past-tense completion', () => {
   const baseState = {
     messages: [],
@@ -333,6 +347,20 @@ test('shouldNudge: does not nudge genuine past-tense completion', () => {
   }
   assert.equal(
     shouldNudge('The function has been updated successfully. The type error on line 42 is fixed.', baseState),
+    false,
+  )
+})
+
+test('shouldNudge: does not nudge concrete findings without tool calls', () => {
+  const baseState = {
+    messages: [],
+    turnCount: 0,
+    maxOutputTokensRecoveryCount: 0,
+    hasAttemptedReactiveCompact: false,
+    nudgeCount: 0
+  }
+  assert.equal(
+    shouldNudge('I inspected the repo and found src/index.ts and src/runtime/loop.ts as key entry points.', baseState),
     false,
   )
 })

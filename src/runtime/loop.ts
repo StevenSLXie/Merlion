@@ -48,25 +48,46 @@ export interface RunLoopResult {
   state: LoopState
 }
 
-// Patterns that signal the model promised action but made no tool calls.
-// Includes English + Chinese phrasing to reduce false-start stalls.
-const WILL_DO_PATTERNS: RegExp[] = [
-  /\bi('ll| will)\s+(start|begin|look|check|read|analyze|examine|fix|help|try|write|create|update|run|search|find)/i,
-  /\blet me\s+(start|begin|look|check|read|analyze|examine|fix|help|try|write|create|update|run|search|find)/i,
-  /\bi('m| am) going to\s+\w/i,
-  /\bfirst,?\s+i('ll| will)\s+\w/i,
-  /\bto (start|begin|proceed),?\s+i('ll| will)\s+\w/i,
-  /(我来|让我|我会|我将|我先|首先).{0,8}(查看|检查|读取|搜索|查找|分析|修复|修改|创建|运行|执行|看看|浏览)/,
-  /(先|首先).{0,8}(查看|检查|读取|搜索|查找|分析|修复|修改|创建|运行|执行)/,
+// Action-plan detection intentionally combines intent + action + output
+// exemptions so it generalizes across phrasing/languages and avoids overfit.
+const ACTION_INTENT_PATTERNS: RegExp[] = [
+  /\bi('ll| will)\b/i,
+  /\blet me\b/i,
+  /\bi('m| am)\s+going\s+to\b/i,
+  /\b(i|we)\s+(need|should|can)\s+to\b/i,
+  /\b(first|next|then|after that|to start)\b/i,
+  /(我来|让我|我会|我将|我先|首先|接下来|下一步|准备)/,
+]
+
+const ACTION_VERB_PATTERNS: RegExp[] = [
+  /\b(start|begin|look|check|read|analy[sz]e|examine|fix|help|try|write|create|update|run|search|find|inspect|review|explore|open|verify|test|list)\b/i,
+  /(查看|检查|读取|搜索|查找|分析|修复|修改|创建|运行|执行|看看|浏览|审查|定位|测试|列出|打开)/,
 ]
 
 const REPEATED_TOOL_ERROR_THRESHOLD = 3
 const MAX_AUTO_TOOL_ERROR_HINTS = 3
 const COMPLETION_HINT_PATTERNS: RegExp[] = [
   /\b(done|finished|completed)\b/i,
+  /\b(all set|resolved|fixed)\b/i,
   /已(完成|处理|修复|解决)/,
   /已经(完成|处理|修复|解决)/,
 ]
+
+const ACK_HINT_PATTERNS: RegExp[] = [
+  /^\s*(ok|okay|yes|yep|got it|sure|在|在的|好的|明白)\s*[\.\!\?。！？]*\s*$/i,
+]
+
+const CONCRETE_OUTPUT_PATTERNS: RegExp[] = [
+  /```/,
+  /`[^`]+`/,
+  /\b(found|identified|updated|created|edited|ran|implemented)\b/i,
+  /(已(找到|读取|更新|修复)|已经(找到|读取|更新|修复)|发现了|已定位)/,
+  /(?:^|\s)(?:\.{1,2}\/|\/)?[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/,
+]
+
+function hasAnyPattern(text: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(text))
+}
 
 function looksLikeAuthError(message: string): boolean {
   const normalized = message.toLowerCase()
@@ -114,11 +135,18 @@ export function shouldNudge(text: string, state: LoopState): boolean {
   // Very short text is conversational/ack-like — never nudge.
   if (trimmed.length < 8) return false
 
-  // Don't nudge explicit completion statements.
-  if (COMPLETION_HINT_PATTERNS.some((p) => p.test(trimmed))) return false
+  if (hasAnyPattern(trimmed, ACK_HINT_PATTERNS)) return false
 
-  // Core signal: contains a "will do X" promise without having done X
-  return WILL_DO_PATTERNS.some((p) => p.test(trimmed))
+  // Don't nudge explicit completion statements.
+  if (hasAnyPattern(trimmed, COMPLETION_HINT_PATTERNS)) return false
+
+  // If the assistant already provides concrete findings/output, don't force nudge.
+  if (hasAnyPattern(trimmed, CONCRETE_OUTPUT_PATTERNS)) return false
+
+  // Generic signal: action plan intent + action verb, but no execution evidence.
+  const hasIntent = hasAnyPattern(trimmed, ACTION_INTENT_PATTERNS)
+  const hasAction = hasAnyPattern(trimmed, ACTION_VERB_PATTERNS)
+  return hasIntent && hasAction
 }
 
 function createState(
