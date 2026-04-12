@@ -1,0 +1,31 @@
+Version: 0.1.8
+Date: 2026-04-12
+
+Changes:
+- Interactive permission tri-state:
+  interactive approval now supports three choices:
+  1) yes
+  2) no
+  3) yes and remember for the same request in current session.
+  This reduces repeated approval prompts during tool retries.
+- Runtime loop guardrails:
+  added automatic no-progress detection for consecutive all-error
+  tool batches and mutation-oscillation detection for successful
+  inverse file operations (for example create/delete on same path).
+  Runtime now injects corrective replanning hints before loops worsen.
+- File path shape hardening:
+  file mutation tools now reject malformed path-like tokens
+  (placeholder-only tokens, template residues, control/ANSI sequences,
+  and unsupported ~/ shorthand) before attempting IO.
+- Tool path validation unification:
+  `create_file` and `edit_file` now reuse shared fs validation logic,
+  aligning behavior with other file tools.
+- Test coverage:
+  added unit tests for permission tri-state + remember behavior,
+  runtime no-progress/oscillation guardrails,
+  and malformed path rejection for file tools.
+
+Related docs:
+- docs/features/057-interactive-permission-tristate-and-session-remember.md
+- docs/features/058-runtime-tool-loop-guardrails.md
+- docs/features/059-file-path-shape-validation-hardening.md

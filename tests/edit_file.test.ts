@@ -132,3 +132,14 @@ test('replace_all updates all matches', async () => {
   assert.match(result.content, /replace_all=2/)
   assert.equal(await readFile(target, 'utf8'), 'diff\ndiff\n')
 })
+
+test('rejects unresolved template path before file IO', async () => {
+  const cwd = await makeTempDir()
+  const result = await editFileTool.execute(
+    { path: '{{target}}', old_string: 'a', new_string: 'b' },
+    { cwd, permissions: permission('allow') }
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /unresolved template/i)
+})

@@ -137,3 +137,16 @@ test('mutation tools honor permission deny', async () => {
   assert.match(result.content, /Permission denied/i)
   await assert.rejects(() => stat(join(cwd, 'nope.txt')))
 })
+
+test('mutation tools reject malformed path-like tokens', async () => {
+  const cwd = await makeTempDir()
+  const p = permission('allow')
+
+  const writeMalformed = await writeFileTool.execute({ path: ':=', content: 'x' }, { cwd, permissions: p })
+  assert.equal(writeMalformed.isError, true)
+  assert.match(writeMalformed.content, /placeholder|malformed/i)
+
+  const deleteTemplate = await deleteFileTool.execute({ path: '{{x}}' }, { cwd, permissions: p })
+  assert.equal(deleteTemplate.isError, true)
+  assert.match(deleteTemplate.content, /unresolved template/i)
+})

@@ -64,6 +64,26 @@ function makeAlwaysFailTool(): ToolDefinition {
   }
 }
 
+function makeAlwaysSuccessMutationTool(name: string): ToolDefinition {
+  return {
+    name,
+    description: `${name} stub`,
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        file_path: { type: 'string' },
+        from_path: { type: 'string' },
+        to_path: { type: 'string' }
+      }
+    },
+    concurrencySafe: false,
+    async execute() {
+      return { content: 'ok', isError: false }
+    }
+  }
+}
+
 test('loop executes tool call then completes', async () => {
   const provider = new StubProvider([
     {
@@ -687,4 +707,106 @@ test('loop appends post-tool batch messages from callback', async () => {
     result.state.messages.some((m) => m.role === 'system' && (m.content ?? '').includes('Path guidance update')),
     true
   )
+})
+
+test('loop injects no-progress hint after consecutive all-error tool batches', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('always_fail', { path: 'a.txt' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('always_fail', { path: 'b.txt' }, 'call_2')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('always_fail', { path: 'c.txt' }, 'call_3')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeAlwaysFailTool())
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'done')
+  const noProgressMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('No progress detected')
+  ))
+  assert.equal(noProgressMessages.length, 1)
+})
+
+test('loop injects mutation oscillation hint on create/delete toggle', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('create_file', { path: 'tmp/a.txt', content: 'x' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('delete_file', { path: 'tmp/a.txt' }, 'call_2')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeAlwaysSuccessMutationTool('create_file'))
+  registry.register(makeAlwaysSuccessMutationTool('delete_file'))
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: '/workspace/repo',
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'done')
+  const oscillationMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Mutation oscillation detected')
+  ))
+  assert.equal(oscillationMessages.length, 1)
+  assert.match(oscillationMessages[0]?.content ?? '', /create_file/)
+  assert.match(oscillationMessages[0]?.content ?? '', /delete_file/)
 })

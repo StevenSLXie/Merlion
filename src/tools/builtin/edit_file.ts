@@ -1,14 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
-import { isAbsolute, relative, resolve } from 'node:path'
 
 import type { EditDiffHunk, ToolDefinition } from '../types.js'
-
-function isWithinWorkspace(workspaceRoot: string, candidatePath: string): boolean {
-  const root = resolve(workspaceRoot)
-  const target = resolve(candidatePath)
-  const rel = relative(root, target)
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
-}
+import { validateAndResolveWorkspacePath } from './fs_common.ts'
 
 function countOccurrences(text: string, needle: string): number {
   if (needle.length === 0) return 0
@@ -78,9 +71,8 @@ export const editFileTool: ToolDefinition = {
     const newString = input.new_string
     const replaceAll = input.replace_all === true
 
-    if (typeof pathInput !== 'string' || pathInput.trim() === '') {
-      return { content: 'Invalid path: expected non-empty string.', isError: true }
-    }
+    const validated = validateAndResolveWorkspacePath(ctx.cwd, pathInput)
+    if (!validated.ok) return { content: validated.error, isError: true }
     if (typeof oldString !== 'string' || typeof newString !== 'string') {
       return { content: 'Invalid edit payload: old_string/new_string must be strings.', isError: true }
     }
@@ -90,14 +82,9 @@ export const editFileTool: ToolDefinition = {
       return { content: '[Permission denied]', isError: true }
     }
 
-    const resolvedPath = isAbsolute(pathInput) ? resolve(pathInput) : resolve(ctx.cwd, pathInput)
-    if (!isWithinWorkspace(ctx.cwd, resolvedPath)) {
-      return { content: 'Path is outside the workspace root and cannot be modified.', isError: true }
-    }
-
     let content: string
     try {
-      content = await readFile(resolvedPath, 'utf8')
+      content = await readFile(validated.path, 'utf8')
     } catch {
       return { content: `File not found: ${pathInput}`, isError: true }
     }
@@ -120,14 +107,14 @@ export const editFileTool: ToolDefinition = {
     const hunk = buildEditDiffHunk(content, oldString, newString)
     const removedLines = splitForDiff(oldString).length * (replaceAll ? occurrences : 1)
     const addedLines = splitForDiff(newString).length * (replaceAll ? occurrences : 1)
-    await writeFile(resolvedPath, updated, 'utf8')
+    await writeFile(validated.path, updated, 'utf8')
     return {
-      content: `Edited ${resolvedPath} (+${addedLines} -${removedLines})${replaceAll ? ` [replace_all=${occurrences}]` : ''}`,
+      content: `Edited ${validated.path} (+${addedLines} -${removedLines})${replaceAll ? ` [replace_all=${occurrences}]` : ''}`,
       isError: false,
       uiPayload: hunk && occurrences === 1
         ? {
             kind: 'edit_diff',
-            path: resolvedPath,
+            path: validated.path,
             addedLines,
             removedLines,
             hunks: [hunk]

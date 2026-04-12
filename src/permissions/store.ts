@@ -1,6 +1,30 @@
 import type { PermissionDecision, PermissionStore } from '../tools/types.js'
 
-export function createPermissionStore(mode: 'interactive' | 'auto_allow' | 'auto_deny'): PermissionStore {
+export interface PermissionPromptIo {
+  write: (text: string) => void
+  readLine: () => Promise<string>
+}
+
+function createDefaultPromptIo(): PermissionPromptIo {
+  return {
+    write(text: string) {
+      process.stdout.write(text)
+    },
+    readLine() {
+      return new Promise<string>((resolve) => {
+        process.stdin.resume()
+        process.stdin.once('data', (data) => {
+          resolve(String(data).trim())
+        })
+      })
+    }
+  }
+}
+
+export function createPermissionStore(
+  mode: 'interactive' | 'auto_allow' | 'auto_deny',
+  io: PermissionPromptIo = createDefaultPromptIo()
+): PermissionStore {
   if (mode === 'auto_allow') {
     return { ask: async () => 'allow_session' }
   }
@@ -8,18 +32,28 @@ export function createPermissionStore(mode: 'interactive' | 'auto_allow' | 'auto
     return { ask: async () => 'deny' }
   }
 
+  const sessionAllowByRequest = new Set<string>()
+
   return {
     async ask(tool: string, description: string): Promise<PermissionDecision> {
-      process.stdout.write(`Permission required for ${tool}: ${description}\n`)
-      process.stdout.write('Allow? [y/N]: ')
-      const answer = await new Promise<string>((resolve) => {
-        process.stdin.resume()
-        process.stdin.once('data', (data) => {
-          resolve(String(data).trim().toLowerCase())
-        })
-      })
-      return answer === 'y' || answer === 'yes' ? 'allow' : 'deny'
+      const key = `${tool}::${description.trim()}`
+      if (sessionAllowByRequest.has(key)) return 'allow_session'
+
+      io.write(`Permission required for ${tool}: ${description}\n`)
+      io.write('1) yes\n')
+      io.write('2) no\n')
+      io.write('3) yes and do not ask again for the same request in this session\n')
+      io.write('Choose [y/n/a] (default: n): ')
+
+      const answer = (await io.readLine()).trim().toLowerCase()
+      if (answer === 'a' || answer === 'always' || answer === '3') {
+        sessionAllowByRequest.add(key)
+        return 'allow_session'
+      }
+      if (answer === 'y' || answer === 'yes' || answer === '1') {
+        return 'allow'
+      }
+      return 'deny'
     }
   }
 }
-

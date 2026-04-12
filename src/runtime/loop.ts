@@ -1,3 +1,5 @@
+import { resolve } from 'node:path'
+
 import type { ChatMessage, LoopState, LoopTerminal, ModelProvider, ToolCall } from '../types.js'
 import type { PermissionStore, ToolContext } from '../tools/types.js'
 import { executeToolCalls, type ToolCallResultEvent, type ToolCallStartEvent } from './executor.ts'
@@ -66,6 +68,9 @@ const ACTION_VERB_PATTERNS: RegExp[] = [
 
 const REPEATED_TOOL_ERROR_THRESHOLD = 3
 const MAX_AUTO_TOOL_ERROR_HINTS = 3
+const NO_PROGRESS_BATCH_THRESHOLD = 3
+const MAX_NO_PROGRESS_HINTS = 2
+const MAX_MUTATION_OSCILLATION_HINTS = 2
 const COMPLETION_HINT_PATTERNS: RegExp[] = [
   /\b(done|finished|completed)\b/i,
   /\b(all set|resolved|fixed)\b/i,
@@ -216,6 +221,92 @@ function formatToolErrorHint(
   )
 }
 
+function parseToolCallArgs(call: ToolCall): Record<string, unknown> {
+  try {
+    return JSON.parse(call.function.arguments) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+type MutationKind = 'materialize' | 'remove' | 'move'
+type MutationEvent = {
+  signature: string
+  detail: string
+  turn: number
+  kind: MutationKind
+}
+
+function normalizePathInput(cwd: string, value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (trimmed === '') return null
+  if (/[\u0000-\u001f]/.test(trimmed)) return null
+  return resolve(cwd, trimmed)
+}
+
+function toMutationEvent(cwd: string, event: ToolCallResultEvent, turn: number): MutationEvent | null {
+  if (event.isError) return null
+  const args = parseToolCallArgs(event.call)
+  const tool = event.call.function.name
+  if (tool === 'delete_file') {
+    const path = normalizePathInput(cwd, args.path)
+    if (!path) return null
+    return { signature: `path:${path}`, detail: `delete_file ${path}`, turn, kind: 'remove' }
+  }
+  if (tool === 'create_file' || tool === 'write_file' || tool === 'append_file' || tool === 'edit_file') {
+    const rawPath = typeof args.path === 'string' ? args.path : args.file_path
+    const path = normalizePathInput(cwd, rawPath)
+    if (!path) return null
+    return { signature: `path:${path}`, detail: `${tool} ${path}`, turn, kind: 'materialize' }
+  }
+  if (tool === 'move_file') {
+    const from = normalizePathInput(cwd, args.from_path)
+    const to = normalizePathInput(cwd, args.to_path)
+    if (!from || !to) return null
+    return { signature: `move:${from}->${to}`, detail: `move_file ${from} -> ${to}`, turn, kind: 'move' }
+  }
+  return null
+}
+
+function isMutationOscillation(previous: MutationEvent, current: MutationEvent): boolean {
+  if (
+    previous.signature === current.signature &&
+    (
+      (previous.kind === 'materialize' && current.kind === 'remove') ||
+      (previous.kind === 'remove' && current.kind === 'materialize')
+    )
+  ) {
+    return true
+  }
+  if (previous.kind === 'move' && current.kind === 'move') {
+    const previousPayload = previous.signature.slice('move:'.length)
+    const currentPayload = current.signature.slice('move:'.length)
+    const [prevFrom, prevTo] = previousPayload.split('->')
+    const [currFrom, currTo] = currentPayload.split('->')
+    if (prevFrom && prevTo && currFrom && currTo && prevFrom === currTo && prevTo === currFrom) {
+      return true
+    }
+  }
+  return false
+}
+
+function formatNoProgressHint(count: number): string {
+  return (
+    `No progress detected: the last ${count} tool batches all failed. ` +
+    'Stop retrying broad mutations. Re-plan with 2-3 concrete steps, ' +
+    'validate target paths via `list_dir`/`stat_path`, then run one minimal next tool call.'
+  )
+}
+
+function formatMutationOscillationHint(previous: MutationEvent, current: MutationEvent): string {
+  return (
+    'Mutation oscillation detected across successful file operations. ' +
+    `Recent sequence: ${previous.detail} -> ${current.detail}. ` +
+    'Stop toggling the same path(s). Re-check intent, inspect filesystem state, and only apply the minimal next change once.'
+  )
+}
+
 export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   const state = createState(options.systemPrompt, options.userPrompt, options.initialMessages)
   const maxTurns = options.maxTurns ?? 100
@@ -223,8 +314,13 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   let emptyStopRecoveryCount = 0
   let awaitingPostToolSummary = false
   let autoToolErrorHintCount = 0
+  let noProgressHintCount = 0
+  let consecutiveAllErrorBatches = 0
+  let mutationOscillationHintCount = 0
   const repeatedToolErrorCounts = new Map<string, number>()
   const hintedToolErrorSignatures = new Set<string>()
+  const mutationHistory: MutationEvent[] = []
+  const mutationOscillationSignatures = new Set<string>()
   const promptObservability = options.promptObservabilityTracker ?? createPromptObservabilityTracker()
 
   const defaultPermissions: PermissionStore = { ask: async () => 'allow' }
@@ -341,6 +437,49 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
           const correctionMessage: ChatMessage = { role: 'user', content: hint }
           state.messages.push(correctionMessage)
           await options.onMessageAppended?.(correctionMessage)
+        }
+      }
+
+      if (toolResultEvents.length > 0 && toolResultEvents.every((event) => event.isError)) {
+        consecutiveAllErrorBatches += 1
+      } else {
+        consecutiveAllErrorBatches = 0
+      }
+      if (
+        consecutiveAllErrorBatches >= NO_PROGRESS_BATCH_THRESHOLD &&
+        noProgressHintCount < MAX_NO_PROGRESS_HINTS
+      ) {
+        const noProgressMessage: ChatMessage = {
+          role: 'user',
+          content: formatNoProgressHint(consecutiveAllErrorBatches)
+        }
+        state.messages.push(noProgressMessage)
+        await options.onMessageAppended?.(noProgressMessage)
+        noProgressHintCount += 1
+        consecutiveAllErrorBatches = 0
+      }
+
+      if (mutationOscillationHintCount < MAX_MUTATION_OSCILLATION_HINTS) {
+        let mutationHint: string | null = null
+        for (const event of toolResultEvents) {
+          const mutation = toMutationEvent(options.cwd, event, state.turnCount)
+          if (!mutation) continue
+          const previous = mutationHistory[mutationHistory.length - 1]
+          if (previous && isMutationOscillation(previous, mutation)) {
+            const oscillationKey = `${previous.signature}|${mutation.signature}`
+            if (!mutationOscillationSignatures.has(oscillationKey)) {
+              mutationHint = formatMutationOscillationHint(previous, mutation)
+              mutationOscillationSignatures.add(oscillationKey)
+              mutationOscillationHintCount += 1
+            }
+          }
+          mutationHistory.push(mutation)
+          if (mutationHistory.length > 20) mutationHistory.shift()
+        }
+        if (mutationHint) {
+          const mutationMessage: ChatMessage = { role: 'user', content: mutationHint }
+          state.messages.push(mutationMessage)
+          await options.onMessageAppended?.(mutationMessage)
         }
       }
 

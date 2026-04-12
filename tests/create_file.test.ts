@@ -97,3 +97,13 @@ test('outside-workspace check still works for absolute paths', async () => {
   })
 })
 
+test('rejects malformed placeholder-like path tokens', async () => {
+  const cwd = await makeTempDir()
+  const result = await createFileTool.execute(
+    { path: ':=', content: 'x' },
+    { cwd, permissions: permission('allow') }
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /placeholder|malformed/i)
+})
