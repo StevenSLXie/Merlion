@@ -1,3 +1,4 @@
+import { marked, type Token, type Tokens } from 'marked'
 import { sanitizeRenderableText } from './sanitize.ts'
 
 export interface MarkdownRenderLine {
@@ -5,12 +6,136 @@ export interface MarkdownRenderLine {
   text: string
 }
 
-function normalizeInline(text: string): string {
-  return text
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 <$2>')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
+function pushRenderedLines(
+  rendered: MarkdownRenderLine[],
+  kind: MarkdownRenderLine['kind'],
+  text: string
+): void {
+  const lines = sanitizeRenderableText(text).split('\n')
+  for (const line of lines) {
+    rendered.push({ kind, text: line })
+  }
+}
+
+function stripHtmlTags(text: string): string {
+  return text.replace(/<[^>]+>/g, '')
+}
+
+function renderInlineTokens(tokens: Token[] | undefined): string {
+  if (!tokens || tokens.length === 0) return ''
+  return tokens.map((token) => renderInlineToken(token)).join('')
+}
+
+function renderInlineToken(token: Token): string {
+  if (token.type === 'text') {
+    const textToken = token as Tokens.Text
+    if (textToken.tokens && textToken.tokens.length > 0) {
+      return renderInlineTokens(textToken.tokens)
+    }
+    return sanitizeRenderableText(textToken.text ?? textToken.raw ?? '')
+  }
+  if (token.type === 'codespan') {
+    return sanitizeRenderableText((token as Tokens.Codespan).text)
+  }
+  if (token.type === 'strong' || token.type === 'em' || token.type === 'del') {
+    return renderInlineTokens((token as Tokens.Del | Tokens.Em | Tokens.Strong).tokens)
+  }
+  if (token.type === 'link') {
+    const link = token as Tokens.Link
+    const content = renderInlineTokens(link.tokens).trim()
+    if (content === '' || content === link.href) return sanitizeRenderableText(link.href)
+    return `${content} <${sanitizeRenderableText(link.href)}>`
+  }
+  if (token.type === 'image') {
+    const image = token as Tokens.Image
+    const label = sanitizeRenderableText((image.text ?? '').trim())
+    if (label === '') return `<${sanitizeRenderableText(image.href)}>`
+    return `${label} <${sanitizeRenderableText(image.href)}>`
+  }
+  if (token.type === 'escape') {
+    return sanitizeRenderableText((token as Tokens.Escape).text)
+  }
+  if (token.type === 'html') {
+    return sanitizeRenderableText(stripHtmlTags((token as Tokens.HTML).raw ?? ''))
+  }
+  if (token.type === 'br') {
+    return '\n'
+  }
+  return sanitizeRenderableText((token as { raw?: string }).raw ?? '')
+}
+
+function renderTable(token: Tokens.Table): MarkdownRenderLine[] {
+  const headers = token.header.map((cell) => renderInlineTokens(cell.tokens).replace(/\s+/g, ' ').trim())
+  const rows = token.rows.map((row) =>
+    row.map((cell) => renderInlineTokens(cell.tokens).replace(/\s+/g, ' ').trim())
+  )
+  const columnCount = Math.max(headers.length, ...rows.map((row) => row.length))
+  const widths = new Array<number>(columnCount).fill(3)
+  for (let i = 0; i < columnCount; i++) {
+    widths[i] = Math.max(
+      widths[i] ?? 3,
+      headers[i]?.length ?? 0,
+      ...rows.map((row) => row[i]?.length ?? 0)
+    )
+  }
+
+  const pad = (value: string, width: number): string => {
+    if (value.length >= width) return value
+    return `${value}${' '.repeat(width - value.length)}`
+  }
+
+  const formatRow = (cells: string[]): string => {
+    const values: string[] = []
+    for (let i = 0; i < columnCount; i++) {
+      values.push(pad(cells[i] ?? '', widths[i] ?? 3))
+    }
+    return `| ${values.join(' | ')} |`
+  }
+
+  const separator = `| ${widths.map((width) => '-'.repeat(width)).join(' | ')} |`
+  const lines: MarkdownRenderLine[] = [
+    { kind: 'table', text: formatRow(headers) },
+    { kind: 'table', text: separator }
+  ]
+  for (const row of rows) {
+    lines.push({ kind: 'table', text: formatRow(row) })
+  }
+  return lines
+}
+
+function renderListItem(
+  item: Tokens.ListItem,
+  rendered: MarkdownRenderLine[],
+  depth: number,
+  orderedNumber?: number
+): void {
+  const nested: MarkdownRenderLine[] = []
+  renderBlockTokens(item.tokens ?? [], nested, depth + 1)
+
+  const indent = '  '.repeat(depth)
+  const bullet = orderedNumber === undefined ? '•' : `${orderedNumber}.`
+  if (nested.length === 0) {
+    rendered.push({ kind: 'list', text: `${indent}${bullet}` })
+    return
+  }
+
+  const [first, ...rest] = nested
+  const firstText = first && first.text.trim() !== ''
+    ? `${indent}${bullet} ${first.text}`
+    : `${indent}${bullet}`
+  rendered.push({ kind: 'list', text: firstText })
+
+  for (const line of rest) {
+    const continuation = `${indent}  `
+    if (line.text.trim() === '') {
+      rendered.push({ kind: 'list', text: continuation.trimEnd() })
+      continue
+    }
+    const kind = line.kind === 'plain' || line.kind === 'list'
+      ? 'list'
+      : line.kind
+    rendered.push({ kind, text: `${continuation}${line.text}` })
+  }
 }
 
 export function looksLikeMarkdown(text: string): boolean {
@@ -18,65 +143,107 @@ export function looksLikeMarkdown(text: string): boolean {
   return /(^|\n)(#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s+|```|[-*_]{3,}\s*$|\|.+\|)/m.test(text)
 }
 
-export function renderMarkdownLines(markdown: string): MarkdownRenderLine[] {
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
-  const rendered: MarkdownRenderLine[] = []
-  let inCode = false
-  let codeLanguage = 'text'
-
-  for (const line of lines) {
-    const raw = sanitizeRenderableText(line)
-    const fence = raw.trim().match(/^```(\S+)?$/)
-    if (fence) {
-      if (!inCode) {
-        codeLanguage = fence[1] ? sanitizeRenderableText(fence[1]) : 'text'
-        rendered.push({ kind: 'code_meta', text: `code:${codeLanguage}` })
-        inCode = true
-      } else {
-        inCode = false
-        codeLanguage = 'text'
-      }
-      continue
-    }
-    if (inCode) {
-      rendered.push({ kind: 'code', text: raw })
-      continue
-    }
-    if (/^\s*$/.test(raw)) {
+function renderBlockTokens(tokens: Token[], rendered: MarkdownRenderLine[], listDepth: number): void {
+  for (const token of tokens) {
+    if (token.type === 'space') {
       rendered.push({ kind: 'plain', text: '' })
       continue
     }
-    const heading = raw.match(/^\s*(#{1,6})\s+(.*)$/)
-    if (heading) {
-      const level = heading[1].length
-      const prefix = '#'.repeat(level)
-      rendered.push({ kind: 'heading', text: `${prefix} ${normalizeInline(heading[2])}` })
+    if (token.type === 'heading') {
+      const heading = token as Tokens.Heading
+      const text = renderInlineTokens(heading.tokens).trim()
+      rendered.push({ kind: 'heading', text })
       continue
     }
-    const quote = raw.match(/^\s*>\s?(.*)$/)
-    if (quote) {
-      rendered.push({ kind: 'quote', text: `> ${normalizeInline(quote[1])}` })
+    if (token.type === 'paragraph') {
+      const paragraph = token as Tokens.Paragraph
+      pushRenderedLines(rendered, 'plain', renderInlineTokens(paragraph.tokens))
       continue
     }
-    const list = raw.match(/^\s*([-*+]|\d+\.)\s+(.*)$/)
-    if (list) {
-      rendered.push({ kind: 'list', text: `${list[1]} ${normalizeInline(list[2])}` })
+    if (token.type === 'text') {
+      const textToken = token as Tokens.Text
+      if (textToken.tokens && textToken.tokens.length > 0) {
+        pushRenderedLines(rendered, 'plain', renderInlineTokens(textToken.tokens))
+      } else {
+        pushRenderedLines(rendered, 'plain', textToken.text)
+      }
       continue
     }
-    if (/^\s*([-*_])\1\1+\s*$/.test(raw)) {
+    if (token.type === 'blockquote') {
+      const blockquote = token as Tokens.Blockquote
+      const quoted: MarkdownRenderLine[] = []
+      renderBlockTokens(blockquote.tokens ?? [], quoted, listDepth)
+      if (quoted.length === 0) {
+        rendered.push({ kind: 'quote', text: '│' })
+      } else {
+        for (const line of quoted) {
+          rendered.push({
+            kind: 'quote',
+            text: line.text.trim() === '' ? '│' : `│ ${line.text}`
+          })
+        }
+      }
+      continue
+    }
+    if (token.type === 'list') {
+      const list = token as Tokens.List
+      const start = typeof list.start === 'number'
+        ? list.start
+        : Number.parseInt(String(list.start ?? '1'), 10) || 1
+      list.items.forEach((item, index) => {
+        const orderedNumber = list.ordered ? start + index : undefined
+        renderListItem(item, rendered, listDepth, orderedNumber)
+      })
+      continue
+    }
+    if (token.type === 'list_item') {
+      renderListItem(token as Tokens.ListItem, rendered, listDepth)
+      continue
+    }
+    if (token.type === 'code') {
+      const code = token as Tokens.Code
+      const language = sanitizeRenderableText((code.lang ?? '').trim()) || 'text'
+      rendered.push({ kind: 'code_meta', text: `code:${language}` })
+      const body = sanitizeRenderableText(code.text ?? '')
+      const lines = body.split('\n')
+      if (lines.length === 0) {
+        rendered.push({ kind: 'code', text: '' })
+      } else {
+        for (const line of lines) rendered.push({ kind: 'code', text: line })
+      }
+      continue
+    }
+    if (token.type === 'hr') {
       rendered.push({ kind: 'rule', text: '────────────────────────' })
       continue
     }
-    if (raw.includes('|') && /\|/.test(raw.trim())) {
-      rendered.push({ kind: 'table', text: normalizeInline(raw) })
+    if (token.type === 'table') {
+      rendered.push(...renderTable(token as Tokens.Table))
       continue
     }
-    rendered.push({ kind: 'plain', text: normalizeInline(raw) })
+    if (token.type === 'html') {
+      const text = sanitizeRenderableText(stripHtmlTags((token as Tokens.HTML).raw ?? '')).trim()
+      if (text !== '') rendered.push({ kind: 'plain', text })
+      continue
+    }
+    const fallback = sanitizeRenderableText((token as { raw?: string }).raw ?? '').trim()
+    if (fallback !== '') rendered.push({ kind: 'plain', text: fallback })
+  }
+}
+
+export function renderMarkdownLines(markdown: string): MarkdownRenderLine[] {
+  const input = sanitizeRenderableText(markdown.replace(/\r\n/g, '\n'))
+  const rendered: MarkdownRenderLine[] = []
+  try {
+    const tokens = marked.lexer(input)
+    renderBlockTokens(tokens, rendered, 0)
+  } catch {
+    pushRenderedLines(rendered, 'plain', input)
   }
 
   while (rendered.length > 0) {
     const last = rendered[rendered.length - 1]
-    if (!last || last.kind !== 'plain' || last.text !== '') break
+    if (!last || last.text !== '' || (last.kind !== 'plain' && last.kind !== 'list' && last.kind !== 'quote')) break
     rendered.pop()
   }
   return rendered

@@ -1,7 +1,7 @@
 {
   "name": "merlion",
   "version": "0.1.4",
-  "description": "A coding agent powered by OpenRouter",
+  "description": "A coding agent for OpenAI-compatible providers",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -27,6 +27,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@vscode/ripgrep": "^1.15.14"
+    "@vscode/ripgrep": "^1.15.14",
+    "marked": "^16.4.2"
   }
 }

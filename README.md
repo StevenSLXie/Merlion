@@ -3,6 +3,7 @@
 Merlion is a terminal coding agent focused on two goals:
 - high coding quality (benchmarking Claude Code / Codex style workflows)
 - lower token cost through practical context + tool design
+- provider-agnostic OpenAI-compatible runtime (`openrouter` / `openai` / custom URL)
 
 ## Quick Start (Recommended)
 
@@ -10,7 +11,7 @@ Merlion is a terminal coding agent focused on two goals:
 
 ```bash
 npm install -g merlion
-export OPENROUTER_API_KEY=your_key_here
+# first run will guide provider/key/model setup interactively
 merlion --repl
 ```
 
@@ -18,7 +19,7 @@ If you prefer local install in a project:
 
 ```bash
 npm install merlion
-export OPENROUTER_API_KEY=your_key_here
+# first run will guide provider/key/model setup interactively
 npx merlion --repl
 ```
 
@@ -28,8 +29,18 @@ npx merlion --repl
 git clone https://github.com/StevenSLXie/Merlion.git
 cd Merlion
 npm install
-export OPENROUTER_API_KEY=your_key_here
+# first run will guide provider/key/model setup interactively
 npm run merlion -- --repl
+```
+
+Optional non-interactive env configuration:
+
+```bash
+export MERLION_PROVIDER=openrouter   # openrouter | openai | custom
+export MERLION_API_KEY=your_key_here
+export MERLION_MODEL=qwen/qwen3-coder
+export MERLION_BASE_URL=https://openrouter.ai/api/v1
+merlion --repl
 ```
 
 ## Common Usage
@@ -52,6 +63,7 @@ merlion --resume <session-id>
 Merlion 是一个终端代码代理，核心目标是：
 - 代码质量对标 Claude Code / Codex 这类工程化工作流
 - 通过上下文与工具设计尽量节省 token，从而降低成本
+- 支持 OpenAI-compatible provider（`openrouter` / `openai` / 自定义 URL）
 
 ## 快速开始（推荐）
 
@@ -59,7 +71,7 @@ Merlion 是一个终端代码代理，核心目标是：
 
 ```bash
 npm install -g merlion
-export OPENROUTER_API_KEY=your_key_here
+# 首次运行会交互引导 provider/key/model 配置
 merlion --repl
 ```
 
@@ -67,7 +79,7 @@ merlion --repl
 
 ```bash
 npm install merlion
-export OPENROUTER_API_KEY=your_key_here
+# 首次运行会交互引导 provider/key/model 配置
 npx merlion --repl
 ```
 
@@ -77,8 +89,18 @@ npx merlion --repl
 git clone https://github.com/StevenSLXie/Merlion.git
 cd Merlion
 npm install
-export OPENROUTER_API_KEY=your_key_here
+# 首次运行会交互引导 provider/key/model 配置
 npm run merlion -- --repl
+```
+
+也可以用环境变量非交互配置：
+
+```bash
+export MERLION_PROVIDER=openrouter   # openrouter | openai | custom
+export MERLION_API_KEY=your_key_here
+export MERLION_MODEL=qwen/qwen3-coder
+export MERLION_BASE_URL=https://openrouter.ai/api/v1
+merlion --repl
 ```
 
 ## 常用命令
