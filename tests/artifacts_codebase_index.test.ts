@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import {
   ensureCodebaseIndex,
+  refreshCodebaseIndex,
   readCodebaseIndex,
   updateCodebaseIndexWithChangedFiles,
 } from '../src/artifacts/codebase_index.ts'
@@ -18,6 +19,10 @@ async function makeRepo(): Promise<string> {
   await mkdir(join(root, 'docs'), { recursive: true })
   await writeFile(join(root, 'src', 'index.ts'), 'export const x = 1\n', 'utf8')
   await writeFile(join(root, 'tests', 'a.test.ts'), 'test("x", ()=>{})\n', 'utf8')
+  await mkdir(join(root, 'tests', '__pycache__'), { recursive: true })
+  await writeFile(join(root, 'tests', '__pycache__', 'noise.pyc'), 'x', 'utf8')
+  await mkdir(join(root, '.pytest_cache'), { recursive: true })
+  await writeFile(join(root, '.pytest_cache', 'state.json'), '{}', 'utf8')
   await writeFile(
     join(root, 'package.json'),
     JSON.stringify({ scripts: { test: 'node --test', merlion: 'node src/index.ts' } }, null, 2),
@@ -33,6 +38,7 @@ test('ensureCodebaseIndex creates .merlion/codebase_index.md', async () => {
   assert.match(artifact.content, /# Codebase Index/)
   assert.match(artifact.content, /## Dev Scripts/)
   assert.match(artifact.content, /src\/index\.ts/)
+  assert.doesNotMatch(artifact.content, /__pycache__|\.pyc|\.pytest_cache/)
 })
 
 test('updateCodebaseIndexWithChangedFiles records unique recent files', async () => {
@@ -44,6 +50,17 @@ test('updateCodebaseIndexWithChangedFiles records unique recent files', async ()
   assert.match(text, /## Recent Changed Files/)
   const count = (text.match(/- changed: src\/index\.ts/g) ?? []).length
   assert.equal(count, 1)
+})
+
+test('refreshCodebaseIndex rebuilds structure and keeps recent-changed section', async () => {
+  const repo = await makeRepo()
+  await updateCodebaseIndexWithChangedFiles(repo, ['src/index.ts'])
+  await writeFile(join(repo, 'docs', 'new.md'), '# new\n', 'utf8')
+
+  const out = await refreshCodebaseIndex(repo)
+  assert.match(out.content, /docs\/new\.md/)
+  assert.match(out.content, /## Recent Changed Files/)
+  assert.match(out.content, /- changed: src\/index\.ts/)
 })
 
 test('readCodebaseIndex truncates by token budget', async () => {

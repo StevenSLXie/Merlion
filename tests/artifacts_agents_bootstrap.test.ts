@@ -58,6 +58,20 @@ test('bootstrap skips when real AGENTS.md exists in project', async () => {
   assert.equal(guidance.text.includes('(generated map)'), false)
 })
 
+test('bootstrap force option regenerates maps even when head is unchanged', async () => {
+  const repo = await makeRepo(false)
+  const first = await ensureGeneratedAgentsMaps(repo)
+  assert.equal(first.created, true)
+
+  const second = await ensureGeneratedAgentsMaps(repo)
+  assert.equal(second.created, false)
+  assert.equal(second.reason, 'up_to_date')
+
+  const forced = await ensureGeneratedAgentsMaps(repo, { force: true })
+  assert.equal(forced.created, true)
+  assert.equal(forced.reason, 'generated')
+})
+
 test('bootstrap does not execute shell substitutions from directory names', async () => {
   const repo = await makeRepo(false)
   await mkdir(join(repo, '$(touch SHOULD_NOT_EXIST)'), { recursive: true })

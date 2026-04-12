@@ -543,6 +543,17 @@ export class CliExperience {
     this.printRawLine(this.c('dim', `[map] ${text}`))
   }
 
+  onPhaseUpdate(summary: string): void {
+    const text = sanitizeRenderableText(summary.trim())
+    if (text === '') return
+    if (this.tuiEnabled) {
+      this.tuiStatusLine = `phase · ${text}`
+      this.renderTuiFrame()
+      return
+    }
+    this.printRawLine(this.c('dim', `[phase] ${text}`))
+  }
+
   setToolDetailMode(mode: 'full' | 'compact'): void {
     this.toolDetailMode = mode
     if (this.tuiEnabled) {

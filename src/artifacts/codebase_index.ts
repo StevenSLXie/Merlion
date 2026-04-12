@@ -13,7 +13,25 @@ export interface ReadCodebaseIndexOptions {
 
 const MAX_FILE_MAP_LINES = 80
 const MAX_CHANGED_FILES = 50
-const IGNORE_DIRS = new Set(['.git', 'node_modules', '.merlion', 'dist', 'build', '.next'])
+const IGNORE_DIRS = new Set([
+  '.git',
+  'node_modules',
+  '.merlion',
+  'dist',
+  'build',
+  '.next',
+  '.venv',
+  'venv',
+  '__pycache__',
+  '.pytest_cache',
+  '.ruff_cache',
+  '.mypy_cache',
+  '.idea',
+  '.vscode',
+  'coverage',
+  '.coverage',
+])
+const IGNORE_FILE_SUFFIXES = ['.pyc', '.pyo', '.tmp', '.swp', '.swo']
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
@@ -78,6 +96,7 @@ async function walkFiles(root: string, includeDirs: string[]): Promise<string[]>
         continue
       }
       if (!entry.isFile()) continue
+      if (IGNORE_FILE_SUFFIXES.some((suffix) => entry.name.endsWith(suffix))) continue
       result.push(relative(root, full))
     }
   }
@@ -128,16 +147,35 @@ async function resolveIndexPath(cwd: string): Promise<{ root: string; path: stri
   return { root, path: join(root, '.merlion', 'codebase_index.md') }
 }
 
+async function buildIndexContent(root: string, changedFiles?: string[]): Promise<string> {
+  const topLevel = await listTopLevel(root)
+  const scripts = await readScripts(root)
+  const fileMap = await walkFiles(root, ['src', 'tests', 'docs'])
+  return renderIndex({
+    topLevel,
+    scripts,
+    fileMap,
+    changedFiles: changedFiles && changedFiles.length > 0 ? changedFiles : undefined,
+  })
+}
+
 export async function ensureCodebaseIndex(cwd: string): Promise<CodebaseIndexArtifact> {
   const { root, path } = await resolveIndexPath(cwd)
   if (!(await fileExists(path))) {
     await mkdir(dirname(path), { recursive: true })
-    const topLevel = await listTopLevel(root)
-    const scripts = await readScripts(root)
-    const fileMap = await walkFiles(root, ['src', 'tests', 'docs'])
-    await writeFile(path, renderIndex({ topLevel, scripts, fileMap }), 'utf8')
+    await writeFile(path, await buildIndexContent(root), 'utf8')
   }
   const content = await readFile(path, 'utf8')
+  return { path, content }
+}
+
+export async function refreshCodebaseIndex(cwd: string): Promise<CodebaseIndexArtifact> {
+  const { root, path } = await resolveIndexPath(cwd)
+  await mkdir(dirname(path), { recursive: true })
+  const existing = (await fileExists(path)) ? await readFile(path, 'utf8') : ''
+  const changed = parseChangedFiles(existing)
+  const content = await buildIndexContent(root, changed)
+  await writeFile(path, content, 'utf8')
   return { path, content }
 }
 
@@ -180,26 +218,14 @@ function parseChangedFiles(content: string): string[] {
     .filter(Boolean)
 }
 
-function replaceOrAppendChangedSection(content: string, changedFiles: string[]): string {
-  const marker = '## Recent Changed Files'
-  const section = [marker, ...changedFiles.map((x) => `- changed: ${x}`), ''].join('\n')
-  const start = content.indexOf(marker)
-  if (start === -1) {
-    return `${content.trimEnd()}\n\n${section}`
-  }
-  const afterStart = content.slice(start + marker.length)
-  const nextHeadingPos = afterStart.indexOf('\n## ')
-  const end = nextHeadingPos === -1 ? content.length : start + marker.length + nextHeadingPos + 1
-  return `${content.slice(0, start)}${section}${content.slice(end)}`
-}
-
 export async function updateCodebaseIndexWithChangedFiles(
   cwd: string,
   changedPaths: string[]
 ): Promise<CodebaseIndexArtifact> {
-  const artifact = await ensureCodebaseIndex(cwd)
   const { root, path } = await resolveIndexPath(cwd)
-  const existing = parseChangedFiles(artifact.content)
+  await mkdir(dirname(path), { recursive: true })
+  const existingContent = (await fileExists(path)) ? await readFile(path, 'utf8') : ''
+  const existing = parseChangedFiles(existingContent)
   const normalized = changedPaths
     .map((p) => relative(root, resolve(cwd, p)))
     .map((p) => p.replace(/\\/g, '/'))
@@ -211,7 +237,7 @@ export async function updateCodebaseIndexWithChangedFiles(
     if (merged.length >= MAX_CHANGED_FILES) break
   }
 
-  const updated = replaceOrAppendChangedSection(artifact.content, merged)
+  const updated = await buildIndexContent(root, merged)
   await writeFile(path, updated, 'utf8')
   return { path, content: updated }
 }

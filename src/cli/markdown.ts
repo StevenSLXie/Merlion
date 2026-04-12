@@ -64,11 +64,7 @@ function renderInlineToken(token: Token): string {
   return sanitizeRenderableText((token as { raw?: string }).raw ?? '')
 }
 
-function renderTable(token: Tokens.Table): MarkdownRenderLine[] {
-  const headers = token.header.map((cell) => renderInlineTokens(cell.tokens).replace(/\s+/g, ' ').trim())
-  const rows = token.rows.map((row) =>
-    row.map((cell) => renderInlineTokens(cell.tokens).replace(/\s+/g, ' ').trim())
-  )
+function renderTableRows(headers: string[], rows: string[][]): MarkdownRenderLine[] {
   const columnCount = Math.max(headers.length, ...rows.map((row) => row.length))
   const widths = new Array<number>(columnCount).fill(3)
   for (let i = 0; i < columnCount; i++) {
@@ -89,18 +85,52 @@ function renderTable(token: Tokens.Table): MarkdownRenderLine[] {
     for (let i = 0; i < columnCount; i++) {
       values.push(pad(cells[i] ?? '', widths[i] ?? 3))
     }
-    return `| ${values.join(' | ')} |`
+    return `│ ${values.join(' │ ')} │`
   }
 
-  const separator = `| ${widths.map((width) => '-'.repeat(width)).join(' | ')} |`
+  const top = `┌${widths.map((width) => '─'.repeat(width + 2)).join('┬')}┐`
+  const middle = `├${widths.map((width) => '─'.repeat(width + 2)).join('┼')}┤`
+  const bottom = `└${widths.map((width) => '─'.repeat(width + 2)).join('┴')}┘`
   const lines: MarkdownRenderLine[] = [
+    { kind: 'table', text: top },
     { kind: 'table', text: formatRow(headers) },
-    { kind: 'table', text: separator }
+    { kind: 'table', text: middle }
   ]
   for (const row of rows) {
     lines.push({ kind: 'table', text: formatRow(row) })
   }
+  lines.push({ kind: 'table', text: bottom })
   return lines
+}
+
+function renderTable(token: Tokens.Table): MarkdownRenderLine[] {
+  const headers = token.header.map((cell) => renderInlineTokens(cell.tokens).replace(/\s+/g, ' ').trim())
+  const rows = token.rows.map((row) =>
+    row.map((cell) => renderInlineTokens(cell.tokens).replace(/\s+/g, ' ').trim())
+  )
+  return renderTableRows(headers, rows)
+}
+
+function parsePipeTableBlock(text: string): { headers: string[]; rows: string[][] } | null {
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+  if (lines.length < 2) return null
+  if (!lines[0]!.includes('|') || !lines[1]!.includes('|')) return null
+  if (!/^[:\-\|\s]+$/.test(lines[1]!)) return null
+
+  const parseRow = (line: string): string[] =>
+    line
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((cell) => cell.trim())
+
+  const headers = parseRow(lines[0]!)
+  if (headers.length === 0) return null
+  const rows = lines.slice(2).map(parseRow)
+  return { headers, rows }
 }
 
 function renderListItem(
@@ -157,7 +187,13 @@ function renderBlockTokens(tokens: Token[], rendered: MarkdownRenderLine[], list
     }
     if (token.type === 'paragraph') {
       const paragraph = token as Tokens.Paragraph
-      pushRenderedLines(rendered, 'plain', renderInlineTokens(paragraph.tokens))
+      const paragraphText = renderInlineTokens(paragraph.tokens)
+      const tableBlock = parsePipeTableBlock(paragraphText)
+      if (tableBlock) {
+        rendered.push(...renderTableRows(tableBlock.headers, tableBlock.rows))
+      } else {
+        pushRenderedLines(rendered, 'plain', paragraphText)
+      }
       continue
     }
     if (token.type === 'text') {

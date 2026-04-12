@@ -7,6 +7,7 @@ import { fileExists, findProjectRoot } from './agents.ts'
 export interface AgentsBootstrapOptions {
   maxTopDirs?: number
   maxSecondLevelDirs?: number
+  force?: boolean
 }
 
 export interface AgentsBootstrapResult {
@@ -27,6 +28,7 @@ const IGNORE_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '
 const DEFAULTS: Required<AgentsBootstrapOptions> = {
   maxTopDirs: 12,
   maxSecondLevelDirs: 10,
+  force: false,
 }
 
 function runGit(root: string, args: string[]): string {
@@ -192,6 +194,7 @@ export async function ensureGeneratedAgentsMaps(
   const merged = {
     maxTopDirs: Math.max(0, Math.floor(options?.maxTopDirs ?? DEFAULTS.maxTopDirs)),
     maxSecondLevelDirs: Math.max(0, Math.floor(options?.maxSecondLevelDirs ?? DEFAULTS.maxSecondLevelDirs)),
+    force: options?.force === true,
   }
 
   if (await hasAnyProjectAgents(root)) {
@@ -202,7 +205,7 @@ export async function ensureGeneratedAgentsMaps(
   const metaPath = join(mapsDir, '.meta.json')
   const head = runGit(root, ['rev-parse', 'HEAD']) || 'no-head'
   const meta = await readBootstrapMeta(metaPath)
-  if (meta && meta.head === head) {
+  if (!merged.force && meta && meta.head === head) {
     let allPresent = true
     for (const rel of meta.files) {
       if (!(await fileExists(join(root, rel)))) {

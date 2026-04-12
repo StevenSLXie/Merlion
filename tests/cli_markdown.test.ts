@@ -30,9 +30,12 @@ test('renderMarkdownLines parses horizontal rules and tables', () => {
   const lines = renderMarkdownLines('---\n| a | b |\n| --- | --- |\n| 1 | 2 |\n')
   assert.equal(lines[0]?.kind, 'rule')
   assert.equal(lines[1]?.kind, 'table')
-  assert.match(lines[1]?.text ?? '', /\|\s+a\s+\|\s+b\s+\|/)
+  assert.match(lines[1]?.text ?? '', /^┌/)
   assert.equal(lines[2]?.kind, 'table')
   assert.equal(lines[3]?.kind, 'table')
+  assert.match(lines[2]?.text ?? '', /^│\s+a/)
+  assert.match(lines[4]?.text ?? '', /^│\s+1/)
+  assert.match(lines[5]?.text ?? '', /^└/)
 })
 
 test('renderMarkdownLines preserves ordered list numbering', () => {
@@ -41,4 +44,13 @@ test('renderMarkdownLines preserves ordered list numbering', () => {
   assert.equal(lines[0]?.text, '1. first')
   assert.equal(lines[1]?.kind, 'list')
   assert.equal(lines[1]?.text, '2. second')
+})
+
+test('renderMarkdownLines falls back to pipe-table parsing inside paragraph blocks', () => {
+  const lines = renderMarkdownLines(
+    'Available Scripts\n| Command | Action |\n| --- | --- |\n| npm run test | run tests |\n'
+  )
+  assert.equal(lines[0]?.kind, 'plain')
+  assert.equal(lines[1]?.kind, 'table')
+  assert.match(lines[1]?.text ?? '', /^┌/)
 })

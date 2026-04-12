@@ -1,4 +1,5 @@
 import { cwd as currentCwd } from 'node:process'
+import { execSync } from 'node:child_process'
 
 import { askLine } from './cli/ask.ts'
 import { CliExperience } from './cli/experience.ts'
@@ -17,7 +18,10 @@ import {
 } from './config/wizard.ts'
 import { loadAgentsGuidance } from './artifacts/agents.ts'
 import { ensureGeneratedAgentsMaps } from './artifacts/agents_bootstrap.ts'
-import { ensureCodebaseIndex, updateCodebaseIndexWithChangedFiles } from './artifacts/codebase_index.ts'
+import {
+  refreshCodebaseIndex,
+  updateCodebaseIndexWithChangedFiles
+} from './artifacts/codebase_index.ts'
 import { buildOrientationContext } from './context/orientation.ts'
 import {
   buildPathGuidanceDelta,
@@ -25,6 +29,7 @@ import {
   extractCandidatePathsFromToolEvent,
 } from './context/path_guidance.ts'
 import { runLoop } from './runtime/loop.ts'
+import { detectSuccessfulGitCommit, summarizeToolBatchMilestones } from './runtime/tool_batch_milestones.ts'
 import {
   appendSessionMeta,
   appendTranscriptMessage,
@@ -255,13 +260,77 @@ function loadPathGuidanceBudgetsFromEnv(): Partial<{
   }
 }
 
-function extractPathArg(raw: string): string | null {
+function parseToolArgs(raw: string): Record<string, unknown> {
   try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    const value = parsed.path
-    return typeof value === 'string' && value.trim() !== '' ? value : null
+    return JSON.parse(raw) as Record<string, unknown>
   } catch {
-    return null
+    return {}
+  }
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value : null
+}
+
+function extractChangedPathsFromToolCall(toolName: string, rawArgs: string): string[] {
+  const args = parseToolArgs(rawArgs)
+  const out: string[] = []
+  const push = (value: unknown) => {
+    const path = nonEmptyString(value)
+    if (path) out.push(path)
+  }
+
+  if (
+    toolName === 'create_file' ||
+    toolName === 'write_file' ||
+    toolName === 'append_file' ||
+    toolName === 'edit_file' ||
+    toolName === 'delete_file' ||
+    toolName === 'mkdir'
+  ) {
+    push(args.path ?? args.file_path)
+  } else if (toolName === 'copy_file') {
+    push(args.to_path ?? args.path)
+  } else if (toolName === 'move_file') {
+    push(args.from_path)
+    push(args.to_path)
+  }
+
+  return out
+}
+
+function decodePorcelainPath(value: string): string {
+  const text = value.trim()
+  if (!text.startsWith('"')) return text
+  try {
+    return JSON.parse(text) as string
+  } catch {
+    return text.slice(1, text.endsWith('"') ? -1 : undefined)
+  }
+}
+
+function collectGitWorkingTreePaths(cwd: string): string[] {
+  try {
+    const output = execSync('git status --porcelain', {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+    }).trim()
+    if (output === '') return []
+
+    const out: string[] = []
+    for (const line of output.split('\n')) {
+      if (line.length < 4) continue
+      const payload = line.slice(3).trim()
+      const arrow = payload.lastIndexOf(' -> ')
+      const target = arrow >= 0 ? payload.slice(arrow + 4) : payload
+      const normalized = decodePorcelainPath(target).replace(/\\/g, '/')
+      if (normalized !== '') out.push(normalized)
+      if (out.length >= 120) break
+    }
+    return out
+  } catch {
+    return []
   }
 }
 
@@ -381,9 +450,11 @@ async function main(): Promise<void> {
     { role: 'system' as const, content: 'You are Merlion, a coding agent. Use tools to complete the task.' }
   ]
   let startupMapSummary: string | null = null
+  let generatedMapMode = false
   if (!options.resumeSessionId && initialMessages.length > 0) {
     try {
       const bootstrap = await ensureGeneratedAgentsMaps(options.cwd)
+      generatedMapMode = bootstrap.reason !== 'project_agents_exists'
       if (bootstrap.created) {
         startupMapSummary =
           `initialized generated project map (${bootstrap.generatedFiles.length} scope` +
@@ -394,7 +465,7 @@ async function main(): Promise<void> {
     }
     await appendTranscriptMessage(session.transcriptPath, initialMessages[0]!)
     try {
-      await ensureCodebaseIndex(options.cwd)
+      await refreshCodebaseIndex(options.cwd)
       const orientation = await buildOrientationContext(options.cwd, loadOrientationBudgetsFromEnv())
       if (orientation.text.trim() !== '') {
         const orientationMessage = {
@@ -423,6 +494,7 @@ async function main(): Promise<void> {
   const usageRates = loadUsageRatesFromEnv()
   const pathGuidanceBudgets = loadPathGuidanceBudgetsFromEnv()
   const pathGuidanceState = createPathGuidanceState()
+  let lastWorkingTreeFingerprint: string | null = null
   const ui = new CliExperience({
     model: options.model,
     sessionId: session.sessionId,
@@ -436,6 +508,9 @@ async function main(): Promise<void> {
 
   try {
     const seeded = await loadAgentsGuidance(options.cwd, { maxTokens: 1 })
+    if (seeded.files.some((file) => file.replace(/\\/g, '/').includes('/.merlion/maps/'))) {
+      generatedMapMode = true
+    }
     for (const file of seeded.files) {
       pathGuidanceState.loadedAgentFiles.add(file)
     }
@@ -468,6 +543,9 @@ async function main(): Promise<void> {
   const runTurn = async (prompt: string) => {
     const changedFiles = new Set<string>()
     const toolPathSignals = new Set<string>()
+    let sawSuccessfulGitCommit = false
+    let sawWorkspaceMutationSignal = false
+    let workingTreeSnapshotChanged = false
     let latestPromptObservability: PromptObservabilitySnapshot | undefined
     const result = await runLoop({
       provider,
@@ -525,9 +603,14 @@ async function main(): Promise<void> {
           durationMs,
           uiPayload
         })
-        if (!isError && (call.function.name === 'create_file' || call.function.name === 'edit_file')) {
-          const path = extractPathArg(call.function.arguments)
-          if (path) changedFiles.add(path)
+        if (!isError) {
+          const changedFromCall = extractChangedPathsFromToolCall(call.function.name, call.function.arguments)
+          for (const path of changedFromCall) {
+            changedFiles.add(path)
+          }
+          if (changedFromCall.length > 0 || call.function.name === 'bash' || call.function.name === 'run_script') {
+            sawWorkspaceMutationSignal = true
+          }
         }
         const candidates = await extractCandidatePathsFromToolEvent(options.cwd, {
           call,
@@ -536,6 +619,12 @@ async function main(): Promise<void> {
         for (const candidate of candidates) toolPathSignals.add(candidate)
       },
       onToolBatchComplete: async ({ results }) => {
+        for (const line of summarizeToolBatchMilestones(results)) {
+          ui.onPhaseUpdate(line)
+        }
+        if (detectSuccessfulGitCommit(results)) {
+          sawSuccessfulGitCommit = true
+        }
         if (results.length === 0 && toolPathSignals.size === 0) return
         const delta = await buildPathGuidanceDelta(
           options.cwd,
@@ -557,6 +646,17 @@ async function main(): Promise<void> {
         ]
       },
     })
+    if (sawWorkspaceMutationSignal || sawSuccessfulGitCommit) {
+      const workingTreePaths = collectGitWorkingTreePaths(options.cwd)
+      const fingerprint = [...new Set(workingTreePaths)].sort().join('\n')
+      if (fingerprint !== lastWorkingTreeFingerprint) {
+        workingTreeSnapshotChanged = true
+        lastWorkingTreeFingerprint = fingerprint
+        for (const path of workingTreePaths) {
+          changedFiles.add(path)
+        }
+      }
+    }
     if (changedFiles.size > 0) {
       try {
         await updateCodebaseIndexWithChangedFiles(options.cwd, [...changedFiles])
@@ -565,6 +665,20 @@ async function main(): Promise<void> {
         )
       } catch (error) {
         process.stderr.write(`Codebase index update warning: ${String(error)}\n`)
+      }
+    }
+    if (generatedMapMode && (sawSuccessfulGitCommit || workingTreeSnapshotChanged)) {
+      try {
+        const refreshed = await ensureGeneratedAgentsMaps(options.cwd, {
+          force: workingTreeSnapshotChanged && !sawSuccessfulGitCommit
+        })
+        if (refreshed.created) {
+          ui.onMapUpdated(
+            `generated project map refreshed (${refreshed.generatedFiles.length} scope${refreshed.generatedFiles.length === 1 ? '' : 's'})`
+          )
+        }
+      } catch (error) {
+        process.stderr.write(`Generated map refresh warning: ${String(error)}\n`)
       }
     }
     history = result.state.messages
