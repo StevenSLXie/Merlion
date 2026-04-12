@@ -1,0 +1,25 @@
+Version: 0.1.10
+Date: 2026-04-12
+
+Changes:
+- P0 prompt architecture upgrade:
+  introduced section-based system prompt assembly with session-cached dynamic
+  sections, replacing direct hard-coded concatenation in CLI bootstrap.
+- Permission UX behavior update:
+  "yes and do not ask again" now applies per tool in the current session
+  (for example, one allow-session decision for `edit_file` suppresses later
+  `edit_file` prompts regardless of description text).
+- REPL input-buffer bug fix:
+  replaced long-lived readline usage in the REPL/auth prompt path with
+  short-lived per-question interfaces to prevent permission answers (`y/n/a`)
+  from being captured as later user prompts.
+- Safety/maintainability additions:
+  prompt section cache utilities and explicit system-prompt builder modules.
+- Regression coverage:
+  added tests for prompt section caching semantics and ephemeral ask-line
+  lifecycle behavior; updated permission-store tests for tool-scoped remember.
+
+Related commits:
+- feat(prompt): add section registry and system prompt builder
+- fix(permissions): scope allow_session remember to tool level
+- fix(repl): prevent permission input from leaking into prompt buffer

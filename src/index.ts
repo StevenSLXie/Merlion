@@ -1,11 +1,12 @@
 import { cwd as currentCwd } from 'node:process'
-import { createInterface } from 'node:readline/promises'
-import { stdin as input, stdout as output } from 'node:process'
 
+import { askLine } from './cli/ask.ts'
 import { CliExperience } from './cli/experience.ts'
 import { runReplSession } from './cli/repl.ts'
 import { createPermissionStore } from './permissions/store.ts'
 import { OpenAICompatProvider } from './providers/openai.ts'
+import { createPromptSectionCache } from './prompt/sections.ts'
+import { buildMerlionSystemPrompt } from './prompt/system_prompt.ts'
 import { readConfig, mergeConfig, type MerlionProvider } from './config/store.ts'
 import {
   runConfigWizard,
@@ -410,14 +411,13 @@ async function main(): Promise<void> {
     }
   }
 
-  const systemPrompt = [
-    'You are Merlion, a coding agent. Use tools to complete the task.',
-    'Use path-guided exploration:',
-    '1) pick 1-3 candidate directories from loaded AGENTS/context before broad search,',
-    '2) search/read inside candidates first,',
-    '3) widen scope only when evidence is insufficient,',
-    '4) when AGENTS guidance conflicts, nearest directory scope wins.'
-  ].join(' ')
+  const promptSectionCache = createPromptSectionCache()
+  const systemPrompt = (
+    await buildMerlionSystemPrompt({
+      cwd: options.cwd,
+      sectionCache: promptSectionCache
+    })
+  ).text
   let history = initialMessages
   const usageTracker = createUsageTracker()
   const usageRates = loadUsageRatesFromEnv()
@@ -572,14 +572,9 @@ async function main(): Promise<void> {
   }
 
   if (options.repl) {
-    let rl = createInterface({ input, output })
     await runReplSession({
       readLine: async () => {
-        try {
-          return await rl.question('')
-        } catch {
-          return null
-        }
+        return await askLine('')
       },
       write: (text) => {
         process.stdout.write(text)
@@ -597,22 +592,17 @@ async function main(): Promise<void> {
       onTurnResult: async (result) => {
         ui.renderAssistantOutput(result.output, result.terminal)
         if (!isAuthFailureResult(result)) return
-        const answer = await rl.question('Provider auth failed. Re-run setup wizard now? [y/N]: ')
+        const answer = (await askLine('Provider auth failed. Re-run setup wizard now? [y/N]: ')) ?? ''
         const yes = /^(y|yes)$/i.test(answer.trim())
         if (!yes) {
           process.stdout.write('Tip: run `merlion config` any time to update your key/provider/model.\n')
           return
         }
-        rl.close()
-        try {
-          const ok = await applyWizardConfig()
-          if (ok) {
-            process.stdout.write('[config] Updated. Continue in REPL.\n')
-          } else {
-            process.stdout.write('[config] Setup aborted. Continue in REPL.\n')
-          }
-        } finally {
-          rl = createInterface({ input, output })
+        const ok = await applyWizardConfig()
+        if (ok) {
+          process.stdout.write('[config] Updated. Continue in REPL.\n')
+        } else {
+          process.stdout.write('[config] Setup aborted. Continue in REPL.\n')
         }
       },
       onSetDetailMode: (mode) => {
@@ -620,7 +610,6 @@ async function main(): Promise<void> {
       }
     })
     ui.stopSpinner()
-    rl.close()
     return
   }
 
@@ -628,13 +617,7 @@ async function main(): Promise<void> {
   let result = await runTurn(options.task)
   ui.renderAssistantOutput(result.finalText, result.terminal)
   if (isAuthFailureResult({ output: result.finalText, terminal: result.terminal })) {
-    const rl = createInterface({ input, output })
-    let answer = ''
-    try {
-      answer = await rl.question('Provider auth failed. Re-run setup wizard now? [y/N]: ')
-    } finally {
-      rl.close()
-    }
+    const answer = (await askLine('Provider auth failed. Re-run setup wizard now? [y/N]: ')) ?? ''
     if (/^(y|yes)$/i.test(answer.trim())) {
       const ok = await applyWizardConfig()
       if (ok) {

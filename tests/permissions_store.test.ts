@@ -41,18 +41,18 @@ test('interactive mode supports y/n/a and prints tri-state prompt', async () => 
   const joined = fake.writes.join('')
   assert.match(joined, /1\) yes/)
   assert.match(joined, /2\) no/)
-  assert.match(joined, /3\) yes and do not ask again/i)
+  assert.match(joined, /3\) yes and do not ask again for this tool/i)
 })
 
-test('interactive allow_session caches exact same request in current session', async () => {
+test('interactive allow_session caches by tool in current session', async () => {
   const fake = createFakeIo(['a', 'y'])
   const store = createPermissionStore('interactive', fake.io)
 
   assert.equal(await store.ask('todo_write', 'Update todo list: /repo/.merlion/todos.json'), 'allow_session')
-  assert.equal(await store.ask('todo_write', 'Update todo list: /repo/.merlion/todos.json'), 'allow_session')
+  assert.equal(await store.ask('todo_write', 'Append todo: /repo/.merlion/todo.md'), 'allow_session')
   assert.equal(fake.getReadCount(), 1)
 
-  // Different request still asks again.
-  assert.equal(await store.ask('todo_write', 'Append todo: /repo/.merlion/todo.md'), 'allow')
+  // Different tool still asks again.
+  assert.equal(await store.ask('write_file', 'Write: /repo/README.md'), 'allow')
   assert.equal(fake.getReadCount(), 2)
 })
