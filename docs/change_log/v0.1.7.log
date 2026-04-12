@@ -1,0 +1,26 @@
+Version: 0.1.7
+Date: 2026-04-12
+
+Changes:
+- Path-guided context loading:
+  runtime now collects path signals from tool calls/results and injects
+  incremental AGENTS guidance along `root -> target` directory chains,
+  avoiding repeated broad repository scans.
+- Layered AGENTS map contract:
+  added MANUAL/AUTO section protocol and seeded root/runtime/builtin
+  AGENTS maps for path-scoped navigation.
+- Commit-time AGENTS maintenance pipeline:
+  added `scripts/agents/update.ts` + `scripts/agents/lint.ts`, git hooks
+  (`pre-commit`, `pre-push`), and npm scripts for update/lint/drift checks.
+- UX map update signal:
+  CLI now emits compact `[map] ...` lines when guidance/index maps are
+  updated during a turn.
+- E2E coverage additions:
+  added lifecycle tests for path-guidance chain loading and AGENTS auto
+  maintenance update/lint/check-drift flow.
+
+Related docs:
+- docs/features/051-path-guided-context-loading.md
+- docs/features/052-agents-md-manual-auto-contract.md
+- docs/features/053-commit-time-agents-auto-maintenance.md
+- docs/features/054-path-guided-prompt-policy.md
