@@ -11,7 +11,7 @@ export interface StaleGuidanceHint {
 
 function isInside(root: string, target: string): boolean {
   const rel = relative(root, target)
-  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('../'))
+  return rel === '' || !rel.startsWith('..')
 }
 
 async function nearestProjectGuidance(root: string, startDir: string): Promise<string | null> {

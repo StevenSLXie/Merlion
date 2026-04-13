@@ -60,8 +60,8 @@ test('buildOrientationContext assembles all three sections and creates artifact 
     // ── Token budget ─────────────────────────────────────────────────────────
     assert.ok(result.tokensEstimate > 0, 'Token estimate must be positive')
     assert.ok(
-      result.tokensEstimate <= 1200,
-      `Token estimate (${result.tokensEstimate}) must not exceed default budget of 1200`,
+      result.tokensEstimate <= 2500,
+      `Token estimate (${result.tokensEstimate}) must not exceed default budget for a small repo (2500)`,
     )
 
     // ── Side effects: artifact files created ─────────────────────────────────

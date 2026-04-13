@@ -1,0 +1,22 @@
+Version: 0.1.13
+Date: 2026-04-13
+
+Changes:
+- Map/index orientation pipeline upgraded for practical repo onboarding:
+  - semantic `Codebase Index` sections (`Directory Summary`, `Guidance Scopes`)
+  - proactive guidance loading for major scopes in orientation
+  - adaptive orientation/map bootstrap budgets based on repository size
+- Runtime map maintenance improved:
+  - automatic progress snapshot updates from runtime signals
+  - potential stale-guidance detection when code changes outpace local map updates
+- Progress noise reduced:
+  when commit signal is present, auto-progress now writes only the commit line
+  (no redundant changed-files line in the same event).
+- Test and lifecycle coverage expanded:
+  - added dedicated map lifecycle E2E scenarios (semantic index, generated scopes,
+    commit/no-commit progress behavior, guidance staleness, git-note attachment)
+  - updated orientation budget expectations for small repositories.
+
+Related commits:
+- feat(context): harden map/index orientation and auto-progress pipeline
+- fix(context): tighten progress auto-lines and map lifecycle assertions for release

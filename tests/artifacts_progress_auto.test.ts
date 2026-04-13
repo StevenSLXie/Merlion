@@ -49,6 +49,6 @@ test('auto progress appends commit summary when commit signal is true', async ()
 
   assert.equal(out.updated, true)
   const text = await readFile(join(repo, '.merlion', 'progress.md'), 'utf8')
-  assert.match(text, /Changed files: src\/index\.ts/)
   assert.match(text, /Commit: .*feat: bump x/)
+  assert.doesNotMatch(text, /Changed files:/, 'no redundant changed-files line when commit is present')
 })

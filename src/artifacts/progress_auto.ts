@@ -60,17 +60,12 @@ export async function updateProgressFromRuntimeSignals(
   const changed = normalizeChangedPaths(root, cwd, signals.changedPaths)
 
   const doneLines: string[] = []
-  if (changed.length > 0) {
-    doneLines.push(`[${timestamp}] Changed files: ${summarizeChangedFiles(changed)}`)
-  }
 
   if (signals.sawSuccessfulGitCommit) {
     const commit = latestCommitSummary(root)
-    if (commit !== '') {
-      doneLines.push(`[${timestamp}] Commit: ${commit}`)
-    } else {
-      doneLines.push(`[${timestamp}] Commit completed.`)
-    }
+    doneLines.push(commit !== '' ? `[${timestamp}] Commit: ${commit}` : `[${timestamp}] Commit completed.`)
+  } else if (changed.length > 0) {
+    doneLines.push(`[${timestamp}] Changed files: ${summarizeChangedFiles(changed)}`)
   }
 
   if (doneLines.length === 0) {

@@ -1,6 +1,6 @@
 {
   "name": "merlion",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "A coding agent for OpenAI-compatible providers",
   "type": "module",
   "engines": {
