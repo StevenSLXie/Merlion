@@ -159,4 +159,58 @@ describe('config/wizard', () => {
     const allOutput = output.join('')
     assert.ok(allOutput.includes('config.json'), 'output should mention config.json path')
   })
+
+  test('forced prompts allow replacing existing api key during reconfigure', async () => {
+    const subDir = await mkdtemp(join(tmpDir, 'test8-'))
+    process.env.XDG_CONFIG_HOME = subDir
+
+    const { io } = makeIO({ secret: 'sk-new-key', prompts: ['', '', ''] })
+    const result = await runConfigWizard(
+      { provider: 'openai', apiKey: 'sk-old-key', model: 'gpt-4.1-mini', baseURL: OPENAI_BASE_URL },
+      io,
+      {
+        forceProviderPrompt: true,
+        forceBaseURLPrompt: true,
+        forceApiKeyPrompt: true
+      }
+    )
+
+    assert.equal(result.ok, true)
+    assert.equal(result.config.provider, 'openai', 'blank provider input should keep existing provider')
+    assert.equal(result.config.baseURL, OPENAI_BASE_URL)
+    assert.equal(result.config.apiKey, 'sk-new-key')
+  })
+
+  test('forced api key prompt allows keeping existing key when input is blank', async () => {
+    const subDir = await mkdtemp(join(tmpDir, 'test9-'))
+    process.env.XDG_CONFIG_HOME = subDir
+
+    const { io } = makeIO({ secret: '', prompts: [''] })
+    const result = await runConfigWizard(
+      { provider: 'openrouter', apiKey: 'sk-existing-key', model: DEFAULT_MODEL, baseURL: OPENROUTER_BASE_URL },
+      io,
+      { forceApiKeyPrompt: true }
+    )
+
+    assert.equal(result.ok, true)
+    assert.equal(result.config.apiKey, 'sk-existing-key')
+  })
+
+  test('required api key input aborts when blank during auth recovery', async () => {
+    const subDir = await mkdtemp(join(tmpDir, 'test10-'))
+    process.env.XDG_CONFIG_HOME = subDir
+
+    const { io } = makeIO({ secret: '', prompts: [''] })
+    const result = await runConfigWizard(
+      { provider: 'openrouter', apiKey: 'sk-invalid-key', model: DEFAULT_MODEL, baseURL: OPENROUTER_BASE_URL },
+      io,
+      {
+        forceApiKeyPrompt: true,
+        requireApiKeyInput: true
+      }
+    )
+
+    assert.equal(result.ok, false)
+    assert.deepEqual(result.config, {})
+  })
 })

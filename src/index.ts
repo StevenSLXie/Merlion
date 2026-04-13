@@ -388,7 +388,11 @@ async function main(): Promise<void> {
 
   // `merlion config` → always re-run the wizard
   if (resolvedFlags.configMode) {
-    const result = await runConfigWizard(fileConfig)
+    const result = await runConfigWizard(fileConfig, undefined, {
+      forceProviderPrompt: true,
+      forceBaseURLPrompt: true,
+      forceApiKeyPrompt: true
+    })
     if (!result.ok) {
       process.exitCode = 1
     }
@@ -553,6 +557,11 @@ async function main(): Promise<void> {
       apiKey: options.apiKey,
       model: options.model,
       baseURL: options.baseURL
+    }, undefined, {
+      forceProviderPrompt: true,
+      forceBaseURLPrompt: true,
+      forceApiKeyPrompt: true,
+      requireApiKeyInput: true
     })
     if (!result.ok) return false
 
