@@ -202,7 +202,11 @@ export class CliExperience {
 
   private clearSpinnerLine(): void {
     if (this.tuiEnabled) return
-    if (!this.spinnerTimer) return
+    if (this.spinnerTimer) {
+      clearInterval(this.spinnerTimer)
+      this.spinnerTimer = null
+    }
+    if (!process.stdout.isTTY) return
     process.stdout.write('\r\x1b[2K')
     this.spinnerWidth = 0
   }
@@ -400,6 +404,7 @@ export class CliExperience {
   }
 
   renderUserPrompt(prompt: string): void {
+    this.stopSpinner()
     this.printCard('YOU', prompt, 'info')
   }
 
@@ -411,6 +416,7 @@ export class CliExperience {
   }
 
   renderAssistantOutput(output: string, terminal: string): void {
+    this.stopSpinner()
     const tone = terminal === 'completed' ? 'success' : 'warn'
     this.printAssistantCard('MERLION', output, tone)
     if (terminal !== 'completed') {

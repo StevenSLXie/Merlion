@@ -1,0 +1,14 @@
+Version: 0.1.15
+Date: 2026-04-13
+
+Changes:
+- CLI output stability fix for auth-recovery/setup flow:
+  - stop spinner deterministically before rendering user/assistant cards,
+    preventing spinner/timer output from corrupting interactive prompts.
+  - add explicit spinner stop before auth-failure `askLine` prompts in both
+    REPL and one-shot paths.
+- Added regression test to ensure error-path assistant render clears leftover
+  spinner timer state.
+
+Related commits:
+- fix(cli): stop spinner before interactive auth-recovery prompts

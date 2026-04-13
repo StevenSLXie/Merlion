@@ -778,6 +778,7 @@ async function main(): Promise<void> {
       onTurnResult: async (result) => {
         ui.renderAssistantOutput(result.output, result.terminal)
         if (!isAuthFailureResult(result)) return
+        ui.stopSpinner()
         const answer = (await askLine('Provider auth failed. Re-run setup wizard now? [y/N]: ')) ?? ''
         const yes = /^(y|yes)$/i.test(answer.trim())
         if (!yes) {
@@ -803,6 +804,7 @@ async function main(): Promise<void> {
   let result = await runTurn(options.task)
   ui.renderAssistantOutput(result.finalText, result.terminal)
   if (isAuthFailureResult({ output: result.finalText, terminal: result.terminal })) {
+    ui.stopSpinner()
     const answer = (await askLine('Provider auth failed. Re-run setup wizard now? [y/N]: ')) ?? ''
     if (/^(y|yes)$/i.test(answer.trim())) {
       const ok = await applyWizardConfig()
