@@ -196,6 +196,27 @@ describe('config/wizard', () => {
     assert.equal(result.config.apiKey, 'sk-existing-key')
   })
 
+  test('provider switch resets base url to new provider canonical during reconfigure', async () => {
+    const subDir = await mkdtemp(join(tmpDir, 'test11-'))
+    process.env.XDG_CONFIG_HOME = subDir
+
+    // existingConfig has openai URL; user switches to openrouter via '1'
+    const { io } = makeIO({ secret: 'sk-or-newkey', prompts: ['1', '', ''] })
+    const result = await runConfigWizard(
+      { provider: 'openai', apiKey: 'sk-old', model: 'gpt-4.1-mini', baseURL: OPENAI_BASE_URL },
+      io,
+      { forceProviderPrompt: true, forceBaseURLPrompt: true, forceApiKeyPrompt: true }
+    )
+
+    assert.equal(result.ok, true)
+    assert.equal(result.config.provider, 'openrouter')
+    assert.equal(
+      result.config.baseURL,
+      OPENROUTER_BASE_URL,
+      'switching to openrouter must reset base url to openrouter canonical, not carry over openai url',
+    )
+  })
+
   test('required api key input aborts when blank during auth recovery', async () => {
     const subDir = await mkdtemp(join(tmpDir, 'test10-'))
     process.env.XDG_CONFIG_HOME = subDir

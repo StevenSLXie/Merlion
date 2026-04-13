@@ -162,7 +162,11 @@ export async function runConfigWizard(
   // --- Base URL ---
   let baseURL: string
   if (provider === 'openrouter') {
-    const defaultBaseURL = existingConfig.baseURL?.trim() || OPENROUTER_BASE_URL
+    // When forcing a re-prompt (e.g. `merlion config`), always default to the
+    // canonical URL so a previous provider's URL is never carried over.
+    const defaultBaseURL = forceBaseURLPrompt
+      ? OPENROUTER_BASE_URL
+      : (existingConfig.baseURL?.trim() || OPENROUTER_BASE_URL)
     if (!forceBaseURLPrompt) {
       baseURL = defaultBaseURL
       ioInstance.write(`  Base URL: ${baseURL}\n`)
@@ -180,7 +184,9 @@ export async function runConfigWizard(
       }
     }
   } else if (provider === 'openai') {
-    const defaultBaseURL = existingConfig.baseURL?.trim() || OPENAI_BASE_URL
+    const defaultBaseURL = forceBaseURLPrompt
+      ? OPENAI_BASE_URL
+      : (existingConfig.baseURL?.trim() || OPENAI_BASE_URL)
     if (!forceBaseURLPrompt) {
       baseURL = defaultBaseURL
       ioInstance.write(`  Base URL: ${baseURL}\n`)

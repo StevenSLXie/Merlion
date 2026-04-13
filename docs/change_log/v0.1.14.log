@@ -1,0 +1,21 @@
+Version: 0.1.14
+Date: 2026-04-13
+
+Changes:
+- Reconfiguration flow hardened for first-run/auth-recovery setup:
+  - auth-failure wizard now requires explicit new API key input, preventing reuse of invalid keys.
+  - `merlion config` now truly re-prompts provider/baseURL/apiKey instead of silently keeping stale values.
+- Provider switch correctness fix:
+  - when switching provider during forced reconfigure, baseURL now defaults to the selected provider canonical endpoint,
+    avoiding cross-provider URL carryover.
+- Config-mode control-flow fix:
+  - if setup is aborted in `merlion config`, CLI now exits immediately instead of continuing with partial state.
+- Added regression coverage for:
+  - forced key replacement,
+  - optional keep-existing key behavior,
+  - required key input for auth-recovery,
+  - provider-switch baseURL reset semantics.
+
+Related commits:
+- fix(config): force re-prompt key/provider on reconfigure
+- fix(config): reset base URL defaults on provider switch during forced reconfigure

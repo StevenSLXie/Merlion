@@ -395,6 +395,7 @@ async function main(): Promise<void> {
     })
     if (!result.ok) {
       process.exitCode = 1
+      return
     }
     // If no task was given alongside `config`, just exit after setup.
     if (resolvedFlags.task === 'Continue from the existing session state.' && !resolvedFlags.resumeSessionId && !resolvedFlags.repl) {
