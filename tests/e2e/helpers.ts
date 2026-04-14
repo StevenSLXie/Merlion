@@ -44,7 +44,7 @@ export function makeProvider(): OpenAICompatProvider {
 
 /** Create a fresh tool registry with all built-in tools registered. */
 export function makeRegistry() {
-  return buildDefaultRegistry()
+  return buildDefaultRegistry({ mode: 'default' })
 }
 
 /**
@@ -138,7 +138,7 @@ export async function runAgent(
     baseURL: E2E_BASE_URL,
     model: E2E_MODEL,
   })
-  const registry = buildDefaultRegistry()
+  const registry = buildDefaultRegistry({ mode: 'default' })
   const usageTracker = createUsageTracker()
   const usageSamples: Array<{ prompt_tokens: number; completion_tokens: number; cached_tokens: number | null }> = []
 

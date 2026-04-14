@@ -178,7 +178,7 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
     baseURL: opts.baseURL,
     model: opts.model,
   })
-  const registry = buildDefaultRegistry()
+  const registry = buildDefaultRegistry({ mode: 'wechat' })
   const permissions = createPermissionStore(permissionResolution.mode)
   const sectionCache = createPromptSectionCache()
   const systemPrompt = (await buildMerlionSystemPrompt({ cwd: opts.cwd, sectionCache })).text

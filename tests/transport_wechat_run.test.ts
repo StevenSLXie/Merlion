@@ -7,6 +7,7 @@ import {
   renderWeixinReply,
   resolveWeixinPermissionMode,
 } from '../src/transport/wechat/run.ts'
+import { buildDefaultRegistry } from '../src/tools/builtin/index.ts'
 import type { RunLoopResult } from '../src/runtime/loop.ts'
 import type { ChatMessage, LoopTerminal } from '../src/types.ts'
 
@@ -120,4 +121,12 @@ test('isWeixinVerboseProgressEnabled enables on truthy values', () => {
   assert.equal(isWeixinVerboseProgressEnabled('1'), true)
   assert.equal(isWeixinVerboseProgressEnabled('true'), true)
   assert.equal(isWeixinVerboseProgressEnabled('yes'), true)
+})
+
+test('wechat mode registry excludes config tools from model-visible pool', () => {
+  const registry = buildDefaultRegistry({ mode: 'wechat' })
+  assert.equal(registry.get('config'), undefined)
+  assert.equal(registry.get('config_get'), undefined)
+  assert.equal(registry.get('config_set'), undefined)
+  assert.equal(registry.get('read_file')?.name, 'read_file')
 })

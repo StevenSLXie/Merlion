@@ -228,7 +228,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     baseURL: options.baseURL,
     model: options.model
   })
-  const registry = buildDefaultRegistry()
+  const registry = buildDefaultRegistry({ mode: 'default' })
   const toolSchemaSerialized = serializeToolSchema(registry)
   const permissions = createPermissionStore(options.permissionMode)
   const session = options.resumeSessionId
