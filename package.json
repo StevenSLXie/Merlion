@@ -1,6 +1,6 @@
 {
   "name": "merlion",
-  "version": "0.1.15",
+  "version": "0.1.23",
   "description": "A coding agent for OpenAI-compatible providers",
   "type": "module",
   "engines": {
@@ -33,6 +33,7 @@
   },
   "dependencies": {
     "@vscode/ripgrep": "^1.15.14",
-    "marked": "^16.4.2"
+    "marked": "^16.4.2",
+    "qrcode-terminal": "^0.12.0"
   }
 }

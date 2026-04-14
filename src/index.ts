@@ -32,6 +32,7 @@ import {
 } from './context/path_guidance.ts'
 import { runLoop } from './runtime/loop.ts'
 import { detectSuccessfulGitCommit, summarizeToolBatchMilestones } from './runtime/tool_batch_milestones.ts'
+import { buildIntentContract } from './runtime/intent_contract.ts'
 import {
   appendSessionMeta,
   appendTranscriptMessage,
@@ -58,6 +59,8 @@ interface CliFlags {
   repl: boolean
   verify: boolean
   configMode: boolean
+  wechatMode: boolean
+  wechatLogin: boolean
   task: string
 }
 
@@ -91,6 +94,8 @@ function parseArgs(argv: string[]): CliFlags | null | 'help' | 'version' {
   let repl = false
   let verify = process.env.MERLION_VERIFY === '1'
   let configMode = false
+  let wechatMode = false
+  let wechatLogin = false
   const taskParts: string[] = []
 
   while (args.length > 0) {
@@ -138,6 +143,14 @@ function parseArgs(argv: string[]): CliFlags | null | 'help' | 'version' {
       configMode = true
       continue
     }
+    if (arg === 'wechat' || arg === 'connect') {
+      wechatMode = true
+      continue
+    }
+    if (arg === '--login') {
+      wechatLogin = true
+      continue
+    }
     if (arg === '--version' || arg === '-v') {
       return 'version'
     }
@@ -145,7 +158,7 @@ function parseArgs(argv: string[]): CliFlags | null | 'help' | 'version' {
   }
 
   const task = taskParts.join(' ').trim()
-  if (task.length === 0 && !resumeSessionId && !repl && !configMode) return null
+  if (task.length === 0 && !resumeSessionId && !repl && !configMode && !wechatMode) return null
 
   return {
     task: task.length === 0 ? 'Continue from the existing session state.' : task,
@@ -156,13 +169,15 @@ function parseArgs(argv: string[]): CliFlags | null | 'help' | 'version' {
     resumeSessionId,
     repl,
     verify,
-    configMode
+    configMode,
+    wechatMode,
+    wechatLogin,
   }
 }
 
 function printUsage(): void {
   process.stdout.write(
-    'Usage: merlion [--model <id>] [--base-url <url>] [--cwd <path>] [--auto-allow|--auto-deny] [--resume <id>] [--repl] [--verify|--no-verify] [config] "<task>"\n'
+    'Usage: merlion [--model <id>] [--base-url <url>] [--cwd <path>] [--auto-allow|--auto-deny] [--resume <id>] [--repl] [--verify|--no-verify] [config] [wechat [--login]] "<task>"\n'
   )
 }
 
@@ -380,7 +395,9 @@ async function main(): Promise<void> {
     resumeSessionId: undefined,
     repl: true,
     verify: process.env.MERLION_VERIFY === '1',
-    configMode: false
+    configMode: false,
+    wechatMode: false,
+    wechatLogin: false,
   }
 
   // --- Config resolution ---
@@ -441,6 +458,20 @@ async function main(): Promise<void> {
     merged.apiKey = result.config.apiKey ?? ''
     merged.model = result.config.model ?? merged.model
     merged.baseURL = result.config.baseURL ?? merged.baseURL
+  }
+
+  // ── WeChat transport mode ─────────────────────────────────────────────────
+  if (resolvedFlags.wechatMode) {
+    const { runWeixinMode } = await import('./transport/wechat/run.ts')
+    await runWeixinMode({
+      model: merged.model,
+      baseURL: merged.baseURL,
+      apiKey: merged.apiKey,
+      cwd: resolvedFlags.cwd,
+      forceLogin: resolvedFlags.wechatLogin,
+      permissionMode: resolvedFlags.permissionMode,
+    })
+    return
   }
 
   const options: CliOptions = {
@@ -586,11 +617,13 @@ async function main(): Promise<void> {
     let sawWorkspaceMutationSignal = false
     let workingTreeSnapshotChanged = false
     let latestPromptObservability: PromptObservabilitySnapshot | undefined
+    const intentContract = buildIntentContract(prompt)
     const result = await runLoop({
       provider,
       registry,
       systemPrompt,
       userPrompt: prompt,
+      intentContract,
       cwd: options.cwd,
       maxTurns: 100,
       permissions,
@@ -794,7 +827,23 @@ async function main(): Promise<void> {
       },
       onSetDetailMode: (mode) => {
         ui.setToolDetailMode(mode)
-      }
+      },
+      onWechatLogin: async () => {
+        ui.stopSpinner()
+        process.stdout.write(
+          '[wechat] Starting WeChat login + listen mode. Press Ctrl+C to return to REPL.\n'
+        )
+        const { runWeixinMode } = await import('./transport/wechat/run.ts')
+        await runWeixinMode({
+          model: options.model,
+          baseURL: options.baseURL,
+          apiKey: options.apiKey,
+          cwd: options.cwd,
+          forceLogin: true,
+          permissionMode: options.permissionMode,
+        })
+        process.stdout.write('[wechat] Listener stopped. Back to REPL.\n')
+      },
     })
     ui.stopSpinner()
     return

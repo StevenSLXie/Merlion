@@ -1,15 +1,19 @@
 export type ReplInput =
   | { kind: 'exit' }
   | { kind: 'help' }
+  | { kind: 'wechat_login' }
   | { kind: 'empty' }
   | { kind: 'set_detail'; mode: 'full' | 'compact' }
   | { kind: 'prompt'; prompt: string }
+
+const REPL_HELP_TEXT = 'Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen)\n'
 
 export function parseReplInput(input: string): ReplInput {
   const trimmed = input.trim()
   if (trimmed === '') return { kind: 'empty' }
   if (trimmed === ':q' || trimmed === ':quit' || trimmed === ':exit') return { kind: 'exit' }
   if (trimmed === ':help') return { kind: 'help' }
+  if (/^[:/]wechat(?:\s+login)?$/i.test(trimmed)) return { kind: 'wechat_login' }
   const detailMatch = trimmed.match(/^:detail\s+(full|compact)$/i)
   if (detailMatch) {
     return { kind: 'set_detail', mode: detailMatch[1]!.toLowerCase() as 'full' | 'compact' }
@@ -29,11 +33,12 @@ export interface RunReplSessionOptions {
     prompt: string
   ) => Promise<void> | void
   onSetDetailMode?: (mode: 'full' | 'compact') => Promise<void> | void
+  onWechatLogin?: () => Promise<void> | void
 }
 
 export async function runReplSession(options: RunReplSessionOptions): Promise<void> {
   if (options.startupMessage !== false) {
-    options.write(options.startupMessage ?? 'REPL started. Commands: :help, :q, :detail full|compact\n')
+    options.write(options.startupMessage ?? `REPL started. ${REPL_HELP_TEXT}`)
   }
   const promptLabel = options.promptLabel ?? 'merlion> '
 
@@ -48,7 +53,19 @@ export async function runReplSession(options: RunReplSessionOptions): Promise<vo
       break
     }
     if (parsed.kind === 'help') {
-      options.write('Commands: :help, :q, :detail full|compact\n')
+      options.write(REPL_HELP_TEXT)
+      continue
+    }
+    if (parsed.kind === 'wechat_login') {
+      if (!options.onWechatLogin) {
+        options.write('[wechat] command unavailable in this mode.\n')
+        continue
+      }
+      try {
+        await options.onWechatLogin()
+      } catch (error) {
+        options.write(`[wechat] login failed: ${String(error)}\n`)
+      }
       continue
     }
     if (parsed.kind === 'set_detail') {

@@ -6,7 +6,7 @@ import { validateAndResolveWorkspacePath } from './fs_common.ts'
 
 export const writeFileTool: ToolDefinition = {
   name: 'write_file',
-  description: 'Write file content (create or overwrite).',
+  description: 'Write (overwrite) an entire file. Prefer edit_file for modifying existing files — only use write_file when you intend to replace the whole file or create a new one.',
   parameters: {
     type: 'object',
     properties: {

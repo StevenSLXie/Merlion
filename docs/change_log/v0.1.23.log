@@ -1,0 +1,18 @@
+Version: 0.1.23
+Date: 2026-04-14
+
+Changes:
+- WeChat workflow polish:
+  - REPL `:wechat` / `/wechat` command keeps login + listen behavior in sync with WeChat mode usage.
+  - WeChat output defaults to final-reply-only mode; turn-by-turn progress remains opt-in.
+  - transport reliability hardening remains in place for poll/send edge cases.
+- Tool guidance tuning:
+  - improve `write_file` description to emphasize full overwrite intent.
+  - improve `edit_file` description to encourage targeted edits over full rewrites.
+- Stability:
+  - harden a flaky filesystem integration test path (`tools_fs_pack`) to reduce intermittent publish-time failures.
+- Docs:
+  - refresh README wording around WeChat usage and progress behavior.
+
+Related commits:
+- chore(release): bundle latest workspace changes and publish patch

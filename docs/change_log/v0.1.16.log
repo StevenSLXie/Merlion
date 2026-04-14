@@ -1,0 +1,26 @@
+Version: 0.1.16
+Date: 2026-04-13
+
+Changes:
+- WeChat transport hardening:
+  - fix(sender queue): keep per-sender FIFO queue instead of dropping in-flight follow-up messages.
+  - add bounded queue policy (`MAX_PENDING_PER_SENDER=20`) with explicit oldest-drop signal.
+  - refactor queue logic into reusable `src/transport/wechat/sender_queue.ts`.
+- WeChat API timeout semantics:
+  - `sendMessage` now propagates `AbortError` (no longer treated as success).
+  - `getUpdates` keeps explicit long-poll timeout fallback behavior.
+  - `pollQRStatus` now falls back to `wait` only on timeout, and throws non-timeout network errors.
+- WeChat QR login resilience:
+  - add bounded retry path for transient poll errors with clear failure message after retries.
+  - handle `scaned_but_redirect` by switching QR-status polling base URL to `redirect_host`,
+    preventing scan-confirm flow from stalling until QR expiry.
+- Documentation refresh:
+  - rewrite `README.md` to highlight npm-first onboarding and WeChat "vibe coding" flow.
+  - include `:wechat` / `/wechat` QR login trigger in REPL guidance.
+- Tests:
+  - add `tests/transport_wechat_sender_queue.test.ts`.
+  - extend `tests/transport_wechat_api.test.ts` for timeout/error boundary behavior.
+
+Related commits:
+- feat(wechat): queue hardening + timeout/error boundary fixes
+- docs(readme): npm-first and wechat vibe-coding narrative refresh

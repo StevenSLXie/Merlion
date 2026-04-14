@@ -52,7 +52,7 @@ function buildEditDiffHunk(original: string, oldString: string, newString: strin
 
 export const editFileTool: ToolDefinition = {
   name: 'edit_file',
-  description: 'Edit file by replacing exact text. Default mode requires unique match; set replace_all=true to replace every match.',
+  description: 'Edit an existing file by replacing exact text. Prefer this over write_file when modifying existing files. Default mode requires a unique match; set replace_all=true to replace every occurrence.',
   parameters: {
     type: 'object',
     properties: {

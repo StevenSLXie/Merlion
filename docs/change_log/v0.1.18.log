@@ -1,0 +1,21 @@
+Version: 0.1.18
+Date: 2026-04-13
+
+Changes:
+- WeChat long-poll stability:
+  - treat HTTP 524 on `POST /ilink/bot/getupdates` as normal empty long-poll response.
+  - avoid repeated `poll exception` noise for expected gateway timeout behavior.
+- REPL WeChat flow:
+  - `:wechat` / `/wechat` now performs QR login and enters WeChat listening mode directly.
+  - pressing `Ctrl+C` exits listener and returns to REPL.
+- WeChat approval behavior:
+  - add explicit permission mode handling in WeChat mode.
+  - support `--auto-deny` for risky-tool blocking in WeChat transport.
+  - when permission mode is `interactive`, show a clear fallback notice and use `--auto-allow`.
+- Docs:
+  - update README to clarify WeChat reply surface (final answer only), `:wechat` behavior, and approval-mode semantics.
+
+Related commits:
+- fix(wechat): handle getupdates 524 as empty long-poll response
+- feat(repl): :wechat enters listen mode after login
+- docs(readme): clarify wechat message/approval behavior

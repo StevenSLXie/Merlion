@@ -1,75 +1,82 @@
 # Merlion
 
-Merlion is a CLI coding agent focused on:
-- balancing engineering quality and runtime cost through agent harness
-- high coding quality (benchmarking Claude Code / Codex style workflows)
-- provider-agnostic OpenAI-compatible runtime (`openrouter` / `openai` / custom URL)
+Merlion is a coding agent you can drive from terminal or WeChat.
+It stays engineering-oriented (tools, session memory, verifiable edits), while keeping setup simple.
 
-## Quick Start (Recommended)
-
-### Option A: Install from npm (recommended)
+## Install from npm (Recommended)
 
 ```bash
 npm install -g merlion
-# first run will guide provider/key/model setup interactively
 merlion
 ```
 
-If you prefer local install in a project:
+Project-local install:
 
 ```bash
 npm install merlion
-# first run will guide provider/key/model setup interactively
 npx merlion
 ```
 
-### Option B: Run from source
+On first run, Merlion opens a setup wizard for provider/key/model.
+
+## Why Merlion
+
+- OpenAI-compatible runtime (`openrouter` / `openai` / custom base URL)
+- Tool-first coding loop (read/search/edit/bash/git + verification flow)
+- Session continuity (`--resume`) with project orientation context
+- WeChat transport mode: scan once, then continue coding conversations from your phone
+
+## WeChat Vibe Coding Mode
+
+Use your WeChat as the agent inbox.
 
 ```bash
-git clone https://github.com/StevenSLXie/Merlion.git
-cd Merlion
-npm install
-# first run will guide provider/key/model setup interactively
-npm run merlion
+# first time or token refresh
+merlion wechat --login
+
+# daily use
+merlion wechat
 ```
 
-Optional non-interactive env configuration:
+Inside REPL, you can also trigger QR login directly:
 
-```bash
-export MERLION_PROVIDER=openrouter   # openrouter | openai | custom
-export MERLION_API_KEY=your_key_here
-export MERLION_MODEL=qwen/qwen3-coder
-export MERLION_BASE_URL=https://openrouter.ai/api/v1
-merlion
+```text
+:wechat
+/wechat
 ```
+
+`:`/`/wechat` in REPL now performs login and immediately enters listening mode (Ctrl+C returns to REPL).
+
+Credentials are stored at `~/.config/merlion/wechat.json`.
+WeChat chat receives final turn replies (plus concise error hints), not internal tool logs.
+By default WeChat sends only final replies (plus concise error hints).
+If you want turn-by-turn progress, set `MERLION_WECHAT_PROGRESS=1`.
+Set `MERLION_WECHAT_PROGRESS_VERBOSE=1` to include extra per-turn tool-batch summaries.
+Progress updates are capped per request (`MERLION_WECHAT_MAX_PROGRESS_UPDATES`, default `10`) and auto-silenced on server throttling.
+If a complex task hits turn budget, increase `MERLION_WECHAT_MAX_TURNS` (default `50`).
+Interactive terminal approvals are not available in WeChat mode; default falls back to `--auto-allow`.
+Use `--auto-deny` if you want risky tools to be blocked.
 
 ## Common Usage
 
 ```bash
-# one-shot task
+# one-shot
 merlion "read src/index.ts and summarize architecture"
 
-# interactive mode
+# interactive REPL
 merlion
 
 # continue previous session
 merlion --resume <session-id>
 ```
 
-## AGENTS Map Automation
+## AGENTS/MERLION Map Automation
 
-Merlion supports layered `MERLION.md` maps (compatible with `AGENTS.md`) with commit-time auto maintenance.
-For existing repos without root guidance, Merlion also auto-bootstraps
-fallback maps under `.merlion/maps` on first new session.
+Merlion supports layered `MERLION.md`/`AGENTS.md` guidance and auto-maintained `AUTO` sections.
 
 ```bash
-# enable repository hooks once
 npm run hooks:install
-
-# update AGENTS AUTO blocks from staged files
 npm run agents:update:staged
-
-# validate AGENTS contract (MANUAL/AUTO markers + required auto fields)
 npm run agents:lint
 ```
 
@@ -77,73 +84,71 @@ npm run agents:lint
 
 # Merlion（中文）
 
-Merlion 是一个 CLI coding agent，核心目标是：
-- 代码质量对标 Claude Code / Codex 这类工程化工作流
-- 通过 agent harness 实现质量与成本的最优平衡
-- 支持 OpenAI-compatible provider（`openrouter` / `openai` / 自定义 URL）
+Merlion 是一个可以在终端和微信两端协同使用的 coding agent。
+它强调工程可落地：工具调用、会话记忆、可验证改动。
 
-## 快速开始（推荐）
-
-### 方式 A：从 npm 安装（推荐）
+## npm 安装（推荐）
 
 ```bash
 npm install -g merlion
-# 首次运行会交互引导 provider/key/model 配置
 merlion
 ```
 
-如果你更希望在项目内本地安装：
+项目内本地安装：
 
 ```bash
 npm install merlion
-# 首次运行会交互引导 provider/key/model 配置
 npx merlion
 ```
 
-### 方式 B：拉源码运行
+首次运行会自动进入配置向导（provider / key / model）。
+
+## Merlion 的独特点
+
+- 兼容 OpenAI 协议（`openrouter` / `openai` / 自定义 base URL）
+- 面向工程任务的工具链（读搜改跑 + verify）
+- 会话可恢复（`--resume`），并带项目上下文导向
+- 微信接入：扫码登录后，可直接在手机上持续“vibe coding”
+
+## 微信模式（亮点）
 
 ```bash
-git clone https://github.com/StevenSLXie/Merlion.git
-cd Merlion
-npm install
-# 首次运行会交互引导 provider/key/model 配置
-npm run merlion
+# 首次登录或 token 过期后
+merlion wechat --login
+
+# 日常直接连接
+merlion wechat
 ```
 
-也可以用环境变量非交互配置：
+在 REPL 里也可以直接弹二维码登录：
 
-```bash
-export MERLION_PROVIDER=openrouter   # openrouter | openai | custom
-export MERLION_API_KEY=your_key_here
-export MERLION_MODEL=qwen/qwen3-coder
-export MERLION_BASE_URL=https://openrouter.ai/api/v1
-merlion
+```text
+:wechat
+/wechat
 ```
+
+REPL 里的 `:wechat` / `/wechat` 现在会“登录后直接进入监听模式”（按 `Ctrl+C` 返回 REPL）。
+
+凭据保存位置：`~/.config/merlion/wechat.json`。
+微信端默认只接收每轮最终答复（外加简短错误提示），不会推送内部工具日志。
+如需开启逐轮进度推送，可设置 `MERLION_WECHAT_PROGRESS=1`。
+如需更细粒度（含每轮工具批次汇总），可设置 `MERLION_WECHAT_PROGRESS_VERBOSE=1`。
+每次请求的进度推送有上限（`MERLION_WECHAT_MAX_PROGRESS_UPDATES`，默认 `10`），遇到服务端限流会自动静默后续进度。
+复杂任务若触达轮次上限，可调大 `MERLION_WECHAT_MAX_TURNS`（默认 `50`）。
+微信模式不支持终端交互式审批；默认会回退到 `--auto-allow`，如需严格阻止高风险工具请使用 `--auto-deny`。
 
 ## 常用命令
 
 ```bash
-# 单次任务
 merlion "read src/index.ts and summarize architecture"
-
-# 进入交互模式
 merlion
-
-# 恢复历史会话
 merlion --resume <session-id>
 ```
 
-## AGENTS 地图自动维护
-
-Merlion 支持分层 `MERLION.md` 地图（兼容 `AGENTS.md`），并可在提交时自动更新 `AUTO` 区块。
+## AGENTS / MERLION 地图自动维护
 
 ```bash
-# 首次启用仓库 hooks
 npm run hooks:install
-
-# 根据 staged 改动更新 AGENTS AUTO 区块
 npm run agents:update:staged
-
-# 校验 AGENTS 协议（MANUAL/AUTO 标记 + 必填自动区块）
 npm run agents:lint
 ```

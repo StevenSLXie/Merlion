@@ -212,7 +212,7 @@ test('loop recovers empty stop after tool calls by requesting final summary', as
   assert.equal(result.terminal, 'completed')
   assert.match(result.finalText, /Edited tests\/executor\.test\.ts/)
   assert.equal(
-    result.state.messages.some((m) => m.role === 'user' && (m.content ?? '').includes('Provide a concise final summary')),
+    result.state.messages.some((m) => m.role === 'user' && /final summary/i.test(m.content ?? '')),
     true
   )
 })

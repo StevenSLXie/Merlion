@@ -1,0 +1,20 @@
+Version: 0.1.21
+Date: 2026-04-14
+
+Changes:
+- WeChat `errcode=-2` throttle handling:
+  - detect server throttle (`errcode=-2`) as non-retriable for send path.
+  - auto-silence remaining progress updates for the current request after first throttle hit.
+  - skip fallback retry storm when send path is already throttled.
+- Progress safeguards:
+  - cap per-request progress pushes via `MERLION_WECHAT_MAX_PROGRESS_UPDATES` (default `10`).
+  - keep per-turn progress model, but prevent unbounded send spam under long runs.
+- API error typing:
+  - add `WeixinApiError` for API-level non-zero `ret/errcode`.
+  - export `WECHAT_SEND_RATE_LIMIT_ERRCODE` constant.
+- Docs:
+  - document progress cap and throttle auto-silence behavior.
+
+Related commits:
+- fix(wechat): stop retry storm on errcode -2
+- feat(wechat): per-request progress cap and throttle silencing

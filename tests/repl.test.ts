@@ -7,6 +7,8 @@ test('parseReplInput handles commands and prompt', () => {
   assert.deepEqual(parseReplInput(':q'), { kind: 'exit' })
   assert.deepEqual(parseReplInput(':quit'), { kind: 'exit' })
   assert.deepEqual(parseReplInput(':help'), { kind: 'help' })
+  assert.deepEqual(parseReplInput(':wechat'), { kind: 'wechat_login' })
+  assert.deepEqual(parseReplInput('/wechat'), { kind: 'wechat_login' })
   assert.deepEqual(parseReplInput(':detail compact'), { kind: 'set_detail', mode: 'compact' })
   assert.deepEqual(parseReplInput(':detail FULL'), { kind: 'set_detail', mode: 'full' })
   assert.deepEqual(parseReplInput('   '), { kind: 'empty' })
@@ -14,10 +16,11 @@ test('parseReplInput handles commands and prompt', () => {
 })
 
 test('runReplSession loops prompts and exits', async () => {
-  const inputs = ['first task', ':help', ':detail compact', 'second task', ':q']
+  const inputs = ['first task', ':wechat', ':help', ':detail compact', 'second task', ':q']
   const outputs: string[] = []
   const prompts: string[] = []
   const detailModes: Array<'full' | 'compact'> = []
+  let wechatLoginCalls = 0
 
   await runReplSession({
     readLine: async () => inputs.shift() ?? null,
@@ -31,14 +34,18 @@ test('runReplSession loops prompts and exits', async () => {
     onSetDetailMode: (mode) => {
       detailModes.push(mode)
     },
+    onWechatLogin: () => {
+      wechatLoginCalls += 1
+    },
     promptLabel: 'merlion> '
   })
 
   assert.deepEqual(prompts, ['first task', 'second task'])
   assert.deepEqual(detailModes, ['compact'])
+  assert.equal(wechatLoginCalls, 1)
   assert.equal(outputs.some((t) => t.includes('done:first task')), true)
   assert.equal(outputs.some((t) => t.includes('done:second task')), true)
-  assert.equal(outputs.some((t) => t.includes('Commands: :help, :q, :detail full|compact')), true)
+  assert.equal(outputs.some((t) => t.includes('Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen)')), true)
   assert.equal(outputs.some((t) => t.includes('[ui] tool detail mode = compact')), true)
 })
 

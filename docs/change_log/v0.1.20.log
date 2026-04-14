@@ -1,0 +1,21 @@
+Version: 0.1.20
+Date: 2026-04-13
+
+Changes:
+- WeChat delivery reliability:
+  - `sendmessage` now validates API-level `ret/errcode` (not only HTTP status).
+  - non-zero API return now throws explicit error with errcode/errmsg.
+  - add retry for outgoing WeChat messages to reduce transient send loss.
+- WeChat progress behavior:
+  - default progress push is now one concise message per turn.
+  - tool-batch detail progress moved behind `MERLION_WECHAT_PROGRESS_VERBOSE=1`.
+  - progress updates are sent without `context_token` to reduce thread-linked delivery drops.
+- Tests:
+  - add API test for `sendMessage` non-zero `ret` handling.
+  - extend run-mode tests for verbose progress toggle parsing.
+- Docs:
+  - update README and feature notes with `MERLION_WECHAT_PROGRESS_VERBOSE`.
+
+Related commits:
+- fix(wechat): validate sendmessage ret/errcode and retry sends
+- feat(wechat): default one-progress-per-turn + verbose toggle

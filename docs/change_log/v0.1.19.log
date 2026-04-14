@@ -1,0 +1,22 @@
+Version: 0.1.19
+Date: 2026-04-13
+
+Changes:
+- WeChat response reliability:
+  - replace `(no response)` fallback with terminal-aware reply rendering.
+  - when `max_turns_exceeded` and no final text exists, return a readable guidance message with turn count.
+  - when `model_error` has no final text, return a clear retry hint.
+  - raise WeChat loop turn budget default from 30 to 50.
+  - add `MERLION_WECHAT_MAX_TURNS` for turn-budget tuning.
+- WeChat progress updates:
+  - push concise per-turn progress messages to WeChat by default.
+  - include tool-batch completion summary (success/failure counts) per turn.
+  - add `MERLION_WECHAT_PROGRESS=0` to disable progress push.
+- Tests:
+  - add unit coverage for WeChat reply rendering and progress-toggle parsing.
+- Docs:
+  - update README and feature notes for progress push and max-turn tuning.
+
+Related commits:
+- fix(wechat): terminal-aware fallback reply + higher default max turns
+- feat(wechat): per-turn progress push with env toggle

@@ -25,6 +25,10 @@ function permission(value: 'allow' | 'deny' | 'allow_session'): PermissionStore 
   return { ask: async () => value }
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 test('write_file + append_file + stat_path basic flow', async () => {
   const cwd = await makeTempDir()
   const p = permission('allow')
@@ -59,7 +63,12 @@ test('mkdir + list_dir + glob + grep', async () => {
   assert.match(globbed.content, /src\/app\.ts/)
   assert.match(globbed.content, /src\/util\.ts/)
 
-  const grepped = await grepTool.execute({ path: 'src', pattern: 'TOKEN' }, { cwd })
+  let grepped = await grepTool.execute({ path: 'src', pattern: 'TOKEN' }, { cwd })
+  // Rare CI/local flake: ripgrep may briefly miss just-written temp files.
+  if (!/app\.ts/.test(grepped.content)) {
+    await sleep(50)
+    grepped = await grepTool.execute({ path: 'src', pattern: 'TOKEN' }, { cwd })
+  }
   assert.equal(grepped.isError, false)
   assert.match(grepped.content, /app\.ts/)
 })

@@ -13,6 +13,7 @@ export interface RunLoopOptions {
   registry: ToolRegistry
   systemPrompt: string
   userPrompt: string
+  intentContract?: string
   cwd: string
   permissions?: PermissionStore
   maxTurns?: number
@@ -120,6 +121,61 @@ function formatProviderErrorText(error: unknown): string {
   }
   if (raw !== '') return raw
   return 'Model provider request failed.'
+}
+
+function buildRequestMessages(
+  messages: ChatMessage[],
+  intentContract?: string,
+): ChatMessage[] {
+  const contract = intentContract?.trim()
+  if (!contract) return messages
+  return [
+    ...messages,
+    {
+      role: 'system',
+      content:
+        'Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\n' +
+        contract,
+    },
+  ]
+}
+
+async function tryGenerateNaturalSummary(
+  options: RunLoopOptions,
+  state: LoopState,
+): Promise<string | null> {
+  const summaryRequest: ChatMessage = {
+    role: 'user',
+    content:
+      'Write a natural-language summary of what you completed in this run. ' +
+      'Focus on concrete outcomes and mention unfinished parts only if needed. ' +
+      'Do not call tools.',
+  }
+
+  state.messages.push(summaryRequest)
+  await options.onMessageAppended?.(summaryRequest)
+
+  const requestMessages = buildRequestMessages(state.messages, options.intentContract)
+
+  try {
+    const assistant = await withRetry(
+      () => options.provider.complete(requestMessages, []),
+      { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 5_000 },
+    )
+    const assistantMessage: ChatMessage = {
+      role: 'assistant',
+      content: assistant.content,
+      tool_calls: assistant.tool_calls,
+    }
+    state.messages.push(assistantMessage)
+    await options.onMessageAppended?.(assistantMessage)
+    await options.onUsage?.(assistant.usage)
+
+    const text = (assistant.content ?? '').trim()
+    return text === '' ? null : text
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -340,6 +396,11 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
 
   for (;;) {
     if (state.turnCount >= maxTurns) {
+      if (finalText.trim() === '') {
+        finalText =
+          (await tryGenerateNaturalSummary(options, state)) ??
+          'Reached max turns before producing a final summary.'
+      }
       return { terminal: 'max_turns_exceeded', finalText, state }
     }
 
@@ -355,12 +416,13 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
           state.hasAttemptedReactiveCompact = true
         }
       }
+      const requestMessages = buildRequestMessages(state.messages, options.intentContract)
       await options.onPromptObservability?.(
-        promptObservability.record(state.turnCount + 1, state.messages)
+        promptObservability.record(state.turnCount + 1, requestMessages)
       )
       await options.onTurnStart?.({ turn: state.turnCount + 1 })
       assistant = await withRetry(
-        () => options.provider.complete(state.messages, options.registry.getAll()),
+        () => options.provider.complete(requestMessages, options.registry.getAll()),
         { maxAttempts: 5, baseDelayMs: 200, maxDelayMs: 32_000 },
       )
     } catch (error) {
@@ -524,13 +586,15 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         const summaryRequest: ChatMessage = {
           role: 'user',
           content:
-            'You just finished tool execution. Provide a concise final summary of what changed and any next steps.',
+            'You just finished tool execution. Please provide a natural-language final summary for this request.',
         }
         state.messages.push(summaryRequest)
         await options.onMessageAppended?.(summaryRequest)
         continue
       }
-      finalText = 'Task completed via tool execution, but the model returned no final summary.'
+      finalText =
+        (await tryGenerateNaturalSummary(options, state)) ??
+        'Task completed via tool execution, but the model returned no final summary.'
       return { terminal: 'completed', finalText, state }
     }
     if (text.trim() !== '') {

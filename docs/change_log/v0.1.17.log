@@ -1,0 +1,22 @@
+Version: 0.1.17
+Date: 2026-04-13
+
+Changes:
+- WeChat login flow reliability:
+  - fix QR status polling for `scaned_but_redirect` by switching polling host to `redirect_host`.
+  - keep QR polling timeout (`AbortError`) as non-fatal `wait`, while surfacing non-timeout network errors.
+  - add bounded retry for transient QR polling failures with clearer CLI feedback.
+- WeChat message handling hardening:
+  - add per-sender FIFO queue to avoid dropping follow-up messages while one request is in-flight.
+  - add per-sender pending cap with oldest-drop protection and queue status logs.
+- WeChat API semantics:
+  - `sendMessage` no longer treats timeout as success; timeout now propagates as error.
+- Docs:
+  - refresh README with npm-first onboarding and WeChat vibe-coding flow (`merlion wechat`, `:wechat`, `/wechat`).
+- Tests:
+  - add sender queue unit tests.
+  - extend WeChat API tests for timeout/error/redirect boundary cases.
+
+Related commits:
+- fix(wechat): qr redirect polling + queue hardening + timeout semantics
+- docs(readme): npm-first and wechat workflow refresh

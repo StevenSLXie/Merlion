@@ -1,0 +1,16 @@
+Version: 0.1.22
+Date: 2026-04-14
+
+Changes:
+- WeChat progress push behavior:
+  - disable per-turn progress push by default.
+  - WeChat now sends final reply only unless explicitly enabled.
+  - `MERLION_WECHAT_PROGRESS=1` enables per-turn progress.
+  - `MERLION_WECHAT_PROGRESS_VERBOSE=1` keeps tool-batch detail when progress mode is enabled.
+- Tests:
+  - update unit tests for new progress default.
+- Docs:
+  - update README and feature notes to reflect final-reply-only default.
+
+Related commits:
+- feat(wechat): default final-reply-only, opt-in progress push
