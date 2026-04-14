@@ -1,0 +1,21 @@
+Version: 0.1.24
+Date: 2026-04-15
+
+Changes:
+- Runtime structure:
+  - split the CLI entry path into thin `index.ts` wiring plus dedicated bootstrap, runner, and sink modules.
+  - keep REPL, one-shot runs, verify flow, and WeChat mode on the same runtime backbone.
+- Tooling architecture:
+  - add builtin tool catalog and tool pool assembly so runtime-visible tools are selected before schema injection.
+  - add first-pass tool metadata (`source`, search hints, read/write and interaction signals) and route `tool_search` through that metadata.
+  - make WeChat mode consume a filtered tool pool instead of the default full builtin exposure.
+- Validation:
+  - add unit coverage for bootstrap parsing, config resolution, CLI sink forwarding, tool pool behavior, and metadata-backed tool search.
+  - verify multiple networked E2E scenarios against OpenRouter with `moonshotai/kimi-k2.5`.
+- Repo hygiene:
+  - ignore the full `bench/` directory in git.
+
+Related commits:
+- refactor(runtime): split bootstrap runner and sinks
+- refactor(tools): add catalog and tool pool assembly
+- refactor(tools): expand tool metadata contract

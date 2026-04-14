@@ -1,6 +1,6 @@
 {
   "name": "merlion",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "description": "A coding agent for OpenAI-compatible providers",
   "type": "module",
   "engines": {
@@ -19,6 +19,8 @@
     "test": "node --experimental-strip-types --test 'tests/*.test.ts'",
     "test:e2e": "node --experimental-strip-types --test --test-concurrency=1 'tests/e2e/*.test.ts'",
     "test:all": "node --experimental-strip-types --test --test-concurrency=1 'tests/**/*.test.ts'",
+    "bench:phase0": "node --experimental-strip-types scripts/bench/run_phase0.ts",
+    "bench:analyze": "node --experimental-strip-types scripts/bench/analyze_phase0.ts",
     "typecheck": "tsc --noEmit",
     "merlion": "node --experimental-strip-types src/index.ts",
     "agents:update": "node --experimental-strip-types scripts/agents/update.ts",
