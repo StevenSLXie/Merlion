@@ -384,7 +384,13 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     listTools: () =>
       options.registry.getAll().map((tool) => ({
         name: tool.name,
-        description: tool.description
+        description: tool.description,
+        source: tool.source,
+        searchHint: tool.searchHint,
+        isReadOnly: tool.isReadOnly,
+        isDestructive: tool.isDestructive,
+        requiresUserInteraction: tool.requiresUserInteraction,
+        requiresTrustedWorkspace: tool.requiresTrustedWorkspace,
       })),
   }
 

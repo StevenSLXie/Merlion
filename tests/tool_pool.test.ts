@@ -6,7 +6,8 @@ import { assembleToolPool } from '../src/tools/pool.ts'
 import { buildDefaultRegistry, buildRegistryFromPool } from '../src/tools/builtin/index.ts'
 
 test('builtin catalog returns stable tool list', () => {
-  const names = getBuiltinToolCatalog().map((tool) => tool.name)
+  const catalog = getBuiltinToolCatalog()
+  const names = catalog.map((tool) => tool.name)
   assert.deepEqual(names, [
     'read_file',
     'list_dir',
@@ -36,6 +37,9 @@ test('builtin catalog returns stable tool list', () => {
     'config_set',
     'sleep',
   ])
+  assert.equal(catalog.find((tool) => tool.name === 'read_file')?.source, 'builtin')
+  assert.equal(catalog.find((tool) => tool.name === 'read_file')?.isReadOnly, true)
+  assert.equal(catalog.find((tool) => tool.name === 'delete_file')?.isDestructive, true)
 })
 
 test('tool pool default mode returns builtin set', () => {
@@ -48,6 +52,8 @@ test('tool pool wechat mode excludes config tools', () => {
   assert.equal(pooled.includes('config'), false)
   assert.equal(pooled.includes('config_get'), false)
   assert.equal(pooled.includes('config_set'), false)
+  assert.equal(pooled.includes('bash'), false)
+  assert.equal(pooled.includes('run_script'), false)
   assert.equal(pooled.includes('read_file'), true)
   assert.equal(pooled.includes('tool_search'), true)
 })

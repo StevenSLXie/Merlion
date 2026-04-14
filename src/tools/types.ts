@@ -20,6 +20,7 @@ export interface EditDiffUiPayload {
 }
 
 export type ToolUiPayload = EditDiffUiPayload
+export type ToolSource = 'builtin' | 'mcp' | 'extension'
 
 export interface ToolResult {
   content: string
@@ -33,16 +34,33 @@ export interface PermissionStore {
   ask: (tool: string, description: string) => Promise<PermissionDecision>
 }
 
+export interface ToolSummary {
+  name: string
+  description: string
+  source?: ToolSource
+  searchHint?: string
+  isReadOnly?: boolean
+  isDestructive?: boolean
+  requiresUserInteraction?: boolean
+  requiresTrustedWorkspace?: boolean
+}
+
 export interface ToolContext {
   cwd: string
   sessionId?: string
   permissions?: PermissionStore
-  listTools?: () => Array<{ name: string; description: string }>
+  listTools?: () => ToolSummary[]
 }
 
 export interface ToolDefinition {
   name: string
   description: string
+  source?: ToolSource
+  searchHint?: string
+  isReadOnly?: boolean
+  isDestructive?: boolean
+  requiresUserInteraction?: boolean
+  requiresTrustedWorkspace?: boolean
   parameters: {
     type: 'object'
     properties: Record<string, unknown>

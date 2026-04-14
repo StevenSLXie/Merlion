@@ -26,8 +26,8 @@ test('tool_search lists tools and supports query', async () => {
   const all = await toolSearchTool.execute({}, {
     cwd: process.cwd(),
     listTools: () => [
-      { name: 'read_file', description: 'Read files' },
-      { name: 'edit_file', description: 'Edit files' }
+      { name: 'read_file', description: 'Read files', source: 'builtin', searchHint: 'read file contents' },
+      { name: 'edit_file', description: 'Edit files', source: 'builtin', searchHint: 'replace text in file' }
     ]
   })
   assert.equal(all.isError, false)
@@ -35,8 +35,8 @@ test('tool_search lists tools and supports query', async () => {
   const filtered = await toolSearchTool.execute({ query: 'edit' }, {
     cwd: process.cwd(),
     listTools: () => [
-      { name: 'read_file', description: 'Read files' },
-      { name: 'edit_file', description: 'Edit files' }
+      { name: 'read_file', description: 'Read files', source: 'builtin', searchHint: 'read file contents' },
+      { name: 'edit_file', description: 'Edit files', source: 'builtin', searchHint: 'replace text in file' }
     ]
   })
   assert.equal(filtered.isError, false)
@@ -48,13 +48,27 @@ test('tool_search lists tools and supports query', async () => {
     {
       cwd: process.cwd(),
       listTools: () => [
-        { name: 'read_file', description: 'Read files' },
-        { name: 'edit_file', description: 'Edit files' }
+        { name: 'read_file', description: 'Read files', source: 'builtin', searchHint: 'read file contents' },
+        { name: 'edit_file', description: 'Edit files', source: 'builtin', searchHint: 'replace text in file' }
       ]
     }
   )
   assert.equal(selected.isError, false)
   assert.equal(selected.content.includes('read_file'), true)
+})
+
+test('tool_search matches searchHint when query is not in tool name', async () => {
+  const result = await toolSearchTool.execute({ query: 'replace text' }, {
+    cwd: process.cwd(),
+    listTools: () => [
+      { name: 'read_file', description: 'Read files', source: 'builtin', searchHint: 'read file contents' },
+      { name: 'edit_file', description: 'Edit files', source: 'builtin', searchHint: 'replace text in file' }
+    ]
+  })
+
+  assert.equal(result.isError, false)
+  assert.match(result.content, /edit_file/)
+  assert.equal(result.content.includes('read_file'), false)
 })
 
 test('list_scripts and run_script work against package.json', async () => {

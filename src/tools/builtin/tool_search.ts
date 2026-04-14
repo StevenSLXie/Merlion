@@ -8,17 +8,20 @@ function parseMaxResults(value: unknown): number {
   return parsed
 }
 
-function scoreTool(query: string, name: string, description: string): number {
+function scoreTool(query: string, name: string, description: string, searchHint?: string): number {
   const q = query.toLowerCase()
   const n = name.toLowerCase()
   const d = description.toLowerCase()
+  const h = searchHint?.toLowerCase() ?? ''
   if (n === q) return 1_000
   let score = 0
   if (n.includes(q)) score += 100
   if (d.includes(q)) score += 40
+  if (h.includes(q)) score += 60
   for (const term of q.split(/\s+/).filter((t) => t !== '')) {
     if (n.includes(term)) score += 10
     if (d.includes(term)) score += 3
+    if (h.includes(term)) score += 5
   }
   return score
 }
@@ -51,7 +54,7 @@ export const toolSearchTool: ToolDefinition = {
     const filtered = query === ''
       ? tools
       : tools
-        .map((tool) => ({ tool, score: scoreTool(query, tool.name, tool.description) }))
+        .map((tool) => ({ tool, score: scoreTool(query, tool.name, tool.description, tool.searchHint) }))
         .filter((item) => item.score > 0)
         .sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name))
         .map((item) => item.tool)

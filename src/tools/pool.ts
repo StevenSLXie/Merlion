@@ -27,7 +27,8 @@ function normalizeNameList(values?: string[]): Set<string> | null {
 
 function passesMode(tool: ToolDefinition, mode: ToolPoolMode): boolean {
   if (mode === 'wechat') {
-    return !WECHAT_EXCLUDED_TOOLS.has(tool.name)
+    if (WECHAT_EXCLUDED_TOOLS.has(tool.name)) return false
+    if (tool.requiresUserInteraction === true) return false
   }
   return true
 }
