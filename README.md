@@ -1,7 +1,7 @@
 # Merlion
 
-Merlion is a coding agent you can drive from terminal or WeChat.
-It stays engineering-oriented (tools, session memory, verifiable edits), while keeping setup simple.
+Merlion is a CLI coding agent that helps you get real work done.
+You can drive it from your terminal or from WeChat, and point it at basically any OpenAI-compatible model you want.
 
 ## Install from npm (Recommended)
 
@@ -21,12 +21,11 @@ On first run, Merlion opens a setup wizard for provider/key/model.
 
 ## Why Merlion
 
-- OpenAI-compatible runtime (`openrouter` / `openai` / custom base URL)
-- Tool-first coding loop (read/search/edit/bash/git + verification flow)
-- Session continuity (`--resume`) with project orientation context
-- WeChat transport mode: scan once, then continue coding conversations from your phone
+- Works from terminal or WeChat
+- Works with OpenAI-compatible providers and custom model endpoints
+- Stays simple to set up and use
 
-## WeChat Vibe Coding Mode
+## WeChat Mode
 
 Use your WeChat as the agent inbox.
 
@@ -84,8 +83,8 @@ npm run agents:lint
 
 # Merlion（中文）
 
-Merlion 是一个可以在终端和微信两端协同使用的 coding agent。
-它强调工程可落地：工具调用、会话记忆、可验证改动。
+Merlion 是一个能帮你把活往前推进的 coding agent。
+你可以在终端里用它，也可以直接接到微信上用；模型上基本不挑，兼容 OpenAI 协议的都能接。
 
 ## npm 安装（推荐）
 
@@ -103,14 +102,13 @@ npx merlion
 
 首次运行会自动进入配置向导（provider / key / model）。
 
-## Merlion 的独特点
+## 为什么是 Merlion
 
-- 兼容 OpenAI 协议（`openrouter` / `openai` / 自定义 base URL）
-- 面向工程任务的工具链（读搜改跑 + verify）
-- 会话可恢复（`--resume`），并带项目上下文导向
-- 微信接入：扫码登录后，可直接在手机上持续“vibe coding”
+- 终端里能用，微信里也能用
+- 兼容 OpenAI 协议，基本任何模型都能接
+- 安装和上手都尽量简单
 
-## 微信模式（亮点）
+## 微信模式
 
 ```bash
 # 首次登录或 token 过期后

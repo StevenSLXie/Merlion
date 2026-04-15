@@ -1,7 +1,7 @@
 {
   "name": "merlion",
   "version": "0.1.25",
-  "description": "A coding agent for OpenAI-compatible providers",
+  "description": "A CLI coding agent for terminal, WeChat, and OpenAI-compatible models",
   "type": "module",
   "engines": {
     "node": ">=22"
