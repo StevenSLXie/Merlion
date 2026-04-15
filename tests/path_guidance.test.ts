@@ -7,6 +7,7 @@ import test from 'node:test'
 import {
   buildPathGuidanceDelta,
   createPathGuidanceState,
+  extractCandidatePathsFromText,
   extractCandidatePathsFromToolEvent,
 } from '../src/context/path_guidance.ts'
 
@@ -55,6 +56,18 @@ test('extractCandidatePathsFromToolEvent parses args and output', async () => {
       content: 'Read from ./src/runtime/loop.ts successfully.'
     }
   })
+
+  assert.ok(candidates.includes(resolve(repo, 'src/runtime/loop.ts')))
+  assert.ok(candidates.includes(resolve(repo, 'src/AGENTS.md')))
+})
+
+test('extractCandidatePathsFromText parses prompt-declared paths', async () => {
+  const repo = await makeRepo()
+
+  const candidates = await extractCandidatePathsFromText(
+    repo,
+    'Update `./src/runtime/loop.ts` and inspect src/AGENTS.md before broad exploration.'
+  )
 
   assert.ok(candidates.includes(resolve(repo, 'src/runtime/loop.ts')))
   assert.ok(candidates.includes(resolve(repo, 'src/AGENTS.md')))

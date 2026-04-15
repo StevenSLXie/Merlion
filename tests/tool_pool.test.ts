@@ -30,8 +30,10 @@ test('builtin catalog returns stable tool list', () => {
     'git_diff',
     'git_log',
     'fetch',
+    'lsp',
     'tool_search',
     'todo_write',
+    'ask_user_question',
     'config',
     'config_get',
     'config_set',
@@ -54,7 +56,9 @@ test('tool pool wechat mode excludes config tools', () => {
   assert.equal(pooled.includes('config_set'), false)
   assert.equal(pooled.includes('bash'), false)
   assert.equal(pooled.includes('run_script'), false)
+  assert.equal(pooled.includes('ask_user_question'), false)
   assert.equal(pooled.includes('read_file'), true)
+  assert.equal(pooled.includes('lsp'), true)
   assert.equal(pooled.includes('tool_search'), true)
 })
 

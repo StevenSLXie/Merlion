@@ -22,6 +22,19 @@ export interface EditDiffUiPayload {
 export type ToolUiPayload = EditDiffUiPayload
 export type ToolSource = 'builtin' | 'mcp' | 'extension'
 
+export interface AskUserQuestionOption {
+  label: string
+  description: string
+}
+
+export interface AskUserQuestionItem {
+  header: string
+  id: string
+  question: string
+  options: AskUserQuestionOption[]
+  multiSelect?: boolean
+}
+
 export interface ToolResult {
   content: string
   isError: boolean
@@ -50,6 +63,7 @@ export interface ToolContext {
   sessionId?: string
   permissions?: PermissionStore
   listTools?: () => ToolSummary[]
+  askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
 }
 
 export interface ToolDefinition {

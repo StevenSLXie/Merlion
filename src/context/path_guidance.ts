@@ -104,10 +104,10 @@ function walkJsonPaths(value: unknown, cwd: string, root: string, out: Set<strin
 }
 
 function extractPathsFromMessageContent(content: string, cwd: string, root: string, out: Set<string>): void {
-  const regex = /(?:\.{1,2}\/|\/)[^\s'"`]+/g
-  const matches = content.match(regex)
+  const matches = content.match(/(?:\.{1,2}\/|\/)[^\s'"`]+|(?:^|[\s(])(?:[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)(?=$|[\s).,;:])/g)
   if (!matches) return
-  for (const match of matches) {
+  for (const rawMatch of matches) {
+    const match = rawMatch.trim().replace(/^[("'`]+|[)"'`.,;:]+$/g, '')
     const normalized = normalizePathCandidate(match, cwd, root)
     if (normalized) out.add(normalized)
   }
@@ -138,6 +138,17 @@ export function createPathGuidanceState(initialAgentFiles?: string[]): PathGuida
   return {
     loadedAgentFiles: new Set((initialAgentFiles ?? []).map((x) => resolve(x)))
   }
+}
+
+export async function extractCandidatePathsFromText(
+  cwd: string,
+  content: string,
+): Promise<string[]> {
+  const root = await findProjectRoot(cwd)
+  const out = new Set<string>()
+  if (content.trim() === '') return []
+  extractPathsFromMessageContent(content, cwd, root, out)
+  return [...out]
 }
 
 export async function extractCandidatePathsFromToolEvent(

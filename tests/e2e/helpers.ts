@@ -150,6 +150,10 @@ export async function runAgent(
     cwd,
     maxTurns: 30,
     permissions: { ask: async () => 'allow_session' },
+    askQuestions: async (questions) =>
+      Object.fromEntries(
+        questions.map((question) => [question.id, question.options[0]?.label ?? ''])
+      ),
     onUsage: (usage) => {
       usageTracker.record(usage)
       usageSamples.push({

@@ -30,12 +30,12 @@
     "hooks:install": "git config core.hooksPath .githooks && echo '[hooks] core.hooksPath=.githooks'"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
-    "typescript": "^5.9.3"
+    "@types/node": "^25.6.0"
   },
   "dependencies": {
     "@vscode/ripgrep": "^1.15.14",
     "marked": "^16.4.2",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "^0.12.0",
+    "typescript": "^5.9.3"
   }
 }

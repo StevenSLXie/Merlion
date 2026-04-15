@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 
 import type { ChatMessage, LoopState, LoopTerminal, ModelProvider, ToolCall } from '../types.js'
-import type { PermissionStore, ToolContext } from '../tools/types.js'
+import type { AskUserQuestionItem, PermissionStore, ToolContext } from '../tools/types.js'
 import { executeToolCalls, type ToolCallResultEvent, type ToolCallStartEvent } from './executor.ts'
 import { withRetry } from './retry.ts'
 import { ToolRegistry } from '../tools/registry.ts'
@@ -16,6 +16,7 @@ export interface RunLoopOptions {
   intentContract?: string
   cwd: string
   permissions?: PermissionStore
+  askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
   maxTurns?: number
   initialMessages?: ChatMessage[]
   persistInitialMessages?: boolean
@@ -71,6 +72,8 @@ const REPEATED_TOOL_ERROR_THRESHOLD = 3
 const MAX_AUTO_TOOL_ERROR_HINTS = 3
 const NO_PROGRESS_BATCH_THRESHOLD = 3
 const MAX_NO_PROGRESS_HINTS = 2
+const NO_MUTATION_BATCH_THRESHOLD = 4
+const MAX_NO_MUTATION_HINTS = 2
 const MAX_MUTATION_OSCILLATION_HINTS = 2
 const COMPLETION_HINT_PATTERNS: RegExp[] = [
   /\b(done|finished|completed)\b/i,
@@ -353,6 +356,21 @@ function formatNoProgressHint(count: number): string {
   )
 }
 
+function formatNoMutationHint(count: number): string {
+  return (
+    `No material progress detected: the last ${count} tool batches produced no successful file change. ` +
+    'Stop broad exploration. Inspect the target file or nearest tests, then either apply one minimal edit ' +
+    'or explain clearly why no edit is required.'
+  )
+}
+
+function shouldRecoverNoMutationStop(text: string): boolean {
+  const trimmed = text.trim()
+  if (trimmed === '') return true
+  if (hasAnyPattern(trimmed, COMPLETION_HINT_PATTERNS)) return true
+  return /\b(no changes|nothing to change|could not make changes|unable to edit)\b/i.test(trimmed)
+}
+
 function formatMutationOscillationHint(previous: MutationEvent, current: MutationEvent): string {
   return (
     'Mutation oscillation detected across successful file operations. ' +
@@ -369,7 +387,13 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   let awaitingPostToolSummary = false
   let autoToolErrorHintCount = 0
   let noProgressHintCount = 0
+  let noMutationHintCount = 0
   let consecutiveAllErrorBatches = 0
+  let consecutiveNoMutationBatches = 0
+  let sawAnyToolError = false
+  let sawAnySuccessfulMutation = false
+  let totalToolBatches = 0
+  let noMutationStopRecoveryCount = 0
   let mutationOscillationHintCount = 0
   const repeatedToolErrorCounts = new Map<string, number>()
   const hintedToolErrorSignatures = new Set<string>()
@@ -381,6 +405,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   const toolContext: ToolContext = {
     cwd: options.cwd,
     permissions: options.permissions ?? defaultPermissions,
+    askQuestions: options.askQuestions,
     listTools: () =>
       options.registry.getAll().map((tool) => ({
         name: tool.name,
@@ -476,12 +501,14 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         state.messages.push(toolMsg)
         await options.onMessageAppended?.(toolMsg)
       }
+      totalToolBatches += 1
 
       if (autoToolErrorHintCount < MAX_AUTO_TOOL_ERROR_HINTS) {
         let hint: string | null = null
         for (const event of toolResultEvents) {
           const signature = toolCallSignature(event.call)
           if (event.isError) {
+            sawAnyToolError = true
             const nextCount = (repeatedToolErrorCounts.get(signature) ?? 0) + 1
             repeatedToolErrorCounts.set(signature, nextCount)
             if (
@@ -525,11 +552,13 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         consecutiveAllErrorBatches = 0
       }
 
+      let batchMutationCount = 0
       if (mutationOscillationHintCount < MAX_MUTATION_OSCILLATION_HINTS) {
         let mutationHint: string | null = null
         for (const event of toolResultEvents) {
           const mutation = toMutationEvent(options.cwd, event, state.turnCount)
           if (!mutation) continue
+          batchMutationCount += 1
           const previous = mutationHistory[mutationHistory.length - 1]
           if (previous && isMutationOscillation(previous, mutation)) {
             const oscillationKey = `${previous.signature}|${mutation.signature}`
@@ -547,6 +576,25 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
           state.messages.push(mutationMessage)
           await options.onMessageAppended?.(mutationMessage)
         }
+      }
+      if (batchMutationCount > 0) {
+        sawAnySuccessfulMutation = true
+        consecutiveNoMutationBatches = 0
+      } else if (toolResultEvents.length > 0) {
+        consecutiveNoMutationBatches += 1
+      }
+      if (
+        consecutiveNoMutationBatches >= NO_MUTATION_BATCH_THRESHOLD &&
+        noMutationHintCount < MAX_NO_MUTATION_HINTS
+      ) {
+        const noMutationMessage: ChatMessage = {
+          role: 'user',
+          content: formatNoMutationHint(consecutiveNoMutationBatches)
+        }
+        state.messages.push(noMutationMessage)
+        await options.onMessageAppended?.(noMutationMessage)
+        noMutationHintCount += 1
+        consecutiveNoMutationBatches = 0
       }
 
       const postToolMessages = await options.onToolBatchComplete?.({
@@ -584,6 +632,11 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     const previousMessage = state.messages[state.messages.length - 2]
     const previousWasTool = previousMessage?.role === 'tool'
     const shouldRecoverEmptyStop = previousWasTool || awaitingPostToolSummary
+    const shouldRecoverMutationlessStop =
+      totalToolBatches > 0 &&
+      !sawAnySuccessfulMutation &&
+      sawAnyToolError &&
+      shouldRecoverNoMutationStop(text)
 
     if (assistant.finish_reason === 'stop' && text.trim() === '' && shouldRecoverEmptyStop) {
       if (emptyStopRecoveryCount < 1) {
@@ -602,6 +655,21 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         (await tryGenerateNaturalSummary(options, state)) ??
         'Task completed via tool execution, but the model returned no final summary.'
       return { terminal: 'completed', finalText, state }
+    }
+    if (assistant.finish_reason === 'stop' && shouldRecoverMutationlessStop) {
+      if (noMutationStopRecoveryCount < 1) {
+        noMutationStopRecoveryCount += 1
+        const recoveryMessage: ChatMessage = {
+          role: 'user',
+          content:
+            'You have not made any successful file changes yet. Do not finish now. ' +
+            'Either inspect the explicit target files/tests and apply one minimal edit, ' +
+            'or explain with concrete evidence why no edit is required.'
+        }
+        state.messages.push(recoveryMessage)
+        await options.onMessageAppended?.(recoveryMessage)
+        continue
+      }
     }
     if (text.trim() !== '') {
       awaitingPostToolSummary = false

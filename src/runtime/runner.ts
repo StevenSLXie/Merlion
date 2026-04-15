@@ -46,6 +46,7 @@ import { runConfigWizard } from '../config/wizard.ts'
 import type { MerlionProvider } from '../config/store.ts'
 import { CliRuntimeSink } from './sinks/cli.ts'
 import { launchWeixinSinkMode } from './sinks/wechat.ts'
+import { askStructuredQuestions } from './ask_user_question.ts'
 
 export interface CliRuntimeOptions {
   task: string
@@ -400,6 +401,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
       cwd: options.cwd,
       maxTurns: 100,
       permissions,
+      askQuestions: (questions) => askStructuredQuestions(questions, { readLine: askLine }),
       initialMessages: seededMessages,
       persistInitialMessages: false,
       onMessageAppended: async (message) => {

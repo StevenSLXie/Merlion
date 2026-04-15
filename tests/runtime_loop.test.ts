@@ -98,6 +98,12 @@ test('loop executes tool call then completes', async () => {
       content: 'done',
       finish_reason: 'stop',
       usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done after retry',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
     }
   ])
 
@@ -132,6 +138,12 @@ test('loop handles unknown tool safely', async () => {
       content: 'finished',
       finish_reason: 'stop',
       usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'finished after retry',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
     }
   ])
 
@@ -145,7 +157,7 @@ test('loop handles unknown tool safely', async () => {
   })
 
   assert.equal(result.terminal, 'completed')
-  assert.equal(result.finalText, 'finished')
+  assert.equal(result.finalText, 'finished after retry')
   const toolMsg = result.state.messages.find((m) => m.role === 'tool')
   assert.ok(toolMsg)
   assert.match(toolMsg?.content ?? '', /Unknown tool/)
@@ -172,6 +184,77 @@ test('loop returns terminal assistant text', async () => {
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'all good')
+})
+
+test('loop supports ask_user_question-style interactive callback', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('ask_user_question', {
+        questions: [
+          {
+            header: 'Mode',
+            id: 'mode',
+            question: 'Which mode?',
+            options: [
+              { label: 'Safe', description: 'recommended' },
+              { label: 'Fast', description: 'less checks' },
+            ],
+          },
+        ],
+      })],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'used the answer and finished',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register({
+    name: 'ask_user_question',
+    description: 'ask the user clarifying questions',
+    parameters: { type: 'object', properties: { questions: { type: 'array' } }, required: ['questions'] },
+    concurrencySafe: false,
+    async execute(_input, ctx) {
+      return {
+        content: JSON.stringify({
+          answers: await ctx.askQuestions?.([
+            {
+              header: 'Mode',
+              id: 'mode',
+              question: 'Which mode?',
+              options: [
+                { label: 'Safe', description: 'recommended' },
+                { label: 'Fast', description: 'less checks' },
+              ],
+            },
+          ]),
+        }),
+        isError: false,
+      }
+    }
+  })
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 5,
+    askQuestions: async () => ({ mode: 'Safe' }),
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'used the answer and finished')
+  const toolMsg = result.state.messages.find((message) => message.role === 'tool')
+  assert.match(toolMsg?.content ?? '', /"mode":"Safe"/)
 })
 
 test('loop recovers empty stop after tool calls by requesting final summary', async () => {
@@ -652,6 +735,12 @@ test('loop injects correction hint after repeated identical tool errors', async 
       content: 'done',
       finish_reason: 'stop',
       usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done after retry',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
     }
   ])
 
@@ -668,7 +757,7 @@ test('loop injects correction hint after repeated identical tool errors', async 
   })
 
   assert.equal(result.terminal, 'completed')
-  assert.equal(result.finalText, 'done')
+  assert.equal(result.finalText, 'done after retry')
   const hintMessages = result.state.messages.filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
@@ -693,6 +782,12 @@ test('loop appends post-tool batch messages from callback', async () => {
     {
       role: 'assistant',
       content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done after retry',
       finish_reason: 'stop',
       usage: { prompt_tokens: 1, completion_tokens: 1 }
     }
@@ -751,6 +846,12 @@ test('loop injects no-progress hint after consecutive all-error tool batches', a
       content: 'done',
       finish_reason: 'stop',
       usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done after retry',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
     }
   ])
 
@@ -767,13 +868,126 @@ test('loop injects no-progress hint after consecutive all-error tool batches', a
   })
 
   assert.equal(result.terminal, 'completed')
-  assert.equal(result.finalText, 'done')
+  assert.equal(result.finalText, 'done after retry')
   const noProgressMessages = result.state.messages.filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('No progress detected')
   ))
   assert.equal(noProgressMessages.length, 1)
+})
+
+test('loop injects no-mutation hint after consecutive tool batches without file changes', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'scan-1' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'scan-2' }, 'call_2')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'scan-3' }, 'call_3')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'scan-4' }, 'call_4')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEchoTool())
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'done')
+  const noMutationMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('No material progress detected')
+  ))
+  assert.equal(noMutationMessages.length, 1)
+})
+
+test('loop blocks premature completion after errored tool runs with no successful mutation', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('always_fail', { path: 'missing-a.txt' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('edit_file', { path: 'src/auth.ts' }, 'call_2')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'fixed',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeAlwaysFailTool())
+  registry.register(makeAlwaysSuccessMutationTool('edit_file'))
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'fixed')
+  const recoveryMessage = result.state.messages.find((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('You have not made any successful file changes yet')
+  ))
+  assert.ok(recoveryMessage)
 })
 
 test('loop injects mutation oscillation hint on create/delete toggle', async () => {
