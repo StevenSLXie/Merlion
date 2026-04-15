@@ -9,6 +9,7 @@ test('parseReplInput handles commands and prompt', () => {
   assert.deepEqual(parseReplInput(':help'), { kind: 'help' })
   assert.deepEqual(parseReplInput(':wechat'), { kind: 'wechat_login' })
   assert.deepEqual(parseReplInput('/wechat'), { kind: 'wechat_login' })
+  assert.deepEqual(parseReplInput('! echo ok'), { kind: 'shell', command: 'echo ok' })
   assert.deepEqual(parseReplInput(':detail compact'), { kind: 'set_detail', mode: 'compact' })
   assert.deepEqual(parseReplInput(':detail FULL'), { kind: 'set_detail', mode: 'full' })
   assert.deepEqual(parseReplInput('   '), { kind: 'empty' })
@@ -16,9 +17,10 @@ test('parseReplInput handles commands and prompt', () => {
 })
 
 test('runReplSession loops prompts and exits', async () => {
-  const inputs = ['first task', ':wechat', ':help', ':detail compact', 'second task', ':q']
+  const inputs = ['first task', ':wechat', ':help', ':detail compact', '! echo ok', 'second task', ':q']
   const outputs: string[] = []
   const prompts: string[] = []
+  const shellCommands: string[] = []
   const detailModes: Array<'full' | 'compact'> = []
   let wechatLoginCalls = 0
 
@@ -31,6 +33,10 @@ test('runReplSession loops prompts and exits', async () => {
       prompts.push(prompt)
       return { output: `done:${prompt}`, terminal: 'completed' }
     },
+    runShellCommand: async (command) => {
+      shellCommands.push(command)
+      return { output: `shell:${command}`, terminal: 'completed' }
+    },
     onSetDetailMode: (mode) => {
       detailModes.push(mode)
     },
@@ -41,8 +47,10 @@ test('runReplSession loops prompts and exits', async () => {
   })
 
   assert.deepEqual(prompts, ['first task', 'second task'])
+  assert.deepEqual(shellCommands, ['echo ok'])
   assert.deepEqual(detailModes, ['compact'])
   assert.equal(wechatLoginCalls, 1)
+  assert.equal(outputs.some((t) => t.includes('shell:echo ok')), true)
   assert.equal(outputs.some((t) => t.includes('done:first task')), true)
   assert.equal(outputs.some((t) => t.includes('done:second task')), true)
   assert.equal(outputs.some((t) => t.includes('Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen)')), true)

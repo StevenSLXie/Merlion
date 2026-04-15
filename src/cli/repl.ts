@@ -3,6 +3,7 @@ export type ReplInput =
   | { kind: 'help' }
   | { kind: 'wechat_login' }
   | { kind: 'empty' }
+  | { kind: 'shell'; command: string }
   | { kind: 'set_detail'; mode: 'full' | 'compact' }
   | { kind: 'prompt'; prompt: string }
 
@@ -14,6 +15,11 @@ export function parseReplInput(input: string): ReplInput {
   if (trimmed === ':q' || trimmed === ':quit' || trimmed === ':exit') return { kind: 'exit' }
   if (trimmed === ':help') return { kind: 'help' }
   if (/^[:/]wechat(?:\s+login)?$/i.test(trimmed)) return { kind: 'wechat_login' }
+  const shellMatch = input.match(/^!\s+(.+)$/)
+  if (shellMatch) {
+    const command = shellMatch[1]!.trim()
+    if (command !== '') return { kind: 'shell', command }
+  }
   const detailMatch = trimmed.match(/^:detail\s+(full|compact)$/i)
   if (detailMatch) {
     return { kind: 'set_detail', mode: detailMatch[1]!.toLowerCase() as 'full' | 'compact' }
@@ -22,9 +28,10 @@ export function parseReplInput(input: string): ReplInput {
 }
 
 export interface RunReplSessionOptions {
-  readLine: () => Promise<string | null>
+  readLine: (promptLabel: string) => Promise<string | null>
   write: (text: string) => void
   runTurn: (prompt: string) => Promise<{ output: string; terminal: string }>
+  runShellCommand?: (command: string) => Promise<{ output: string; terminal: string }>
   promptLabel?: string
   startupMessage?: string | false
   onPromptSubmitted?: (prompt: string) => Promise<void> | void
@@ -43,8 +50,7 @@ export async function runReplSession(options: RunReplSessionOptions): Promise<vo
   const promptLabel = options.promptLabel ?? 'merlion> '
 
   for (;;) {
-    options.write(promptLabel)
-    const line = await options.readLine()
+    const line = await options.readLine(promptLabel)
     if (line === null) break
 
     const parsed = parseReplInput(line)
@@ -71,6 +77,22 @@ export async function runReplSession(options: RunReplSessionOptions): Promise<vo
     if (parsed.kind === 'set_detail') {
       await options.onSetDetailMode?.(parsed.mode)
       options.write(`[ui] tool detail mode = ${parsed.mode}\n`)
+      continue
+    }
+    if (parsed.kind === 'shell') {
+      if (!options.runShellCommand) {
+        options.write('[shell] command unavailable in this mode.\n')
+        continue
+      }
+      const result = await options.runShellCommand(parsed.command)
+      if (options.onTurnResult) {
+        await options.onTurnResult(result, `! ${parsed.command}`)
+      } else {
+        options.write(`${result.output}\n`)
+        if (result.terminal !== 'completed') {
+          options.write(`[terminal: ${result.terminal}]\n`)
+        }
+      }
       continue
     }
     if (parsed.kind === 'empty') continue

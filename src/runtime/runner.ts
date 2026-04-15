@@ -1,6 +1,8 @@
 import { execSync } from 'node:child_process'
 
 import { askLine } from '../cli/ask.ts'
+import { getSystemSlashCommands } from '../cli/commands.ts'
+import { readReplInputLine } from '../cli/input_buffer.ts'
 import { runReplSession } from '../cli/repl.ts'
 import { createPermissionStore } from '../permissions/store.ts'
 import { createPromptSectionCache } from '../prompt/sections.ts'
@@ -9,7 +11,7 @@ import { OpenAICompatProvider } from '../providers/openai.ts'
 import type { PromptObservabilitySnapshot } from './prompt_observability.ts'
 import { createPromptObservabilityTrackerWithToolSchema } from './prompt_observability.ts'
 import { detectSuccessfulGitCommit, summarizeToolBatchMilestones } from './tool_batch_milestones.ts'
-import { buildIntentContract } from './intent_contract.ts'
+import { buildIntentContract, extractExplicitTargetPaths } from './intent_contract.ts'
 import { runLoop } from './loop.ts'
 import {
   appendSessionMeta,
@@ -32,9 +34,11 @@ import { buildOrientationContext } from '../context/orientation.ts'
 import {
   buildPathGuidanceDelta,
   createPathGuidanceState,
+  extractCandidatePathsFromText,
   extractCandidatePathsFromToolEvent,
 } from '../context/path_guidance.ts'
 import { buildDefaultRegistry } from '../tools/builtin/index.ts'
+import { bashTool } from '../tools/builtin/bash.ts'
 import { discoverVerificationChecks } from '../verification/checks.ts'
 import { runVerificationFixRounds } from '../verification/fix_round.ts'
 import { runVerificationChecks } from '../verification/runner.ts'
@@ -354,7 +358,39 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     let sawWorkspaceMutationSignal = false
     let workingTreeSnapshotChanged = false
     let latestPromptObservability: PromptObservabilitySnapshot | undefined
+    const explicitTargetPaths = extractExplicitTargetPaths(prompt)
+    const promptPathCandidates = new Set<string>(explicitTargetPaths)
+    for (const candidate of await extractCandidatePathsFromText(options.cwd, prompt)) {
+      promptPathCandidates.add(candidate)
+    }
     const intentContract = buildIntentContract(prompt) ?? undefined
+    const seededMessages = [...history]
+    if (promptPathCandidates.size > 0) {
+      const seededList = [...promptPathCandidates].slice(0, 8)
+      seededMessages.push({
+        role: 'system' as const,
+        content: [
+          'User-specified target paths detected.',
+          'Inspect these paths, or their nearest directories/tests, before any repo-wide recursive exploration.',
+          'Only widen scope if these paths are missing, invalid, or insufficient for the task.',
+          ...seededList.map((item) => `- ${item}`),
+        ].join('\n'),
+      })
+      const promptDelta = await buildPathGuidanceDelta(
+        options.cwd,
+        seededList,
+        pathGuidanceState,
+        pathGuidanceBudgets,
+      )
+      if (promptDelta.text.trim() !== '') {
+        seededMessages.push({
+          role: 'system' as const,
+          content:
+            'Prompt-derived path guidance. Use this to focus your first tool calls.\n\n' +
+            promptDelta.text,
+        })
+      }
+    }
     const result = await runLoop({
       provider,
       registry,
@@ -364,7 +400,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
       cwd: options.cwd,
       maxTurns: 100,
       permissions,
-      initialMessages: history,
+      initialMessages: seededMessages,
       persistInitialMessages: false,
       onMessageAppended: async (message) => {
         await appendTranscriptMessage(session.transcriptPath, message)
@@ -534,8 +570,11 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
 
   if (options.repl) {
     await runReplSession({
-      readLine: async () => {
-        return await askLine('')
+      readLine: async (promptLabel) => {
+        return await readReplInputLine({
+          promptLabel,
+          slashCommands: getSystemSlashCommands(),
+        })
       },
       write: (text) => {
         process.stdout.write(text)
@@ -543,6 +582,16 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
       runTurn: async (prompt) => {
         const result = await runTurn(prompt)
         return { output: result.finalText, terminal: result.terminal }
+      },
+      runShellCommand: async (command) => {
+        const result = await bashTool.execute(
+          { command },
+          { cwd: options.cwd, permissions }
+        )
+        return {
+          output: result.content,
+          terminal: result.isError ? 'model_error' : 'completed'
+        }
       },
       promptLabel: sink.promptLabel(),
       startupMessage: false,

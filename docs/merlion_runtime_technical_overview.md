@@ -1020,6 +1020,9 @@ Merlion 当前是一个：
 
 - `src/bootstrap/cli_args.ts`
 - `src/bootstrap/config_resolver.ts`
+- `src/cli/commands.ts`
+- `src/cli/completion.ts`
+- `src/cli/input_buffer.ts`
 - `src/index.ts`
 - `src/tools/catalog.ts`
 - `src/tools/pool.ts`
