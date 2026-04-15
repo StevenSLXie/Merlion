@@ -1,0 +1,36 @@
+Version: 0.1.25
+Date: 2026-04-15
+
+Changes:
+- Runtime execution architecture upgrade:
+  - add a query-engine based task runtime and shared runtime state for
+    permissions, compaction, memory, and skills.
+  - route local turns, verify rounds, and WeChat messages through a unified
+    task-handler registry instead of ad-hoc entrypoint flow.
+  - add input preprocessing / command parsing pipeline for runtime task
+    dispatch and REPL integration.
+- New builtin tools:
+  - `ask_user_question` for structured clarification in interactive runtimes.
+  - `lsp` for JS/TS semantic navigation and diagnostics using the local
+    TypeScript language service.
+- Runtime control-quality improvements:
+  - explicit-path-first guidance now extracts user-mentioned target paths and
+    seeds first-turn path guidance before broad exploration.
+  - add completion gate and no-progress recovery to reduce premature stop
+    behavior after unproductive tool usage.
+- Bench / evaluation upgrades:
+  - phase0 bench runner now supports richer summary metrics, failure analysis,
+    and 20-case coverage across api-service / bug-suite / node-cli /
+    python-lib / react-web fixtures.
+  - benchmark constraint handling now ignores `.merlion` artifacts and treats
+    `fixture/package.json` as an allowed project file for relevant JS/web/api
+    tasks, including `RW001_THEME_TOKEN_UPDATE`.
+- Validation:
+  - full 20-case live regression reached `100` average score with lower
+    aggregate runtime/tool churn than the earlier 20-case reference run.
+  - added unit and E2E coverage for query engine runtime, ask-user-question,
+    lsp, path guidance, and loop recovery behavior.
+
+Related commits:
+- feat(runtime): add ask-user-question and lsp tools
+- refactor(runtime): add query engine task runtime and context service
