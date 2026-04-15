@@ -60,10 +60,17 @@ export function resolveBugsInPyHome(raw = process.env.MERLION_BUGSINPY_HOME ?? p
 
 export async function findCaseDirs(root = getCasesRoot()): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true })
-  return entries
+  const dirs = entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => join(root, entry.name))
     .sort(compareByLocale)
+  const valid: string[] = []
+  for (const dir of dirs) {
+    const hasCase = await stat(join(dir, 'case.json')).then(() => true).catch(() => false)
+    const hasTask = await stat(join(dir, 'task.md')).then(() => true).catch(() => false)
+    if (hasCase && hasTask) valid.push(dir)
+  }
+  return valid
 }
 
 export async function loadCaseSpec(caseDir: string): Promise<BugsInPyCaseSpec> {

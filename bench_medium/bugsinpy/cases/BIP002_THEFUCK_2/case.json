@@ -1,0 +1,17 @@
+{
+  "id": "BIP002_THEFUCK_2",
+  "title": "thefuck bug 2",
+  "project": "thefuck",
+  "bug_id": 2,
+  "version": "buggy",
+  "timeout_sec": 1200,
+  "acceptance_mode": "relevant",
+  "regression_mode": "all",
+  "python_version_hint": "3.7.0 (dataset), validated on local python3",
+  "tags": ["python", "cli", "validated"],
+  "status": "validated",
+  "notes": [
+    "Validated on 2026-04-15: checkout and compile succeed, relevant test executes and fails on the expected buggy behavior.",
+    "Good second sample from the same project with a different failing test surface."
+  ]
+}

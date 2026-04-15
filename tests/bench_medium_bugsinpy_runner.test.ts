@@ -68,7 +68,7 @@ if (!hasPython()) {
     async () => {
       const bugsInPyHome = await createFakeBugsInPyHome()
       const repoRoot = process.cwd()
-      const spec = await loadCaseSpec(join(repoRoot, 'bench_medium/bugsinpy/cases/BIP001_BLACK_1'))
+      const spec = await loadCaseSpec(join(repoRoot, 'bench_medium/bugsinpy/cases/BIP001_THEFUCK_1'))
       const runDir = await mkdtemp(join(tmpdir(), 'merlion-bip-run-'))
 
       const result = await runCase(spec, {

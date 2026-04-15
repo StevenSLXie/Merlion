@@ -32,6 +32,27 @@ Optional:
 2. `MERLION_BUGSINPY_RUN_AGENT=1`
 3. `MERLION_BUGSINPY_CONCURRENCY=2`
 
+## Current Validated Set
+
+The default curated pool is currently:
+
+1. `BIP001_THEFUCK_1`
+2. `BIP002_THEFUCK_2`
+3. `BIP003_THEFUCK_3`
+
+These are the cases that were smoke-tested against the real upstream dataset on this machine and reached at least:
+
+1. checkout success
+2. compile success
+3. relevant failing test execution
+
+Rejected examples so far:
+
+1. `black/1`: old `typed-ast` stack fails to compile on the current toolchain
+2. `PySnooper/1-2`: test/import surface is incomplete for stable local replay
+3. `cookiecutter/1`: historical packaging flow breaks during editable install
+4. `youtube-dl/2`: target fix is reproducible, but broad regression depends on live network responses and is too flaky for the default validated pool
+
 ## Run
 
 Smoke run without Merlion:

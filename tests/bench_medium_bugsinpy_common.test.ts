@@ -15,9 +15,10 @@ test('loadAllCases discovers seeded BugsInPy cases', async () => {
   const cases = await loadAllCases()
   assert.deepEqual(
     cases.map((item) => item.id),
-    ['BIP001_BLACK_1', 'BIP002_YOUTUBEDL_2', 'BIP003_PANDAS_12'],
+    ['BIP001_THEFUCK_1', 'BIP002_THEFUCK_2', 'BIP003_THEFUCK_3'],
   )
-  assert.equal(cases[0]?.project, 'black')
+  assert.equal(cases[0]?.project, 'thefuck')
+  assert.equal(cases[0]?.status, 'validated')
 })
 
 test('splitBugList ignores blanks', () => {

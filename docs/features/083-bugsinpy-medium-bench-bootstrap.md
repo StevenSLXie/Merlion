@@ -138,15 +138,15 @@ The wrapper:
 4. falls back to `pytest` or `unittest discover` for `all`
 5. returns a proper non-zero exit when any relevant command fails
 
-## Seeded Cases
+## Validated Cases
 
-First batch is intentionally small and metadata-only:
+The current curated set is intentionally small:
 
-1. `BIP001_BLACK_1`
-2. `BIP002_YOUTUBEDL_2`
-3. `BIP003_PANDAS_12`
+1. `BIP001_THEFUCK_1`
+2. `BIP002_THEFUCK_2`
+3. `BIP003_THEFUCK_3`
 
-These are seeded so the runner can be exercised with real-looking case metadata while upstream validation remains optional and manual.
+These cases were promoted after real upstream smoke runs showed that checkout and compile succeed on the current machine and the relevant failing tests are actually executable.
 
 ## Validation
 

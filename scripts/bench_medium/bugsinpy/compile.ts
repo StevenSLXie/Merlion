@@ -45,15 +45,50 @@ async function runCommand(command: string, cwd: string, extraEnv: NodeJS.Process
 
 async function readRequirements(repoDir: string): Promise<string[]> {
   const raw = await readFile(join(repoDir, 'bugsinpy_requirements.txt'), 'utf8')
+  return sanitizeRequirements(
+    raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('#')),
+  )
+}
+
+export function sanitizeRequirements(lines: string[]): string[] {
+  return lines.filter((line) => line.toLowerCase() !== 'pkg-resources==0.0.0')
+}
+
+async function readRelevantCommands(repoDir: string): Promise<string[]> {
+  const raw = await readFile(join(repoDir, 'bugsinpy_run_test.sh'), 'utf8')
   return raw
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
 }
 
+export function relevantCommandsNeedPytest(commands: string[]): boolean {
+  return commands.some((command) => /\b(pytest|py\.test)\b/.test(command))
+}
+
+async function commandExists(command: string, cwd: string, extraEnv: NodeJS.ProcessEnv): Promise<boolean> {
+  const checker = process.platform === 'win32'
+    ? `${command} --version`
+    : `command -v ${command}`
+  return await new Promise<boolean>((resolveExists) => {
+    const child = spawn(checker, {
+      cwd,
+      shell: true,
+      env: { ...process.env, ...extraEnv },
+      stdio: 'ignore',
+    })
+    child.on('close', (code) => resolveExists(code === 0))
+    child.on('error', () => resolveExists(false))
+  })
+}
+
 export async function compileCheckout(options: CompileOptions): Promise<void> {
   await assertCheckoutDir(options.repoDir)
   const bugInfo = await readBugInfo(options.repoDir)
+  const relevantCommands = await readRelevantCommands(options.repoDir)
   const pythonPath = computePythonPath(options.repoDir, bugInfo)
   const envPath = join(options.repoDir, 'env')
   const envBin = process.platform === 'win32' ? join(envPath, 'Scripts') : join(envPath, 'bin')
@@ -68,13 +103,22 @@ export async function compileCheckout(options: CompileOptions): Promise<void> {
 
   const requirements = await readRequirements(options.repoDir)
   if (requirements.length > 0) {
-    await runCommand(`${pipBin} install -r bugsinpy_requirements.txt`, options.repoDir, extraEnv)
+    const sanitizedPath = join(options.repoDir, '.merlion_bugsinpy_requirements.txt')
+    await writeFile(sanitizedPath, `${requirements.join('\n')}\n`, 'utf8')
+    await runCommand(`${pipBin} install -r ${sanitizedPath}`, options.repoDir, extraEnv)
   }
 
   const setupPath = join(options.repoDir, 'bugsinpy_setup.sh')
   const setupExists = await readFile(setupPath, 'utf8').then(() => true).catch(() => false)
   if (setupExists) {
     await runCommand('bash bugsinpy_setup.sh', options.repoDir, extraEnv)
+  }
+
+  if (relevantCommandsNeedPytest(relevantCommands)) {
+    const hasPytest = await commandExists('pytest', options.repoDir, extraEnv)
+    if (!hasPytest) {
+      await runCommand(`${pipBin} install pytest`, options.repoDir, extraEnv)
+    }
   }
 
   await writeFile(join(options.repoDir, 'bugsinpy_compile_flag'), '1\n', 'utf8')
