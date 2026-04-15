@@ -1,0 +1,17 @@
+{
+  "id": "BIP003_PANDAS_12",
+  "title": "pandas bug 12",
+  "project": "pandas",
+  "bug_id": 12,
+  "version": "buggy",
+  "timeout_sec": 1800,
+  "acceptance_mode": "relevant",
+  "regression_mode": "all",
+  "python_version_hint": "dataset-managed",
+  "tags": ["python", "dataframe", "real-repo"],
+  "status": "seeded",
+  "notes": [
+    "This seed is intentionally larger than the first two to sample a heavier library workflow.",
+    "Expected to be slower and more dependency-sensitive than black/youtube-dl."
+  ]
+}

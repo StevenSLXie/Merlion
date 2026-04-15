@@ -3,4 +3,5 @@ dist/
 .DS_Store
 .merlion/
 bench/
+bench_medium/bugsinpy/results/
 start.sh

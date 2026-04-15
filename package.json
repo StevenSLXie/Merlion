@@ -21,6 +21,7 @@
     "test:all": "node --experimental-strip-types --test --test-concurrency=1 'tests/**/*.test.ts'",
     "bench:phase0": "node --experimental-strip-types scripts/bench/run_phase0.ts",
     "bench:analyze": "node --experimental-strip-types scripts/bench/analyze_phase0.ts",
+    "bench:bugsinpy": "node --experimental-strip-types scripts/bench_medium/bugsinpy/run.ts",
     "typecheck": "tsc --noEmit",
     "merlion": "node --experimental-strip-types src/index.ts",
     "agents:update": "node --experimental-strip-types scripts/agents/update.ts",

@@ -79,6 +79,16 @@ npm run agents:update:staged
 npm run agents:lint
 ```
 
+## Bench
+
+Merlion ships with two benchmark lanes:
+
+- `npm run bench:phase0`
+- `npm run bench:bugsinpy`
+
+`bench:phase0` is the fast fixture-based regression lane.
+`bench:bugsinpy` is the separate medium-weight Python bug-fix lane and requires a local `BugsInPy` clone via `MERLION_BUGSINPY_HOME` or `BUGSINPY_HOME`.
+
 ---
 
 # Merlion（中文）
@@ -150,3 +160,13 @@ npm run hooks:install
 npm run agents:update:staged
 npm run agents:lint
 ```
+
+## Bench / 评测
+
+Merlion 现在有两条评测链路：
+
+- `npm run bench:phase0`
+- `npm run bench:bugsinpy`
+
+`bench:phase0` 是快速的 fixture 型回归评测。
+`bench:bugsinpy` 是单独的中量级 Python 真实缺陷评测，需要通过 `MERLION_BUGSINPY_HOME` 或 `BUGSINPY_HOME` 指向本地 `BugsInPy` 仓库。

@@ -1,0 +1,17 @@
+{
+  "id": "BIP002_YOUTUBEDL_2",
+  "title": "youtube-dl bug 2",
+  "project": "youtube-dl",
+  "bug_id": 2,
+  "version": "buggy",
+  "timeout_sec": 1500,
+  "acceptance_mode": "relevant",
+  "regression_mode": "all",
+  "python_version_hint": "dataset-managed",
+  "tags": ["python", "cli", "real-repo"],
+  "status": "seeded",
+  "notes": [
+    "The project/bug id pair is referenced in public BugsInPy examples.",
+    "This seed is included to cover a CLI-style Python project."
+  ]
+}
