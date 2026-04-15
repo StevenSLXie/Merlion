@@ -1,30 +1,12 @@
-export type ReplInput =
-  | { kind: 'exit' }
-  | { kind: 'help' }
-  | { kind: 'wechat_login' }
-  | { kind: 'empty' }
-  | { kind: 'shell'; command: string }
-  | { kind: 'set_detail'; mode: 'full' | 'compact' }
-  | { kind: 'prompt'; prompt: string }
+import { processUserInput } from '../runtime/input/process.ts'
+import type { UserInputEnvelope } from '../runtime/input/types.ts'
+
+export type ReplInput = UserInputEnvelope
 
 const REPL_HELP_TEXT = 'Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen)\n'
 
 export function parseReplInput(input: string): ReplInput {
-  const trimmed = input.trim()
-  if (trimmed === '') return { kind: 'empty' }
-  if (trimmed === ':q' || trimmed === ':quit' || trimmed === ':exit') return { kind: 'exit' }
-  if (trimmed === ':help') return { kind: 'help' }
-  if (/^[:/]wechat(?:\s+login)?$/i.test(trimmed)) return { kind: 'wechat_login' }
-  const shellMatch = input.match(/^!\s+(.+)$/)
-  if (shellMatch) {
-    const command = shellMatch[1]!.trim()
-    if (command !== '') return { kind: 'shell', command }
-  }
-  const detailMatch = trimmed.match(/^:detail\s+(full|compact)$/i)
-  if (detailMatch) {
-    return { kind: 'set_detail', mode: detailMatch[1]!.toLowerCase() as 'full' | 'compact' }
-  }
-  return { kind: 'prompt', prompt: trimmed }
+  return processUserInput(input)
 }
 
 export interface RunReplSessionOptions {
@@ -54,15 +36,15 @@ export async function runReplSession(options: RunReplSessionOptions): Promise<vo
     if (line === null) break
 
     const parsed = parseReplInput(line)
-    if (parsed.kind === 'exit') {
+    if (parsed.kind === 'local_action' && parsed.action === 'exit') {
       options.write('Bye.\n')
       break
     }
-    if (parsed.kind === 'help') {
+    if (parsed.kind === 'local_action' && parsed.action === 'help') {
       options.write(REPL_HELP_TEXT)
       continue
     }
-    if (parsed.kind === 'wechat_login') {
+    if (parsed.kind === 'slash_command' && parsed.name === 'wechat') {
       if (!options.onWechatLogin) {
         options.write('[wechat] command unavailable in this mode.\n')
         continue
@@ -74,12 +56,13 @@ export async function runReplSession(options: RunReplSessionOptions): Promise<vo
       }
       continue
     }
-    if (parsed.kind === 'set_detail') {
-      await options.onSetDetailMode?.(parsed.mode)
-      options.write(`[ui] tool detail mode = ${parsed.mode}\n`)
+    if (parsed.kind === 'local_action' && parsed.action === 'set_detail') {
+      const mode = parsed.payload as 'full' | 'compact'
+      await options.onSetDetailMode?.(mode)
+      options.write(`[ui] tool detail mode = ${mode}\n`)
       continue
     }
-    if (parsed.kind === 'shell') {
+    if (parsed.kind === 'shell_shortcut') {
       if (!options.runShellCommand) {
         options.write('[shell] command unavailable in this mode.\n')
         continue
@@ -97,10 +80,15 @@ export async function runReplSession(options: RunReplSessionOptions): Promise<vo
     }
     if (parsed.kind === 'empty') continue
 
-    await options.onPromptSubmitted?.(parsed.prompt)
-    const result = await options.runTurn(parsed.prompt)
+    if (parsed.kind !== 'prompt') {
+      options.write('[input] unsupported input envelope in REPL.\n')
+      continue
+    }
+
+    await options.onPromptSubmitted?.(parsed.text)
+    const result = await options.runTurn(parsed.text)
     if (options.onTurnResult) {
-      await options.onTurnResult(result, parsed.prompt)
+      await options.onTurnResult(result, parsed.text)
     } else {
       options.write(`${result.output}\n`)
       if (result.terminal !== 'completed') {

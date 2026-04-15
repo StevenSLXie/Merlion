@@ -14,10 +14,14 @@ import { SenderSerialQueue } from './sender_queue.ts'
 import { OpenAICompatProvider } from '../../providers/openai.ts'
 import { buildDefaultRegistry } from '../../tools/builtin/index.ts'
 import { createPermissionStore } from '../../permissions/store.ts'
-import { createPromptSectionCache } from '../../prompt/sections.ts'
-import { buildMerlionSystemPrompt } from '../../prompt/system_prompt.ts'
-import { runLoop, type RunLoopResult } from '../../runtime/loop.ts'
+import type { RunLoopResult } from '../../runtime/loop.ts'
 import type { ChatMessage } from '../../types.ts'
+import { createContextService } from '../../context/service.ts'
+import type { RuntimeSink } from '../../runtime/events.ts'
+import { QueryEngine } from '../../runtime/query_engine.ts'
+import { RuntimeTaskRegistry } from '../../runtime/tasks/registry.ts'
+import { wechatMessageTaskHandler } from '../../runtime/tasks/handlers/wechat_message.ts'
+import type { WechatMessageTaskInput, WechatMessageTaskOutput } from '../../runtime/tasks/types.ts'
 
 const MAX_CONSECUTIVE_FAILURES = 3
 const BACKOFF_DELAY_MS = 30_000
@@ -180,8 +184,6 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
   })
   const registry = buildDefaultRegistry({ mode: 'wechat' })
   const permissions = createPermissionStore(permissionResolution.mode)
-  const sectionCache = createPromptSectionCache()
-  const systemPrompt = (await buildMerlionSystemPrompt({ cwd: opts.cwd, sectionCache })).text
   const maxTurns = parsePositiveInt(process.env.MERLION_WECHAT_MAX_TURNS, DEFAULT_WECHAT_MAX_TURNS)
   const maxProgressUpdates = parsePositiveInt(
     process.env.MERLION_WECHAT_MAX_PROGRESS_UPDATES,
@@ -203,9 +205,7 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
 
   function getHistory(senderId: string): ChatMessage[] {
     if (!histories.has(senderId)) {
-      histories.set(senderId, [
-        { role: 'system', content: systemPrompt },
-      ])
+      histories.set(senderId, [])
     }
     return histories.get(senderId)!
   }
@@ -276,30 +276,61 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
       }
 
       const history = getHistory(senderId)
-      const result = await runLoop({
+      const sink: RuntimeSink = {
+        renderBanner() {},
+        renderUserPrompt() {},
+        renderAssistantOutput() {},
+        clearTypedInputLine() {},
+        stopSpinner() {},
+        promptLabel() { return 'wechat> ' },
+        onTurnStart: ({ turn }) => {
+          void sendProgress(`进度：第 ${turn} 轮处理中…`)
+        },
+        onAssistantResponse() {},
+        onToolStart() {},
+        onToolResult() {},
+        onUsage() {},
+        onPhaseUpdate: (text) => {
+          if (!verboseProgressEnabled || !progressEnabled) return
+          void sendProgress(text)
+        },
+        onMapUpdated: (text) => {
+          if (!verboseProgressEnabled || !progressEnabled) return
+          void sendProgress(text)
+        },
+        setToolDetailMode() {},
+      }
+      const contextService = createContextService({
+        cwd: opts.cwd,
+        permissionMode: permissionResolution.mode,
+      })
+      const engine = new QueryEngine({
+        cwd: opts.cwd,
         provider,
         registry,
-        systemPrompt,
-        userPrompt: text,
-        cwd: opts.cwd,
         permissions,
-        initialMessages: history,
+        contextService,
+        model: opts.model,
+        initialMessages: [],
+        sink,
         maxTurns,
-        onTurnStart: async ({ turn }) => {
-          await sendProgress(`进度：第 ${turn} 轮处理中…`)
-        },
-        onToolBatchComplete: async ({ turn, results }) => {
-          if (!verboseProgressEnabled || !progressEnabled || results.length === 0) return
-          const failed = results.filter((item) => item.isError).length
-          const succeeded = results.length - failed
-          await sendProgress(`进度：第 ${turn} 轮工具执行完成（成功 ${succeeded}，失败 ${failed}）`)
-        },
       })
+      if (history.length > 0) {
+        await contextService.prefetchIfSafe()
+        await engine.resumeFromTranscript(history)
+      }
+      const handler = taskRegistry.get<WechatMessageTaskInput, WechatMessageTaskOutput>('wechat_message')
+      if (!handler) throw new Error('Missing wechat_message task handler')
+      const taskResult = await handler.run({
+        text,
+        renderReply: (current: RunLoopResult) => toPlainText(renderWeixinReply(current)),
+      }, { engine })
+      const result = taskResult.result
 
       // Persist updated history (result.state.messages includes the new turn)
       histories.set(senderId, trimHistory(result.state.messages))
 
-      const reply = toPlainText(renderWeixinReply(result))
+      const reply = taskResult.reply
       const chunks = splitForWeixin(reply)
       for (const chunk of chunks) {
         await sendWithRetry(chunk, contextToken)
@@ -417,3 +448,5 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
     }
   }
 }
+  const taskRegistry = new RuntimeTaskRegistry()
+  taskRegistry.register(wechatMessageTaskHandler)

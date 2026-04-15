@@ -20,20 +20,24 @@ Last Updated: `2026-04-15`
 Merlion 当前已经形成一个可工作的单 agent CLI runtime，核心特点是：
 
 - 以 `src/bootstrap/cli_args.ts` + `src/bootstrap/config_resolver.ts` 负责入口解析与配置解析。
+- 以 `src/runtime/query_engine.ts` 为中心承接 conversation-scoped runtime state 与单请求提交流程。
 - 以 `src/runtime/loop.ts` 为中心的同步 ReAct loop。
-- 以 `src/runtime/runner.ts` 为中心承接 session/orientation/artifact/runtime hook 编排。
+- 以 `src/runtime/runner.ts` 负责 CLI runtime wiring，并把任务分发给 `QueryEngine` + task runtime。
+- 以 `src/runtime/tasks/**` 负责最小 task runtime，把 `local_turn / verify_round / wechat_message` 从 runner 中拆出。
 - 以 `src/runtime/sinks/cli.ts` / `src/runtime/sinks/wechat.ts` 承接展示层和 transport 启动适配。
 - 以 `src/runtime/executor.ts` + `src/tools/registry.ts` 为中心的统一工具执行面。
 - 以 `.merlion/progress.md`、`.merlion/codebase_index.md`、`.merlion/maps/**` 为中心的 repo-local 轻量记忆/索引层。
-- 以 `src/context/orientation.ts` + `src/context/path_guidance.ts` 为中心的“启动注入 + 路径增量注入”上下文系统。
+- 以 `src/context/service.ts` 为中心统一 system prompt、orientation bootstrap、path guidance、trust-gated prefetch。
+- 以 `src/runtime/state/**` 为中心收拢 permission / compact / skill / memory runtime state。
+- 以 `src/runtime/input/**` 为中心把 REPL 输入先做 preprocessing，再决定是否进入 agent loop。
 - 以薄 `src/index.ts` 作为 main wiring，避免入口继续承载全部业务编排。
 
 同时也有明确短板：
 
-- 主编排已从 `src/index.ts` 抽出，但 `src/runtime/runner.ts` 仍然偏重，后续还值得继续向 task/runtime event 总线拆分。
+- 主编排已从 `src/index.ts` 抽出，且 `runner` 不再直接持有大部分会话状态；但 task runtime 仍是最小版，还没有完整 task graph / kill / list / status。
 - 虽然已引入 `tool catalog + tool pool assembly`，但当前过滤维度仍是首版，仅覆盖 `default/wechat` mode 与显式 include/exclude，离 free-code 那种完整 pool、deny-rule、MCP 合并层还有距离。
 - skill / MCP 在当前仓库中仍主要停留在设计和兼容性预留，没有真正落地到 runtime。
-- 记忆系统偏“结构化轻量 artifact”，还不是 free-code 那种更完整的会话上下文基础设施。
+- 记忆系统偏“结构化轻量 artifact + runtime state slices”，还不是 free-code 那种更完整的会话上下文基础设施。
 
 ---
 
@@ -44,28 +48,40 @@ Merlion 当前已经形成一个可工作的单 agent CLI runtime，核心特点
 当前主链路由以下模块构成：
 
 - `src/index.ts`
-  - 完成配置解析、provider 构造、registry 构造、session 初始化、orientation 注入、runtime hooks 绑定。
+-  - 薄入口，只做 CLI bootstrapping。
+- `src/runtime/runner.ts`
+  - 完成 provider / registry / sink / session file / QueryEngine / task runtime 的组装。
+- `src/runtime/query_engine.ts`
+  - 持有 conversation-scoped history、runtime state、tracked permissions、context bootstrap。
 - `src/runtime/loop.ts`
   - 负责单轮到多轮的 ReAct 主循环。
 - `src/runtime/executor.ts`
   - 负责工具调用分批、并发执行、结果回填。
+- `src/runtime/tasks/**`
+  - 负责 `local_turn`、`verify_round`、`wechat_message` 等任务分发。
+- `src/context/service.ts`
+  - 负责 system prompt 缓存、trust-gated prefetch、prompt prelude、path guidance 增量注入。
 - `src/providers/openai.ts`
   - 负责将消息与工具 schema 转成 OpenAI-compatible `/chat/completions` 请求。
 
 单次用户请求的实际数据流：
 
-1. `index.ts` 构造 `provider`、`registry`、`systemPrompt`、`initialMessages`
-2. `index.ts` 调用 `runLoop(...)`
-3. `runLoop()` 把 `state.messages` 发给 provider，并携带 `registry.getAll()` 的工具 schema
-4. 模型返回：
+1. `runner.ts` 构造 `provider`、`registry`、`ContextService`、`QueryEngine`
+2. 输入先经过 `src/runtime/input/process.ts`，决定是本地动作、shell shortcut、slash command，还是进入 prompt 提交
+3. `runner` 通过 `RuntimeTaskRegistry` 把请求分派为 `local_turn / verify_round / wechat_message`
+4. `QueryEngine` 初始化 system prompt、bootstrap context、tracked permissions、runtime state
+5. `QueryEngine.submitPrompt()` 调用 `runLoop()`
+6. `runLoop()` 把 `state.messages` 发给 provider，并携带 `registry.getAll()` 的工具 schema
+7. 模型返回：
    - 如果 `finish_reason === 'tool_calls'`，进入 `executeToolCalls()`
    - 否则结束当前请求
-5. 工具结果以 `role: 'tool'` 消息回填到 `state.messages`
-6. 继续下一轮，直到得到最终文本或触发 terminal condition
+8. 工具结果以 `role: 'tool'` 消息回填到 `state.messages`
+9. `QueryEngine` 在回合后统一更新 path guidance / codebase index / progress / compact state / permission state
+10. 继续下一轮，直到得到最终文本或触发 terminal condition
 
 ### 1.2 Loop State
 
-`src/runtime/loop.ts` 的 `LoopState` 目前是轻量状态机：
+`src/runtime/loop.ts` 的 `LoopState` 仍然是轻量状态机：
 
 - `messages`
 - `turnCount`
@@ -73,7 +89,19 @@ Merlion 当前已经形成一个可工作的单 agent CLI runtime，核心特点
 - `hasAttemptedReactiveCompact`
 - `nudgeCount`
 
-这说明当前 runtime 有意保持简单：
+但现在外层已经补上了 `QueryEngine` 的 conversation-scoped runtime state：
+
+- `permissions`
+- `compact`
+- `skills`
+- `memory`
+
+这意味着当前 runtime 已经不再是“所有状态都挂在 loop 局部变量里”，而是采用“两层状态”：
+
+- `LoopState`: 单次 `runLoop()` 的瞬时控制状态
+- `RuntimeState`: 横跨一个 conversation / session 的结构化运行时状态
+
+这说明当前 runtime 采用的是“保持 loop 简洁，但把跨回合状态外移”的做法：
 
 - 不引入额外 query object / task object
 - 不做多层 actor state machine
@@ -87,8 +115,8 @@ Merlion 当前已经形成一个可工作的单 agent CLI runtime，核心特点
 
 代价：
 
-- 很多“运行时策略”只能靠局部变量和 hook 拼接，缺少统一 runtime state object。
-- 后续引入 MCP、skill activation、task/subagent、deferred tools 时会放大复杂度。
+- `runLoop()` 内仍有不少局部 guardrail 状态，离完全 runtime-owned 还有距离。
+- skill / memory 虽然已预留 runtime state slice，但暂未真正接入激活和重放逻辑。
 
 ### 1.3 当前 loop 的工程优化
 

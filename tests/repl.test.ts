@@ -4,16 +4,16 @@ import assert from 'node:assert/strict'
 import { parseReplInput, runReplSession } from '../src/cli/repl.ts'
 
 test('parseReplInput handles commands and prompt', () => {
-  assert.deepEqual(parseReplInput(':q'), { kind: 'exit' })
-  assert.deepEqual(parseReplInput(':quit'), { kind: 'exit' })
-  assert.deepEqual(parseReplInput(':help'), { kind: 'help' })
-  assert.deepEqual(parseReplInput(':wechat'), { kind: 'wechat_login' })
-  assert.deepEqual(parseReplInput('/wechat'), { kind: 'wechat_login' })
-  assert.deepEqual(parseReplInput('! echo ok'), { kind: 'shell', command: 'echo ok' })
-  assert.deepEqual(parseReplInput(':detail compact'), { kind: 'set_detail', mode: 'compact' })
-  assert.deepEqual(parseReplInput(':detail FULL'), { kind: 'set_detail', mode: 'full' })
+  assert.deepEqual(parseReplInput(':q'), { kind: 'local_action', action: 'exit' })
+  assert.deepEqual(parseReplInput(':quit'), { kind: 'local_action', action: 'exit' })
+  assert.deepEqual(parseReplInput(':help'), { kind: 'local_action', action: 'help' })
+  assert.deepEqual(parseReplInput(':wechat'), { kind: 'slash_command', name: 'wechat', raw: ':wechat' })
+  assert.deepEqual(parseReplInput('/wechat'), { kind: 'slash_command', name: 'wechat', raw: '/wechat' })
+  assert.deepEqual(parseReplInput('! echo ok'), { kind: 'shell_shortcut', command: 'echo ok' })
+  assert.deepEqual(parseReplInput(':detail compact'), { kind: 'local_action', action: 'set_detail', payload: 'compact' })
+  assert.deepEqual(parseReplInput(':detail FULL'), { kind: 'local_action', action: 'set_detail', payload: 'full' })
   assert.deepEqual(parseReplInput('   '), { kind: 'empty' })
-  assert.deepEqual(parseReplInput('fix auth flow'), { kind: 'prompt', prompt: 'fix auth flow' })
+  assert.deepEqual(parseReplInput('fix auth flow'), { kind: 'prompt', text: 'fix auth flow' })
 })
 
 test('runReplSession loops prompts and exits', async () => {

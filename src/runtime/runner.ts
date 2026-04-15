@@ -5,14 +5,9 @@ import { getSystemSlashCommands } from '../cli/commands.ts'
 import { readReplInputLine } from '../cli/input_buffer.ts'
 import { runReplSession } from '../cli/repl.ts'
 import { createPermissionStore } from '../permissions/store.ts'
-import { createPromptSectionCache } from '../prompt/sections.ts'
-import { buildMerlionSystemPrompt } from '../prompt/system_prompt.ts'
 import { OpenAICompatProvider } from '../providers/openai.ts'
-import type { PromptObservabilitySnapshot } from './prompt_observability.ts'
 import { createPromptObservabilityTrackerWithToolSchema } from './prompt_observability.ts'
-import { detectSuccessfulGitCommit, summarizeToolBatchMilestones } from './tool_batch_milestones.ts'
-import { buildIntentContract, extractExplicitTargetPaths } from './intent_contract.ts'
-import { runLoop } from './loop.ts'
+import { buildIntentContract } from './intent_contract.ts'
 import {
   appendSessionMeta,
   appendTranscriptMessage,
@@ -22,31 +17,21 @@ import {
   loadSessionMessages,
 } from './session.ts'
 import { calculateUsageCostUsd, createUsageTracker, type UsageRates } from './usage.ts'
-import { loadAgentsGuidance } from '../artifacts/agents.ts'
-import { ensureGeneratedAgentsMaps } from '../artifacts/agents_bootstrap.ts'
-import {
-  refreshCodebaseIndex,
-  updateCodebaseIndexWithChangedFiles,
-} from '../artifacts/codebase_index.ts'
-import { detectPotentialStaleGuidance } from '../artifacts/guidance_staleness.ts'
-import { updateProgressFromRuntimeSignals } from '../artifacts/progress_auto.ts'
-import { buildOrientationContext } from '../context/orientation.ts'
-import {
-  buildPathGuidanceDelta,
-  createPathGuidanceState,
-  extractCandidatePathsFromText,
-  extractCandidatePathsFromToolEvent,
-} from '../context/path_guidance.ts'
+import { createContextService } from '../context/service.ts'
 import { buildDefaultRegistry } from '../tools/builtin/index.ts'
 import { bashTool } from '../tools/builtin/bash.ts'
 import { discoverVerificationChecks } from '../verification/checks.ts'
-import { runVerificationFixRounds } from '../verification/fix_round.ts'
 import { runVerificationChecks } from '../verification/runner.ts'
 import { runConfigWizard } from '../config/wizard.ts'
 import type { MerlionProvider } from '../config/store.ts'
 import { CliRuntimeSink } from './sinks/cli.ts'
 import { launchWeixinSinkMode } from './sinks/wechat.ts'
 import { askStructuredQuestions } from './ask_user_question.ts'
+import { QueryEngine } from './query_engine.ts'
+import { RuntimeTaskRegistry } from './tasks/registry.ts'
+import { localTurnTaskHandler } from './tasks/handlers/local_turn.ts'
+import { verificationTaskHandler } from './tasks/handlers/verify_round.ts'
+import type { LocalTurnTaskInput, LocalTurnTaskOutput, VerificationTaskInput, VerificationTaskOutput } from './tasks/types.ts'
 
 export interface CliRuntimeOptions {
   task: string
@@ -247,84 +232,68 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
   const initialMessagesFromResume = options.resumeSessionId
     ? await loadSessionMessages(session.transcriptPath)
     : undefined
-  const initialMessages = initialMessagesFromResume ?? [
-    { role: 'system' as const, content: 'You are Merlion, a coding agent. Use tools to complete the task.' }
-  ]
-  let startupMapSummary: string | null = null
-  let generatedMapMode = false
-  if (!options.resumeSessionId && initialMessages.length > 0) {
-    try {
-      const bootstrap = await ensureGeneratedAgentsMaps(options.cwd)
-      generatedMapMode =
-        bootstrap.created ||
-        bootstrap.generatedFiles.some((file) => file.replace(/\\/g, '/').includes('.merlion/maps/'))
-      if (bootstrap.created) {
-        startupMapSummary =
-          `initialized generated project map (${bootstrap.generatedFiles.length} scope` +
-          `${bootstrap.generatedFiles.length === 1 ? '' : 's'})`
-      } else if (bootstrap.generatedFiles.length > 0) {
-        startupMapSummary =
-          `generated project map up to date (${bootstrap.generatedFiles.length} scope` +
-          `${bootstrap.generatedFiles.length === 1 ? '' : 's'})`
-      }
-    } catch (error) {
-      process.stderr.write(`Agents map bootstrap warning: ${String(error)}\n`)
-    }
-    await appendTranscriptMessage(session.transcriptPath, initialMessages[0]!)
-    try {
-      await refreshCodebaseIndex(options.cwd)
-      const orientation = await buildOrientationContext(options.cwd, loadOrientationBudgetsFromEnv())
-      if (orientation.text.trim() !== '') {
-        const orientationMessage = {
-          role: 'system' as const,
-          content:
-            'Project orientation context. Use this as a starting map, then verify with tools before edits.\n\n' +
-            orientation.text
-        }
-        initialMessages.push(orientationMessage)
-        await appendTranscriptMessage(session.transcriptPath, orientationMessage)
-      }
-    } catch (error) {
-      process.stderr.write(`Orientation build warning: ${String(error)}\n`)
-    }
-  }
-
-  const promptSectionCache = createPromptSectionCache()
-  const systemPrompt = (
-    await buildMerlionSystemPrompt({
-      cwd: options.cwd,
-      sectionCache: promptSectionCache
-    })
-  ).text
-  let history = initialMessages
   const usageTracker = createUsageTracker()
   const usageRates = loadUsageRatesFromEnv()
-  const pathGuidanceBudgets = loadPathGuidanceBudgetsFromEnv()
-  const pathGuidanceState = createPathGuidanceState()
-  let lastWorkingTreeFingerprint: string | null = null
   const sink = new CliRuntimeSink({
     model: options.model,
     sessionId: session.sessionId,
     isRepl: options.repl
   })
+  const contextService = createContextService({
+    cwd: options.cwd,
+    permissionMode: options.permissionMode,
+    orientationBudgets: loadOrientationBudgetsFromEnv(),
+    pathGuidanceBudgets: loadPathGuidanceBudgetsFromEnv(),
+  })
+
+  let engine = new QueryEngine({
+    cwd: options.cwd,
+    provider,
+    registry,
+    permissions,
+    contextService,
+    model: options.model,
+    sessionId: session.sessionId,
+    initialMessages: options.resumeSessionId ? [] : undefined,
+    maxTurns: 100,
+    askQuestions: (questions) => askStructuredQuestions(questions, { readLine: askLine }),
+    sink,
+    promptObservabilityTracker,
+    persistMessage: async (message) => {
+      await appendTranscriptMessage(session.transcriptPath, message)
+    },
+    persistUsage: async (entry) => {
+      await appendUsage(session.usagePath, {
+        timestamp: new Date().toISOString(),
+        session_id: session.sessionId,
+        model: options.model,
+        provider: entry.provider,
+        prompt_tokens: entry.prompt_tokens,
+        completion_tokens: entry.completion_tokens,
+        cached_tokens: entry.cached_tokens ?? null,
+        tool_schema_tokens_estimate: toolSchemaTokensEstimate,
+        prompt_observability: entry.promptObservability,
+      })
+    },
+    usageTracker,
+    usageRates,
+    toolSchemaTokensEstimate,
+    buildIntentContract: (prompt) => buildIntentContract(prompt) ?? undefined,
+  })
+  if (initialMessagesFromResume) {
+    await contextService.prefetchIfSafe()
+    await engine.resumeFromTranscript(initialMessagesFromResume)
+  }
+  const taskRegistry = new RuntimeTaskRegistry()
+  taskRegistry.register(localTurnTaskHandler)
+  taskRegistry.register(verificationTaskHandler)
+
+  await engine.initialize()
 
   sink.renderBanner()
-  if (startupMapSummary) {
-    sink.onMapUpdated(startupMapSummary)
+  if (engine.getStartupMapSummary()) {
+    sink.onMapUpdated(engine.getStartupMapSummary()!)
   }
-
-  try {
-    const seeded = await loadAgentsGuidance(options.cwd, { maxTokens: 1 })
-    if (seeded.files.some((file) => file.replace(/\\/g, '/').includes('/.merlion/maps/'))) {
-      generatedMapMode = true
-    }
-    for (const file of seeded.files) {
-      pathGuidanceState.loadedAgentFiles.add(file)
-    }
-  } catch (error) {
-    process.stderr.write(`Path guidance seed warning: ${String(error)}\n`)
-  }
-
   async function applyWizardConfig(): Promise<boolean> {
     const result = await runConfigWizard({
       provider: options.provider,
@@ -349,225 +318,79 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
       baseURL: options.baseURL,
       model: options.model
     })
-    return true
-  }
-
-  const runTurn = async (prompt: string) => {
-    const changedFiles = new Set<string>()
-    const toolPathSignals = new Set<string>()
-    let sawSuccessfulGitCommit = false
-    let sawWorkspaceMutationSignal = false
-    let workingTreeSnapshotChanged = false
-    let latestPromptObservability: PromptObservabilitySnapshot | undefined
-    const explicitTargetPaths = extractExplicitTargetPaths(prompt)
-    const promptPathCandidates = new Set<string>(explicitTargetPaths)
-    for (const candidate of await extractCandidatePathsFromText(options.cwd, prompt)) {
-      promptPathCandidates.add(candidate)
-    }
-    const intentContract = buildIntentContract(prompt) ?? undefined
-    const seededMessages = [...history]
-    if (promptPathCandidates.size > 0) {
-      const seededList = [...promptPathCandidates].slice(0, 8)
-      seededMessages.push({
-        role: 'system' as const,
-        content: [
-          'User-specified target paths detected.',
-          'Inspect these paths, or their nearest directories/tests, before any repo-wide recursive exploration.',
-          'Only widen scope if these paths are missing, invalid, or insufficient for the task.',
-          ...seededList.map((item) => `- ${item}`),
-        ].join('\n'),
-      })
-      const promptDelta = await buildPathGuidanceDelta(
-        options.cwd,
-        seededList,
-        pathGuidanceState,
-        pathGuidanceBudgets,
-      )
-      if (promptDelta.text.trim() !== '') {
-        seededMessages.push({
-          role: 'system' as const,
-          content:
-            'Prompt-derived path guidance. Use this to focus your first tool calls.\n\n' +
-            promptDelta.text,
-        })
-      }
-    }
-    const result = await runLoop({
+    engine = new QueryEngine({
+      cwd: options.cwd,
       provider,
       registry,
-      systemPrompt,
-      userPrompt: prompt,
-      intentContract,
-      cwd: options.cwd,
-      maxTurns: 100,
       permissions,
+      contextService,
+      model: options.model,
+      sessionId: session.sessionId,
+      initialMessages: engine.getMessages(),
+      maxTurns: 100,
       askQuestions: (questions) => askStructuredQuestions(questions, { readLine: askLine }),
-      initialMessages: seededMessages,
-      persistInitialMessages: false,
-      onMessageAppended: async (message) => {
+      sink,
+      promptObservabilityTracker,
+      persistMessage: async (message) => {
         await appendTranscriptMessage(session.transcriptPath, message)
       },
-      onUsage: async (usage) => {
+      persistUsage: async (entry) => {
         await appendUsage(session.usagePath, {
           timestamp: new Date().toISOString(),
           session_id: session.sessionId,
           model: options.model,
-          provider: usage.provider,
-          prompt_tokens: usage.prompt_tokens,
-          completion_tokens: usage.completion_tokens,
-          cached_tokens: usage.cached_tokens ?? null,
+          provider: entry.provider,
+          prompt_tokens: entry.prompt_tokens,
+          completion_tokens: entry.completion_tokens,
+          cached_tokens: entry.cached_tokens ?? null,
           tool_schema_tokens_estimate: toolSchemaTokensEstimate,
-          prompt_observability: latestPromptObservability
-        })
-        const snapshot = usageTracker.record(usage)
-        const estimatedCost = usageRates ? calculateUsageCostUsd(snapshot.totals, usageRates) : undefined
-        sink.onUsage({
-          snapshot,
-          estimatedCost,
-          provider: usage.provider,
-          promptObservability: latestPromptObservability
+          prompt_observability: entry.promptObservability,
         })
       },
-      onPromptObservability: (snapshot) => {
-        latestPromptObservability = snapshot
-      },
-      promptObservabilityTracker,
-      onTurnStart: ({ turn }) => {
-        sink.onTurnStart({ turn })
-      },
-      onAssistantResponse: ({ turn, finish_reason, tool_calls_count }) => {
-        sink.onAssistantResponse({ turn, finish_reason, tool_calls_count })
-      },
-      onToolCallStart: ({ call, index, total }) => {
-        sink.onToolStart({
-          index,
-          total,
-          name: call.function.name,
-          summary: call.function.arguments
-        })
-      },
-      onToolCallResult: async ({ call, index, total, durationMs, isError, uiPayload, message }) => {
-        sink.onToolResult({
-          index,
-          total,
-          name: call.function.name,
-          isError,
-          durationMs,
-          uiPayload
-        })
-        if (!isError) {
-          const changedFromCall = extractChangedPathsFromToolCall(call.function.name, call.function.arguments)
-          for (const path of changedFromCall) {
-            changedFiles.add(path)
-          }
-          if (changedFromCall.length > 0 || call.function.name === 'bash' || call.function.name === 'run_script') {
-            sawWorkspaceMutationSignal = true
-          }
-        }
-        const candidates = await extractCandidatePathsFromToolEvent(options.cwd, {
-          call,
-          message
-        })
-        for (const candidate of candidates) toolPathSignals.add(candidate)
-      },
-      onToolBatchComplete: async ({ results }) => {
-        for (const line of summarizeToolBatchMilestones(results)) {
-          sink.onPhaseUpdate(line)
-        }
-        if (detectSuccessfulGitCommit(results)) {
-          sawSuccessfulGitCommit = true
-        }
-        if (results.length === 0 && toolPathSignals.size === 0) return
-        const delta = await buildPathGuidanceDelta(
-          options.cwd,
-          [...toolPathSignals],
-          pathGuidanceState,
-          pathGuidanceBudgets,
-        )
-        if (delta.text.trim() === '') return
-        sink.onMapUpdated(
-          `guidance updated (${delta.loadedFiles.length} file${delta.loadedFiles.length === 1 ? '' : 's'}): ${delta.loadedFiles.join(', ')}`
-        )
-        return [
-          {
-            role: 'system' as const,
-            content:
-              'Path guidance update. Use this to narrow your next tool calls before broad scans.\n\n' +
-              delta.text
-          }
-        ]
-      },
+      usageTracker,
+      usageRates,
+      toolSchemaTokensEstimate,
+      buildIntentContract: (prompt) => buildIntentContract(prompt) ?? undefined,
     })
-    if (sawWorkspaceMutationSignal || sawSuccessfulGitCommit) {
-      const workingTreePaths = collectGitWorkingTreePaths(options.cwd)
-      const fingerprint = [...new Set(workingTreePaths)].sort().join('\n')
-      if (fingerprint !== lastWorkingTreeFingerprint) {
-        workingTreeSnapshotChanged = true
-        lastWorkingTreeFingerprint = fingerprint
-        for (const path of workingTreePaths) {
-          changedFiles.add(path)
-        }
-      }
-    }
-    if (sawSuccessfulGitCommit) {
-      for (const path of collectLatestCommitPaths(options.cwd)) {
-        changedFiles.add(path)
-      }
-    }
+    await engine.resumeFromTranscript(engine.getMessages())
+    return true
+  }
 
-    if (changedFiles.size > 0) {
-      try {
-        await updateCodebaseIndexWithChangedFiles(options.cwd, [...changedFiles])
-        sink.onMapUpdated(
-          `codebase index updated (${changedFiles.size} changed file${changedFiles.size === 1 ? '' : 's'})`
-        )
-      } catch (error) {
-        process.stderr.write(`Codebase index update warning: ${String(error)}\n`)
-      }
+  const runTurn = async (prompt: string) => {
+    const handler = taskRegistry.get<LocalTurnTaskInput, LocalTurnTaskOutput>('local_turn')
+    if (!handler) throw new Error('Missing local_turn task handler')
+    const taskResult = await handler.run(
+      {
+        envelope: { kind: 'prompt', text: prompt.trim() },
+        executeSlashCommand: async (name: string) => {
+          if (name === 'wechat') {
+            await launchWeixinSinkMode({
+              model: options.model,
+              baseURL: options.baseURL,
+              apiKey: options.apiKey,
+              cwd: options.cwd,
+              forceLogin: true,
+              permissionMode: options.permissionMode,
+            })
+            return { output: '[wechat] Listener stopped. Back to runtime.', terminal: 'completed' }
+          }
+          return { output: `[command] unknown slash command: /${name}`, terminal: 'model_error' }
+        },
+        executeShellShortcut: async (command: string) => {
+          const result = await bashTool.execute({ command }, { cwd: options.cwd, permissions })
+          return {
+            output: result.content,
+            terminal: result.isError ? 'model_error' : 'completed',
+          }
+        },
+      },
+      { engine },
+    )
+    return taskResult.loopResult ?? {
+      terminal: taskResult.terminal as 'completed' | 'max_turns_exceeded' | 'model_error',
+      finalText: taskResult.output,
+      state: { messages: engine.getMessages(), turnCount: 0, maxOutputTokensRecoveryCount: 0, hasAttemptedReactiveCompact: false, nudgeCount: 0 },
     }
-
-    try {
-      const progressUpdate = await updateProgressFromRuntimeSignals(options.cwd, {
-        changedPaths: [...changedFiles],
-        sawSuccessfulGitCommit,
-      })
-      if (progressUpdate.updated) {
-        sink.onPhaseUpdate('阶段更新：progress 快照已同步到 .merlion/progress.md。')
-      }
-    } catch (error) {
-      process.stderr.write(`Progress auto-update warning: ${String(error)}\n`)
-    }
-
-    if (changedFiles.size > 0) {
-      try {
-        const staleHints = await detectPotentialStaleGuidance(options.cwd, [...changedFiles])
-        if (staleHints.length > 0) {
-          const preview = staleHints.map((hint) => hint.guidanceFile).join(', ')
-          sink.onMapUpdated(`guidance may be stale after code changes: ${preview}`)
-        }
-      } catch (error) {
-        process.stderr.write(`Guidance staleness warning: ${String(error)}\n`)
-      }
-    }
-
-    if (generatedMapMode && (sawSuccessfulGitCommit || workingTreeSnapshotChanged)) {
-      try {
-        const refreshed = await ensureGeneratedAgentsMaps(options.cwd, {
-          force: workingTreeSnapshotChanged && !sawSuccessfulGitCommit
-        })
-        if (refreshed.created) {
-          sink.onMapUpdated(
-            `generated project map refreshed (${refreshed.generatedFiles.length} scope${refreshed.generatedFiles.length === 1 ? '' : 's'})`
-          )
-        } else if (sawSuccessfulGitCommit) {
-          sink.onMapUpdated('generated project map checked (up to date)')
-        }
-      } catch (error) {
-        process.stderr.write(`Generated map refresh warning: ${String(error)}\n`)
-      }
-    }
-    history = result.state.messages
-    return result
   }
 
   if (options.repl) {
@@ -671,8 +494,9 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
       const verifyMaxRounds = Math.max(0, Math.floor(parseEnvNumber('MERLION_VERIFY_MAX_ROUNDS') ?? 2))
       const verifyTimeoutMs = Math.max(1000, Math.floor(parseEnvNumber('MERLION_VERIFY_TIMEOUT_MS') ?? 180_000))
       process.stdout.write(`[verify] discovered ${checks.length} checks\n`)
-
-      const outcome = await runVerificationFixRounds({
+      const verifyHandler = taskRegistry.get<VerificationTaskInput, VerificationTaskOutput>('verify_round')
+      if (!verifyHandler) throw new Error('Missing verify_round task handler')
+      const outcome = await verifyHandler.run({
         maxRounds: verifyMaxRounds,
         runVerification: async () =>
           runVerificationChecks({
@@ -683,20 +507,20 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
               process.stdout.write(`[verify] ${item.status} ${item.name} (${item.durationMs}ms)\n`)
             },
           }),
-        runFixTurn: async (prompt, round) => {
+        runFixTurn: async (prompt: string, round: number) => {
           sink.renderUserPrompt(`[verification round ${round}] ${prompt}`)
           const fixResult = await runTurn(prompt)
           sink.renderAssistantOutput(fixResult.finalText, fixResult.terminal)
         },
-        onRound: ({ round, action }) => {
+        onRound: ({ round, action }: { round: number; action: 'fix' | 'pass' | 'stop' }) => {
           if (action === 'fix') {
             process.stdout.write(`[verify] round ${round + 1}: applying automatic fix attempt\n`)
           }
           if (action === 'pass') {
             process.stdout.write('[verify] all checks passed\n')
           }
-        }
-      })
+        },
+      }, { engine })
 
       if (!outcome.passed) {
         process.stderr.write('[verify] failed after max fix rounds\n')
