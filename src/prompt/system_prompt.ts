@@ -19,6 +19,12 @@ export const SYSTEM_PROMPT_STATIC_SECTIONS: string[] = [
     '2) search/read inside candidates first,',
     '3) widen scope only when evidence is insufficient,',
     '4) when AGENTS guidance conflicts, nearest directory scope wins.'
+  ].join(' '),
+  [
+    'Bug-fix discipline:',
+    'when the task is fixing a bug/regression, treat failing tests, logs, and repro steps as specification,',
+    'prefer implementation/source edits before test edits,',
+    'and only rewrite tests first when the user explicitly asks or strong evidence shows the tests are wrong.'
   ].join(' ')
 ]
 

@@ -104,6 +104,7 @@ test('buildMerlionSystemPrompt reuses session-cached dynamic sections', async ()
   })
 
   assert.match(first.text, /Use path-guided exploration/)
+  assert.match(first.text, /Bug-fix discipline:/)
   assert.match(first.text, /Workspace scope:/)
   assert.equal(first.sections.every((x) => x.fromCache === false), true)
   assert.equal(second.sections.every((x) => x.fromCache === true), true)

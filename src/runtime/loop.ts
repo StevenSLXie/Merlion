@@ -7,6 +7,7 @@ import { withRetry } from './retry.ts'
 import { ToolRegistry } from '../tools/registry.ts'
 import { compactMessages, estimateMessagesChars } from '../context/compact.ts'
 import { createPromptObservabilityTracker, type PromptObservabilitySnapshot } from './prompt_observability.ts'
+import { isBugFixPrompt } from './intent_contract.ts'
 
 export interface RunLoopOptions {
   provider: ModelProvider
@@ -73,6 +74,7 @@ const MAX_AUTO_TOOL_ERROR_HINTS = 3
 const NO_PROGRESS_BATCH_THRESHOLD = 3
 const MAX_NO_PROGRESS_HINTS = 2
 const NO_MUTATION_BATCH_THRESHOLD = 4
+const BUGFIX_NO_MUTATION_BATCH_THRESHOLD = 3
 const MAX_NO_MUTATION_HINTS = 2
 const MAX_MUTATION_OSCILLATION_HINTS = 2
 const COMPLETION_HINT_PATTERNS: RegExp[] = [
@@ -292,6 +294,7 @@ type MutationEvent = {
   detail: string
   turn: number
   kind: MutationKind
+  path: string
 }
 
 function normalizePathInput(cwd: string, value: unknown): string | null {
@@ -309,21 +312,34 @@ function toMutationEvent(cwd: string, event: ToolCallResultEvent, turn: number):
   if (tool === 'delete_file') {
     const path = normalizePathInput(cwd, args.path)
     if (!path) return null
-    return { signature: `path:${path}`, detail: `delete_file ${path}`, turn, kind: 'remove' }
+    return { signature: `path:${path}`, detail: `delete_file ${path}`, turn, kind: 'remove', path }
   }
   if (tool === 'create_file' || tool === 'write_file' || tool === 'append_file' || tool === 'edit_file') {
     const rawPath = typeof args.path === 'string' ? args.path : args.file_path
     const path = normalizePathInput(cwd, rawPath)
     if (!path) return null
-    return { signature: `path:${path}`, detail: `${tool} ${path}`, turn, kind: 'materialize' }
+    return { signature: `path:${path}`, detail: `${tool} ${path}`, turn, kind: 'materialize', path }
   }
   if (tool === 'move_file') {
     const from = normalizePathInput(cwd, args.from_path)
     const to = normalizePathInput(cwd, args.to_path)
     if (!from || !to) return null
-    return { signature: `move:${from}->${to}`, detail: `move_file ${from} -> ${to}`, turn, kind: 'move' }
+    return { signature: `move:${from}->${to}`, detail: `move_file ${from} -> ${to}`, turn, kind: 'move', path: to }
   }
   return null
+}
+
+function looksLikeTestPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/').toLowerCase()
+  return (
+    normalized.includes('/test/') ||
+    normalized.includes('/tests/') ||
+    normalized.includes('/spec/') ||
+    normalized.includes('/specs/') ||
+    /(?:^|\/)test_[^/]+\.[a-z0-9]+$/i.test(normalized) ||
+    /(?:^|\/)[^/]+_test\.[a-z0-9]+$/i.test(normalized) ||
+    /(?:^|\/)[^/]+(?:\.test|\.spec)\.[a-z0-9]+$/i.test(normalized)
+  )
 }
 
 function isMutationOscillation(previous: MutationEvent, current: MutationEvent): boolean {
@@ -356,7 +372,15 @@ function formatNoProgressHint(count: number): string {
   )
 }
 
-function formatNoMutationHint(count: number): string {
+function formatNoMutationHint(count: number, bugFixMode: boolean): string {
+  if (bugFixMode) {
+    return (
+      `Bug-fix convergence: the last ${count} tool batches produced no successful file change. ` +
+      'Stop broad exploration. Use the failing tests/logs and code you already inspected to pick one likely implementation/source file, ' +
+      'read it fully, and either apply one minimal source edit or state the concrete blocker. ' +
+      'Do not keep expanding into adjacent helpers or rewrite tests first unless the evidence is strong.'
+    )
+  }
   return (
     `No material progress detected: the last ${count} tool batches produced no successful file change. ` +
     'Stop broad exploration. Inspect the target file or nearest tests, then either apply one minimal edit ' +
@@ -379,6 +403,16 @@ function formatMutationOscillationHint(previous: MutationEvent, current: Mutatio
   )
 }
 
+function formatTestFirstBugFixHint(paths: string[]): string {
+  const sample = paths.slice(0, 3).map((path) => `\`${path}\``).join(', ')
+  return (
+    'Bug-fix guardrail: your first successful file changes touched only test files' +
+    (sample ? ` (${sample})` : '') +
+    '. In bug-fix/regression work, treat tests as specification and prefer implementation/source changes first. ' +
+    'Only rewrite tests before source files when the user explicitly asked for test edits or strong evidence shows the tests are wrong.'
+  )
+}
+
 export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   const state = createState(options.systemPrompt, options.userPrompt, options.initialMessages)
   const maxTurns = options.maxTurns ?? 100
@@ -395,11 +429,14 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   let totalToolBatches = 0
   let noMutationStopRecoveryCount = 0
   let mutationOscillationHintCount = 0
+  let testFirstBugFixHintInjected = false
+  let hasSuccessfulNonTestMutation = false
   const repeatedToolErrorCounts = new Map<string, number>()
   const hintedToolErrorSignatures = new Set<string>()
   const mutationHistory: MutationEvent[] = []
   const mutationOscillationSignatures = new Set<string>()
   const promptObservability = options.promptObservabilityTracker ?? createPromptObservabilityTracker()
+  const bugFixMode = isBugFixPrompt(options.userPrompt)
 
   const defaultPermissions: PermissionStore = { ask: async () => 'allow' }
   const toolContext: ToolContext = {
@@ -553,43 +590,74 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
       }
 
       let batchMutationCount = 0
-      if (mutationOscillationHintCount < MAX_MUTATION_OSCILLATION_HINTS) {
-        let mutationHint: string | null = null
-        for (const event of toolResultEvents) {
-          const mutation = toMutationEvent(options.cwd, event, state.turnCount)
-          if (!mutation) continue
-          batchMutationCount += 1
-          const previous = mutationHistory[mutationHistory.length - 1]
-          if (previous && isMutationOscillation(previous, mutation)) {
-            const oscillationKey = `${previous.signature}|${mutation.signature}`
-            if (!mutationOscillationSignatures.has(oscillationKey)) {
-              mutationHint = formatMutationOscillationHint(previous, mutation)
-              mutationOscillationSignatures.add(oscillationKey)
-              mutationOscillationHintCount += 1
-            }
+      let sawTestOnlyMutationBatch = false
+      let sawNonTestMutationInBatch = false
+      const batchTestPaths: string[] = []
+      let mutationHint: string | null = null
+      for (const event of toolResultEvents) {
+        const mutation = toMutationEvent(options.cwd, event, state.turnCount)
+        if (!mutation) continue
+        batchMutationCount += 1
+        if (looksLikeTestPath(mutation.path)) {
+          batchTestPaths.push(mutation.path)
+        } else {
+          sawNonTestMutationInBatch = true
+        }
+        const previous = mutationHistory[mutationHistory.length - 1]
+        if (
+          mutationOscillationHintCount < MAX_MUTATION_OSCILLATION_HINTS &&
+          previous &&
+          isMutationOscillation(previous, mutation)
+        ) {
+          const oscillationKey = `${previous.signature}|${mutation.signature}`
+          if (!mutationOscillationSignatures.has(oscillationKey)) {
+            mutationHint = formatMutationOscillationHint(previous, mutation)
+            mutationOscillationSignatures.add(oscillationKey)
+            mutationOscillationHintCount += 1
           }
-          mutationHistory.push(mutation)
-          if (mutationHistory.length > 20) mutationHistory.shift()
         }
-        if (mutationHint) {
-          const mutationMessage: ChatMessage = { role: 'user', content: mutationHint }
-          state.messages.push(mutationMessage)
-          await options.onMessageAppended?.(mutationMessage)
-        }
+        mutationHistory.push(mutation)
+        if (mutationHistory.length > 20) mutationHistory.shift()
       }
+      if (mutationHint) {
+        const mutationMessage: ChatMessage = { role: 'user', content: mutationHint }
+        state.messages.push(mutationMessage)
+        await options.onMessageAppended?.(mutationMessage)
+      }
+      sawTestOnlyMutationBatch = batchMutationCount > 0 && batchTestPaths.length === batchMutationCount
       if (batchMutationCount > 0) {
         sawAnySuccessfulMutation = true
         consecutiveNoMutationBatches = 0
       } else if (toolResultEvents.length > 0) {
         consecutiveNoMutationBatches += 1
       }
+      if (sawNonTestMutationInBatch) {
+        hasSuccessfulNonTestMutation = true
+      }
       if (
-        consecutiveNoMutationBatches >= NO_MUTATION_BATCH_THRESHOLD &&
+        bugFixMode &&
+        !testFirstBugFixHintInjected &&
+        !hasSuccessfulNonTestMutation &&
+        sawTestOnlyMutationBatch
+      ) {
+        const bugFixHintMessage: ChatMessage = {
+          role: 'user',
+          content: formatTestFirstBugFixHint(batchTestPaths)
+        }
+        state.messages.push(bugFixHintMessage)
+        await options.onMessageAppended?.(bugFixHintMessage)
+        testFirstBugFixHintInjected = true
+      }
+      const noMutationThreshold = bugFixMode
+        ? BUGFIX_NO_MUTATION_BATCH_THRESHOLD
+        : NO_MUTATION_BATCH_THRESHOLD
+      if (
+        consecutiveNoMutationBatches >= noMutationThreshold &&
         noMutationHintCount < MAX_NO_MUTATION_HINTS
       ) {
         const noMutationMessage: ChatMessage = {
           role: 'user',
-          content: formatNoMutationHint(consecutiveNoMutationBatches)
+          content: formatNoMutationHint(consecutiveNoMutationBatches, bugFixMode)
         }
         state.messages.push(noMutationMessage)
         await options.onMessageAppended?.(noMutationMessage)

@@ -1,7 +1,7 @@
 # Merlion Runtime Technical Overview
 
 Status: `current implementation review + free-code comparison`  
-Last Updated: `2026-04-15`
+Last Updated: `2026-04-16`
 
 ## Purpose
 
@@ -217,7 +217,29 @@ Merlion 当前已经形成一个可工作的单 agent CLI runtime，核心特点
 
 这让 CLI 在 terminal 阶段更稳定，避免工具执行完但最终输出为空。
 
-#### 1.3.7 Retry、budget、observability
+#### 1.3.7 Bug-fix source-first guardrails
+
+`src/runtime/intent_contract.ts` + `src/runtime/loop.ts` + `src/prompt/system_prompt.ts`
+
+当前 runtime 已补上两层 bug-fix-specific guardrail，用来解决真实 benchmark 中暴露出的“修 bug 时探索过长、迟迟不进入有效 source mutation”问题：
+
+1. system prompt + intent contract
+   - 当任务看起来像 bug-fix / regression repair 时，显式强调：
+     - tests/logs/repro steps 是 specification
+     - 优先改 implementation/source
+     - 不要先改测试，除非用户明确要求或证据很强
+2. loop-level convergence hint
+   - bug-fix 模式下，如果连续多个 tool batch 没有任何成功文件修改，会比普通 no-mutation hint 更早触发
+   - 提示模型停止 broad exploration，收敛到一个最可能的 implementation file，并做一次最小 source edit
+3. first test-only mutation hint
+   - bug-fix 模式下，如果第一次成功 mutation 只触达 test-like path，会追加纠偏提示，防止测试先行漂移
+
+这类 guardrail 的价值在于：
+
+- 不针对某个 benchmark 项目写死
+- 但能把 coding agent 在修 bug 场景里的优先级拉回“先定位实现、再做最小补丁”
+
+#### 1.3.8 Retry、budget、observability
 
 相关模块：
 

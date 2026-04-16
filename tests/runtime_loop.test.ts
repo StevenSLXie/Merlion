@@ -937,6 +937,59 @@ test('loop injects no-mutation hint after consecutive tool batches without file 
   assert.equal(noMutationMessages.length, 1)
 })
 
+test('loop injects bug-fix convergence hint earlier for repeated no-mutation batches', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'scan-1' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'scan-2' }, 'call_2')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'scan-3' }, 'call_3')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEchoTool())
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'Fix the regression in git branch handling.',
+    cwd: process.cwd(),
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  const convergenceMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Bug-fix convergence:')
+  ))
+  assert.equal(convergenceMessages.length, 1)
+  assert.match(convergenceMessages[0]?.content ?? '', /pick one likely implementation\/source file/i)
+})
+
 test('loop blocks premature completion after errored tool runs with no successful mutation', async () => {
   const provider = new StubProvider([
     {
@@ -1037,4 +1090,118 @@ test('loop injects mutation oscillation hint on create/delete toggle', async () 
   assert.equal(oscillationMessages.length, 1)
   assert.match(oscillationMessages[0]?.content ?? '', /create_file/)
   assert.match(oscillationMessages[0]?.content ?? '', /delete_file/)
+})
+
+test('loop injects bug-fix source-first hint when first successful mutation touches only tests', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('edit_file', { path: 'tests/rules/test_git_branch_exists.py' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeAlwaysSuccessMutationTool('edit_file'))
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'Fix the bug in git branch handling.',
+    cwd: '/workspace/repo',
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  const guardrailMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Bug-fix guardrail:')
+  ))
+  assert.equal(guardrailMessages.length, 1)
+  assert.match(guardrailMessages[0]?.content ?? '', /tests\/rules\/test_git_branch_exists\.py/)
+  assert.match(guardrailMessages[0]?.content ?? '', /prefer implementation\/source changes first/i)
+})
+
+test('loop does not inject bug-fix source-first hint when first mutation is a source file', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('edit_file', { path: 'src/git_branch_exists.py' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeAlwaysSuccessMutationTool('edit_file'))
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'Fix the bug in git branch handling.',
+    cwd: '/workspace/repo',
+    maxTurns: 10
+  })
+
+  const guardrailMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Bug-fix guardrail:')
+  ))
+  assert.equal(guardrailMessages.length, 0)
+})
+
+test('loop does not inject bug-fix source-first hint for explicit test-edit requests', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('edit_file', { path: 'tests/auth.test.ts' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeAlwaysSuccessMutationTool('edit_file'))
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'Add a regression test in tests/auth.test.ts for the login flow.',
+    cwd: '/workspace/repo',
+    maxTurns: 10
+  })
+
+  const guardrailMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Bug-fix guardrail:')
+  ))
+  assert.equal(guardrailMessages.length, 0)
 })

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { assertCheckoutDir, computePythonPath, readBugInfo } from './common.ts'
@@ -8,6 +8,12 @@ import { assertCheckoutDir, computePythonPath, readBugInfo } from './common.ts'
 interface CompileOptions {
   repoDir: string
   pythonBin: string
+}
+
+export function getVenvBootstrapCommands(envPython: string): string[] {
+  return [
+    `${envPython} -m ensurepip --upgrade`,
+  ]
 }
 
 function parseArgs(argv: string[]): CompileOptions {
@@ -50,11 +56,24 @@ async function readRequirements(repoDir: string): Promise<string[]> {
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line !== '' && !line.startsWith('#')),
+    repoDir,
   )
 }
 
-export function sanitizeRequirements(lines: string[]): string[] {
-  return lines.filter((line) => line.toLowerCase() !== 'pkg-resources==0.0.0')
+function rewriteSelfEditableRequirement(line: string, repoDir: string): string {
+  const repoName = basename(repoDir).trim().toLowerCase()
+  if (repoName === '') return line
+  const eggMatch = line.match(/#egg=([A-Za-z0-9_.-]+)/)
+  const eggName = eggMatch?.[1]?.trim().toLowerCase()
+  if (!eggName || eggName !== repoName) return line
+  if (!/^(?:-e\s+)?git\+https?:\/\//i.test(line)) return line
+  return '-e .'
+}
+
+export function sanitizeRequirements(lines: string[], repoDir = ''): string[] {
+  return lines
+    .filter((line) => line.toLowerCase() !== 'pkg-resources==0.0.0')
+    .map((line) => (repoDir ? rewriteSelfEditableRequirement(line, repoDir) : line))
 }
 
 async function readRelevantCommands(repoDir: string): Promise<string[]> {
@@ -92,6 +111,7 @@ export async function compileCheckout(options: CompileOptions): Promise<void> {
   const pythonPath = computePythonPath(options.repoDir, bugInfo)
   const envPath = join(options.repoDir, 'env')
   const envBin = process.platform === 'win32' ? join(envPath, 'Scripts') : join(envPath, 'bin')
+  const envPython = process.platform === 'win32' ? join(envBin, 'python.exe') : join(envBin, 'python')
   const pipBin = process.platform === 'win32' ? join(envBin, 'pip.exe') : join(envBin, 'pip')
   const extraEnv = {
     VIRTUAL_ENV: envPath,
@@ -100,6 +120,9 @@ export async function compileCheckout(options: CompileOptions): Promise<void> {
   }
 
   await runCommand(`${options.pythonBin} -m venv env`, options.repoDir)
+  for (const command of getVenvBootstrapCommands(envPython)) {
+    await runCommand(command, options.repoDir, extraEnv)
+  }
 
   const requirements = await readRequirements(options.repoDir)
   if (requirements.length > 0) {

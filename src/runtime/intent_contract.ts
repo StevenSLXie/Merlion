@@ -11,6 +11,16 @@ function normalizeClause(text: string): string {
 
 const BACKTICK_PATH_RE = /`([^`\n]+\/[^`\n]+)`/g
 const BARE_PATH_RE = /(?:^|[\s(])((?:\.{1,2}\/)?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)(?=$|[\s).,;:])/g
+const BUGFIX_PROMPT_PATTERNS: RegExp[] = [
+  /\b(bug|buggy|fix|broken|failing|failure|regression|error|traceback|exception|repair|patch)\b/i,
+  /(修复|缺陷|报错|异常|失败|回归|补丁)/,
+]
+const TEST_EDIT_REQUEST_PATTERNS: RegExp[] = [
+  /\b(add|write|create|update|edit|adjust|rewrite|refactor|migrate|fix)\b[\s\S]{0,40}\b(test|tests|spec|specs|unit test|integration test|pytest|jest|vitest|mocha)\b/i,
+  /\b(test|tests|spec|specs|unit test|integration test|pytest|jest|vitest|mocha)\b[\s\S]{0,40}\b(add|write|create|update|edit|adjust|rewrite|refactor|migrate|fix)\b/i,
+  /(新增|添加|补|写|更新|修改|修复|重写|重构|迁移)[\s\S]{0,20}(测试|用例|单测|集成测试|spec)/,
+  /(测试|用例|单测|集成测试|spec)[\s\S]{0,20}(新增|添加|补|写|更新|修改|修复|重写|重构|迁移)/,
+]
 
 function looksLikeConstraint(text: string): boolean {
   return (
@@ -49,6 +59,35 @@ export function extractExplicitTargetPaths(userPrompt: string): string[] {
   return out
 }
 
+function looksLikeTestPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/').toLowerCase()
+  return (
+    normalized.includes('/test/') ||
+    normalized.includes('/tests/') ||
+    normalized.includes('/spec/') ||
+    normalized.includes('/specs/') ||
+    /(?:^|\/)test_[^/]+\.[a-z0-9]+$/i.test(normalized) ||
+    /(?:^|\/)[^/]+_test\.[a-z0-9]+$/i.test(normalized) ||
+    /(?:^|\/)[^/]+(?:\.test|\.spec)\.[a-z0-9]+$/i.test(normalized)
+  )
+}
+
+export function isExplicitTestEditRequest(userPrompt: string): boolean {
+  const trimmed = userPrompt.trim()
+  if (trimmed === '') return false
+  if (TEST_EDIT_REQUEST_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+    return true
+  }
+  return extractExplicitTargetPaths(trimmed).some(looksLikeTestPath)
+}
+
+export function isBugFixPrompt(userPrompt: string): boolean {
+  const trimmed = userPrompt.trim()
+  if (trimmed === '') return false
+  if (isExplicitTestEditRequest(trimmed)) return false
+  return BUGFIX_PROMPT_PATTERNS.some((pattern) => pattern.test(trimmed))
+}
+
 export function buildIntentContract(userPrompt: string): string | null {
   const trimmed = userPrompt.trim()
   if (trimmed === '') return null
@@ -76,6 +115,13 @@ export function buildIntentContract(userPrompt: string): string | null {
     lines.push(
       'Path-first rule: inspect these paths, or their nearest directories/tests, before any repo-wide recursive exploration.'
     )
+  }
+  if (isBugFixPrompt(trimmed)) {
+    lines.push('Bug-fix guidance:')
+    lines.push('- Treat failing tests, error logs, and reproduction steps as specification for expected behavior.')
+    lines.push('- Inspect the nearest implementation/source files before broad edits or broad mutation attempts.')
+    lines.push('- Prefer implementation/source changes before editing tests.')
+    lines.push('- Only edit tests first when the user explicitly requests test changes or strong evidence shows the tests are wrong.')
   }
   lines.push(
     'Guardrail: stay in scope, keep changes minimal, and ask before destructive or release actions unless explicitly requested by the user.'
