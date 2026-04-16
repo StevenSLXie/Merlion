@@ -3,6 +3,7 @@ dist/
 .DS_Store
 .merlion/
 bench/
+bench_medium/
 bench_medium/**/results/
 bench_medium/**/probe_results/
 start.sh
