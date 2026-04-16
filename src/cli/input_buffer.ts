@@ -15,6 +15,16 @@ function renderLine(output: NodeJS.WriteStream, promptLabel: string, buffer: str
   output.write(`\r\x1b[2K${promptLabel}${buffer}${preview}`)
 }
 
+export function resolveSubmittedReplInput(buffer: string, commands: SlashCommand[]): string {
+  const trimmed = buffer.trim()
+  if (!trimmed.startsWith('/')) return buffer
+  if (/\s/.test(trimmed.slice(1))) return buffer
+
+  const suggestions = getSlashSuggestions(trimmed, commands)
+  if (suggestions.length !== 1) return buffer
+  return suggestions[0]!.name
+}
+
 export async function readReplInputLine(options: {
   promptLabel: string
   slashCommands: SlashCommand[]
@@ -55,7 +65,7 @@ export async function readReplInputLine(options: {
         return
       }
       if (text === '\r' || text === '\n') {
-        finish(buffer)
+        finish(resolveSubmittedReplInput(buffer, options.slashCommands))
         return
       }
       if (text === '\u007f') {
