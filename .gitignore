@@ -3,6 +3,6 @@ dist/
 .DS_Store
 .merlion/
 bench/
-bench_medium/bugsinpy/results/
-bench_medium/bugsinpy/probe_results/
+bench_medium/**/results/
+bench_medium/**/probe_results/
 start.sh
