@@ -1,0 +1,26 @@
+Version: 0.1.26
+Date: 2026-04-16
+
+Changes:
+- Medium bench / bug-fix runtime improvements:
+  - add a documented BugsInPy medium-bench writeup covering the validated
+    `thefuck 1-8` case pool, baseline outcomes, failure-analysis correction,
+    runtime changes, and rerun results.
+  - strengthen bug-fix execution discipline in the system prompt and intent
+    contract so failing tests/logs are treated as specification and source
+    edits are preferred over broad exploratory drift.
+  - add bug-fix convergence guardrails in the runtime loop to nudge the model
+    toward the most likely implementation file when repeated tool batches do
+    not produce file mutations.
+  - extend medium-bench probe and analysis support, plus related tests and
+    docs, to make real-case failure review reproducible.
+- Validation:
+  - rerun the validated BugsInPy `thefuck 1-8` buggy cases end-to-end and
+    improve from `6/8` passing to `8/8` passing.
+- REPL UX:
+  - fix raw-mode slash submission so `/`, `/we`, and `/wechat` resolve to the
+    unique `/wechat` command on Enter instead of staying as a no-op preview.
+
+Related commits:
+- feat(runtime): improve bug-fix convergence on medium bench
+- fix(cli): resolve repl slash submit behavior
