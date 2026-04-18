@@ -41,6 +41,15 @@ function renderTodoSummary(todos: TodoItem[]): string {
 export const todoWriteTool: ToolDefinition = {
   name: 'todo_write',
   description: 'Manage todo checklist state for the current workspace/session.',
+  modelGuidance: [
+    '- Use this for multi-step tasks, not for single trivial actions.',
+    '- Keep exactly one item in_progress when work is actively underway.',
+    '- Before marking every task completed, make sure verification or validation has been covered or explicitly noted.',
+    '- Keep todo items outcome-focused so the list helps you converge instead of just logging activity.'
+  ].join('\n'),
+  modelExamples: [
+    '{"todos":[{"content":"inspect failing path handling","status":"completed"},{"content":"patch executor validation","status":"in_progress"},{"content":"run targeted tests","status":"pending"}]}'
+  ],
   parameters: {
     type: 'object',
     properties: {
@@ -81,6 +90,10 @@ export const todoWriteTool: ToolDefinition = {
 
       const allDone = parsedTodos.length > 0 && parsedTodos.every((todo) => todo.status === 'completed')
       const nextTodos = allDone ? [] : parsedTodos
+      const completedWithoutVerification = allDone && !parsedTodos.some((todo) => (
+        /\b(test|tests|verify|verification|validate|validation|check|checked)\b/i.test(todo.content) ||
+        /\b(test|tests|verify|verification|validate|validation|check|checked)\b/i.test(todo.activeForm ?? '')
+      ))
       await mkdir(dirname(validated.path), { recursive: true })
       await writeFile(
         validated.path,
@@ -88,7 +101,11 @@ export const todoWriteTool: ToolDefinition = {
         'utf8'
       )
       return {
-        content: `Updated todo list ${oldTodos.length} -> ${nextTodos.length}\n${renderTodoSummary(nextTodos)}`,
+        content: `Updated todo list ${oldTodos.length} -> ${nextTodos.length}\n${renderTodoSummary(nextTodos)}${
+          completedWithoutVerification
+            ? '\n[nudge] Before closing out, confirm what validation or verification you ran, or explicitly note that validation is still pending.'
+            : ''
+        }`,
         isError: false
       }
     }

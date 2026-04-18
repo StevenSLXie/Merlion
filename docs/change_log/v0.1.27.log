@@ -1,0 +1,29 @@
+Version: 0.1.27
+Date: 2026-04-18
+
+Changes:
+- Runtime cleanup and simplification:
+  - extract shared workspace-change analysis helpers so runner/query-engine
+    stop carrying duplicate git/path logic.
+  - replace the lightweight task-registry wrapper with direct local-turn and
+    verification-round entrypoints.
+  - move loop guardrail and convergence helpers out of the main runtime loop
+    so the core loop is easier to read without changing behavior.
+- Tooling and prompt guidance:
+  - add model guidance support for high-signal builtin tool descriptions.
+  - tighten several builtin tool metadata/details and related tests.
+- Project positioning and docs:
+  - rewrite the README around Merlion as a lightweight reference
+    implementation rather than a feature-list product pitch.
+  - add a linked Simplified Chinese README.
+- Bench and validation:
+  - add SWE-bench Lite bench script wiring and extra benchmark coverage.
+
+Validation:
+- npm run typecheck
+- npm test
+
+Related commits:
+- refactor(runtime): simplify task entrypoints and shared workspace analysis
+- refactor(runtime): split loop guardrails from main agent loop
+- docs(readme): reposition merlion as a lightweight reference implementation

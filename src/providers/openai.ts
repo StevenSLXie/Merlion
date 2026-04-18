@@ -1,4 +1,5 @@
 import type { AssistantResponse, ChatMessage, ModelProvider } from '../types.js'
+import { buildModelToolDescription } from '../tools/model_guidance.ts'
 import type { ToolDefinition } from '../tools/types.js'
 
 export interface OpenAICompatConfig {
@@ -30,7 +31,7 @@ function toApiTools(tools: ToolDefinition[]): unknown[] {
     type: 'function',
     function: {
       name: tool.name,
-      description: tool.description,
+      description: buildModelToolDescription(tool),
       parameters: tool.parameters
     }
   }))

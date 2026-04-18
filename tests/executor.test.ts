@@ -181,3 +181,111 @@ test('execute forwards tool ui payload to result hook', async () => {
   assert.equal(seenPayloadKind, 'edit_diff')
 })
 
+test('execute rejects non-object tool arguments before tool execution', async () => {
+  const registry = new ToolRegistry()
+  let executed = false
+  registry.register({
+    name: 'echo_tool',
+    description: 'echo',
+    parameters: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'] },
+    concurrencySafe: true,
+    async execute() {
+      executed = true
+      return { content: 'should not run', isError: false }
+    }
+  })
+
+  const result = await executeToolCalls({
+    toolCalls: [{
+      id: 'bad-json',
+      type: 'function',
+      function: {
+        name: 'echo_tool',
+        arguments: '[]'
+      }
+    }],
+    registry,
+    toolContext: { cwd: process.cwd() },
+    maxConcurrency: 1,
+  })
+
+  assert.equal(executed, false)
+  assert.match(result[0]?.content ?? '', /expected a strict JSON object/i)
+})
+
+test('execute rejects missing required or empty path arguments before tool execution', async () => {
+  const registry = new ToolRegistry()
+  let executed = 0
+  registry.register({
+    name: 'edit_file',
+    description: 'edit',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        content: { type: 'string' }
+      },
+      required: ['path', 'content']
+    },
+    concurrencySafe: false,
+    async execute() {
+      executed += 1
+      return { content: 'should not run', isError: false }
+    }
+  })
+
+  const result = await executeToolCalls({
+    toolCalls: [
+      call('missing-required', 'edit_file', { path: 'src/a.ts' }),
+      call('empty-path', 'edit_file', { path: '   ', content: 'x' }),
+    ],
+    registry,
+    toolContext: { cwd: process.cwd() },
+    maxConcurrency: 1,
+  })
+
+  assert.equal(executed, 0)
+  assert.match(result[0]?.content ?? '', /missing required argument `content`/i)
+  assert.match(result[1]?.content ?? '', /`path` must be a non-empty string/i)
+})
+
+test('execute rejects malformed path-like arguments before tool execution', async () => {
+  const registry = new ToolRegistry()
+  let executed = 0
+  registry.register({
+    name: 'read_file',
+    description: 'read',
+    parameters: {
+      type: 'object',
+      properties: {
+        file_path: { type: 'string' }
+      },
+      required: ['file_path']
+    },
+    concurrencySafe: true,
+    async execute() {
+      executed += 1
+      return { content: 'should not run', isError: false }
+    }
+  })
+
+  const result = await executeToolCalls({
+    toolCalls: [
+      call('colon-prefix', 'read_file', { file_path: ':/src/app.ts' }),
+      call('label-prefix', 'read_file', { file_path: 'file_path: src/app.ts' }),
+      call('code-fence', 'read_file', { file_path: '```ts\nsrc/app.ts\n```' }),
+      call('functions-wrapper', 'read_file', { file_path: '>functions.read_file:1<|tool_call_argument_begin|>{"path":"README.md"}' }),
+      call('xml-parameter', 'read_file', { file_path: '<parameter name="path">src/app.ts</parameter>' }),
+    ],
+    registry,
+    toolContext: { cwd: process.cwd() },
+    maxConcurrency: 1,
+  })
+
+  assert.equal(executed, 0)
+  assert.match(result[0]?.content ?? '', /looks malformed/i)
+  assert.match(result[1]?.content ?? '', /looks malformed/i)
+  assert.match(result[2]?.content ?? '', /looks malformed/i)
+  assert.match(result[3]?.content ?? '', /looks malformed/i)
+  assert.match(result[4]?.content ?? '', /looks malformed/i)
+})

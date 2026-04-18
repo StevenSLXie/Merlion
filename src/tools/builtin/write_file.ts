@@ -7,6 +7,16 @@ import { validateAndResolveWorkspacePath } from './fs_common.ts'
 export const writeFileTool: ToolDefinition = {
   name: 'write_file',
   description: 'Write (overwrite) an entire file. Prefer edit_file for modifying existing files — only use write_file when you intend to replace the whole file or create a new one.',
+  modelGuidance: [
+    '- Use this only when you intend to replace the whole file contents or create a new file from scratch.',
+    '- Prefer edit_file for localized changes to an existing file.',
+    '- path must be a raw workspace path only; do not include labels, wrappers, or transcript text.',
+    '- Before overwriting a code file, make sure you are not discarding existing logic by accident.'
+  ].join('\n'),
+  modelExamples: [
+    '{"path":"docs/notes.txt","content":"new file contents\\n"}'
+  ],
+  guidancePriority: 'critical',
   parameters: {
     type: 'object',
     properties: {

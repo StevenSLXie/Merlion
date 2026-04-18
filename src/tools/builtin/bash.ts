@@ -100,6 +100,16 @@ function runBash(command: string, cwd: string, timeoutMs: number): Promise<{ con
 export const bashTool: ToolDefinition = {
   name: 'bash',
   description: 'Execute a shell command. Avoid interactive commands.',
+  modelGuidance: [
+    '- Use bash for tests, scripts, build steps, git inspection, or environment checks.',
+    '- Prefer read_file for reading files and prefer grep/search/glob/list_dir for repo navigation.',
+    '- command must be a raw shell command only; do not include shell prompts, prose, or transcript labels.',
+    '- Avoid interactive commands and avoid using bash when a dedicated file/search tool is more precise.'
+  ].join('\n'),
+  modelExamples: [
+    '{"command":"npm test -- --runInBand","timeout":120000}'
+  ],
+  guidancePriority: 'critical',
   parameters: {
     type: 'object',
     properties: {

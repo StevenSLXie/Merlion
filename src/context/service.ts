@@ -9,8 +9,8 @@ import {
   extractCandidatePathsFromText,
   extractCandidatePathsFromToolEvent,
   type PathGuidanceOptions,
-  type PathSignalToolEvent,
   type PathGuidanceState,
+  type PathSignalToolEvent,
 } from './path_guidance.ts'
 import { buildMerlionSystemPrompt } from '../prompt/system_prompt.ts'
 import { createPromptSectionCache, type PromptSectionCache } from '../prompt/sections.ts'

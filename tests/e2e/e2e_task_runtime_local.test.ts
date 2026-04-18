@@ -4,9 +4,7 @@ import assert from 'node:assert/strict'
 import type { AssistantResponse, ChatMessage, ModelProvider } from '../../src/types.ts'
 import { ToolRegistry } from '../../src/tools/registry.ts'
 import { QueryEngine } from '../../src/runtime/query_engine.ts'
-import { RuntimeTaskRegistry } from '../../src/runtime/tasks/registry.ts'
-import { localTurnTaskHandler } from '../../src/runtime/tasks/handlers/local_turn.ts'
-import type { LocalTurnTaskInput, LocalTurnTaskOutput } from '../../src/runtime/tasks/types.ts'
+import { executeLocalTurn } from '../../src/runtime/local_turn.ts'
 
 class StubProvider implements ModelProvider {
   private index = 0
@@ -24,18 +22,13 @@ class StubProvider implements ModelProvider {
   }
 }
 
-test('e2e local task runtime dispatches prompt envelope through QueryEngine', async () => {
-  const tasks = new RuntimeTaskRegistry()
-  tasks.register(localTurnTaskHandler)
-  const handler = tasks.get<LocalTurnTaskInput, LocalTurnTaskOutput>('local_turn')
-  assert.ok(handler)
-
+test('e2e local turn dispatches prompt envelope through QueryEngine', async () => {
   const engine = new QueryEngine({
     cwd: process.cwd(),
     provider: new StubProvider([
       {
         role: 'assistant',
-        content: 'handled by task runtime',
+        content: 'handled by local turn',
         finish_reason: 'stop',
         usage: { prompt_tokens: 1, completion_tokens: 1 },
       },
@@ -68,12 +61,12 @@ test('e2e local task runtime dispatches prompt envelope through QueryEngine', as
     },
   })
 
-  const result = await handler!.run({
+  const result = await executeLocalTurn({
     envelope: { kind: 'prompt', text: 'say something' },
     executeShellShortcut: async () => ({ output: 'shell', terminal: 'completed' }),
     executeSlashCommand: async () => ({ output: 'slash', terminal: 'completed' }),
-  }, { engine })
+  }, engine)
 
-  assert.equal(result.output, 'handled by task runtime')
+  assert.equal(result.output, 'handled by local turn')
   assert.equal(result.terminal, 'completed')
 })

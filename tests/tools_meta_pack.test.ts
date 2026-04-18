@@ -26,8 +26,22 @@ test('tool_search lists tools and supports query', async () => {
   const all = await toolSearchTool.execute({}, {
     cwd: process.cwd(),
     listTools: () => [
-      { name: 'read_file', description: 'Read files', source: 'builtin', searchHint: 'read file contents' },
-      { name: 'edit_file', description: 'Edit files', source: 'builtin', searchHint: 'replace text in file' }
+      {
+        name: 'read_file',
+        description: 'Read files',
+        source: 'builtin',
+        searchHint: 'read file contents',
+        modelGuidance: '- Use a raw workspace path.',
+        requiredParameters: []
+      },
+      {
+        name: 'edit_file',
+        description: 'Edit files',
+        source: 'builtin',
+        searchHint: 'replace text in file',
+        modelGuidance: '- Read the file first.\n- Use exact old_string text.',
+        requiredParameters: ['old_string', 'new_string']
+      }
     ]
   })
   assert.equal(all.isError, false)
@@ -35,8 +49,22 @@ test('tool_search lists tools and supports query', async () => {
   const filtered = await toolSearchTool.execute({ query: 'edit' }, {
     cwd: process.cwd(),
     listTools: () => [
-      { name: 'read_file', description: 'Read files', source: 'builtin', searchHint: 'read file contents' },
-      { name: 'edit_file', description: 'Edit files', source: 'builtin', searchHint: 'replace text in file' }
+      {
+        name: 'read_file',
+        description: 'Read files',
+        source: 'builtin',
+        searchHint: 'read file contents',
+        modelGuidance: '- Use a raw workspace path.',
+        requiredParameters: []
+      },
+      {
+        name: 'edit_file',
+        description: 'Edit files',
+        source: 'builtin',
+        searchHint: 'replace text in file',
+        modelGuidance: '- Read the file first.\n- Use exact old_string text.',
+        requiredParameters: ['old_string', 'new_string']
+      }
     ]
   })
   assert.equal(filtered.isError, false)
@@ -48,27 +76,84 @@ test('tool_search lists tools and supports query', async () => {
     {
       cwd: process.cwd(),
       listTools: () => [
-        { name: 'read_file', description: 'Read files', source: 'builtin', searchHint: 'read file contents' },
-        { name: 'edit_file', description: 'Edit files', source: 'builtin', searchHint: 'replace text in file' }
+        {
+          name: 'read_file',
+          description: 'Read files',
+          source: 'builtin',
+          searchHint: 'read file contents',
+          modelGuidance: '- Use a raw workspace path.\n- Prefer small ranges.',
+          modelExamples: ['{"path":"src/app.ts","start_line":1,"end_line":20}'],
+          requiredParameters: []
+        },
+        {
+          name: 'edit_file',
+          description: 'Edit files',
+          source: 'builtin',
+          searchHint: 'replace text in file',
+          modelGuidance: '- Read the file first.\n- Use exact old_string text.',
+          requiredParameters: ['old_string', 'new_string']
+        }
       ]
     }
   )
   assert.equal(selected.isError, false)
-  assert.equal(selected.content.includes('read_file'), true)
+  assert.match(selected.content, /name: read_file/)
+  assert.match(selected.content, /required_args: \(none\)/)
+  assert.match(selected.content, /guidance:/)
+  assert.match(selected.content, /examples:/)
 })
 
 test('tool_search matches searchHint when query is not in tool name', async () => {
   const result = await toolSearchTool.execute({ query: 'replace text' }, {
     cwd: process.cwd(),
     listTools: () => [
-      { name: 'read_file', description: 'Read files', source: 'builtin', searchHint: 'read file contents' },
-      { name: 'edit_file', description: 'Edit files', source: 'builtin', searchHint: 'replace text in file' }
+      {
+        name: 'read_file',
+        description: 'Read files',
+        source: 'builtin',
+        searchHint: 'read file contents',
+        requiredParameters: []
+      },
+      {
+        name: 'edit_file',
+        description: 'Edit files',
+        source: 'builtin',
+        searchHint: 'replace text in file',
+        requiredParameters: ['old_string', 'new_string']
+      }
     ]
   })
 
   assert.equal(result.isError, false)
   assert.match(result.content, /edit_file/)
   assert.equal(result.content.includes('read_file'), false)
+})
+
+test('tool_search matches model guidance terms', async () => {
+  const result = await toolSearchTool.execute({ query: 'line numbers' }, {
+    cwd: process.cwd(),
+    listTools: () => [
+      {
+        name: 'read_file',
+        description: 'Read files',
+        source: 'builtin',
+        searchHint: 'read file contents',
+        modelGuidance: '- Returned line numbers are display metadata only.',
+        requiredParameters: []
+      },
+      {
+        name: 'edit_file',
+        description: 'Edit files',
+        source: 'builtin',
+        searchHint: 'replace text in file',
+        requiredParameters: ['old_string', 'new_string']
+      }
+    ]
+  })
+
+  assert.equal(result.isError, false)
+  assert.match(result.content, /read_file/)
+  assert.equal(result.content.includes('edit_file\tEdit files'), false)
 })
 
 test('list_scripts and run_script work against package.json', async () => {
@@ -219,4 +304,21 @@ test('todo_write supports full todo list payload', async () => {
   const content = await readFile(join(cwd, '.merlion', 'todos.json'), 'utf8')
   assert.match(content, /implement parser/)
   assert.match(content, /write tests/)
+})
+
+test('todo_write nudges for verification before closeout when all todos are completed', async () => {
+  const cwd = await makeTempDir()
+  const updated = await todoWriteTool.execute(
+    {
+      path: '.merlion/todos.json',
+      todos: [
+        { content: 'inspect parser behavior', status: 'completed' },
+        { content: 'patch the parser', status: 'completed' }
+      ]
+    },
+    { cwd, permissions: permission('allow') }
+  )
+
+  assert.equal(updated.isError, false)
+  assert.match(updated.content, /\[nudge\]/)
 })

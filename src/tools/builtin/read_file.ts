@@ -21,6 +21,15 @@ function toPositiveInt(value: unknown): number | undefined {
 export const readFileTool: ToolDefinition = {
   name: 'read_file',
   description: 'Read file contents. Supports line ranges via offset/limit or start_line/end_line.',
+  modelGuidance: [
+    '- Use a raw workspace path only; do not include labels, code fences, or prose around the path.',
+    '- Prefer targeted line ranges instead of rereading a whole file after every small step.',
+    '- If you do not know the path yet, use list_dir, glob, grep, or search first.',
+    '- Returned line numbers are display metadata; do not copy the numeric prefixes into edits.'
+  ].join('\n'),
+  modelExamples: [
+    '{"path":"src/index.ts","start_line":1,"end_line":80}'
+  ],
   parameters: {
     type: 'object',
     properties: {

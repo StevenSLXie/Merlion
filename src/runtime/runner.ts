@@ -1,5 +1,3 @@
-import { execSync } from 'node:child_process'
-
 import { askLine } from '../cli/ask.ts'
 import { getSystemSlashCommands } from '../cli/commands.ts'
 import { readReplInputLine } from '../cli/input_buffer.ts'
@@ -28,10 +26,8 @@ import { CliRuntimeSink } from './sinks/cli.ts'
 import { launchWeixinSinkMode } from './sinks/wechat.ts'
 import { askStructuredQuestions } from './ask_user_question.ts'
 import { QueryEngine } from './query_engine.ts'
-import { RuntimeTaskRegistry } from './tasks/registry.ts'
-import { localTurnTaskHandler } from './tasks/handlers/local_turn.ts'
-import { verificationTaskHandler } from './tasks/handlers/verify_round.ts'
-import type { LocalTurnTaskInput, LocalTurnTaskOutput, VerificationTaskInput, VerificationTaskOutput } from './tasks/types.ts'
+import { executeLocalTurn } from './local_turn.ts'
+import { executeVerificationRound } from './verify_round.ts'
 
 export interface CliRuntimeOptions {
   task: string
@@ -117,101 +113,6 @@ function loadPathGuidanceBudgetsFromEnv(): Partial<{
   }
 }
 
-function parseToolArgs(raw: string): Record<string, unknown> {
-  try {
-    return JSON.parse(raw) as Record<string, unknown>
-  } catch {
-    return {}
-  }
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() !== '' ? value : null
-}
-
-function extractChangedPathsFromToolCall(toolName: string, rawArgs: string): string[] {
-  const args = parseToolArgs(rawArgs)
-  const out: string[] = []
-  const push = (value: unknown) => {
-    const path = nonEmptyString(value)
-    if (path) out.push(path)
-  }
-
-  if (
-    toolName === 'create_file' ||
-    toolName === 'write_file' ||
-    toolName === 'append_file' ||
-    toolName === 'edit_file' ||
-    toolName === 'delete_file' ||
-    toolName === 'mkdir'
-  ) {
-    push(args.path ?? args.file_path)
-  } else if (toolName === 'copy_file') {
-    push(args.to_path ?? args.path)
-  } else if (toolName === 'move_file') {
-    push(args.from_path)
-    push(args.to_path)
-  }
-
-  return out
-}
-
-function decodePorcelainPath(value: string): string {
-  const text = value.trim()
-  if (!text.startsWith('"')) return text
-  try {
-    return JSON.parse(text) as string
-  } catch {
-    return text.slice(1, text.endsWith('"') ? -1 : undefined)
-  }
-}
-
-function collectGitWorkingTreePaths(cwd: string): string[] {
-  try {
-    const output = execSync('git status --porcelain', {
-      cwd,
-      stdio: ['ignore', 'pipe', 'ignore'],
-      encoding: 'utf8',
-    }).trim()
-    if (output === '') return []
-
-    const out: string[] = []
-    for (const line of output.split('\n')) {
-      if (line.length < 4) continue
-      const payload = line.slice(3).trim()
-      const arrow = payload.lastIndexOf(' -> ')
-      const target = arrow >= 0 ? payload.slice(arrow + 4) : payload
-      const normalized = decodePorcelainPath(target).replace(/\\/g, '/')
-      if (normalized !== '') out.push(normalized)
-      if (out.length >= 120) break
-    }
-    return out
-  } catch {
-    return []
-  }
-}
-
-function collectLatestCommitPaths(cwd: string): string[] {
-  try {
-    const output = execSync('git show --name-only --pretty=format: --diff-filter=ACMR --no-renames -n 1 HEAD', {
-      cwd,
-      stdio: ['ignore', 'pipe', 'ignore'],
-      encoding: 'utf8',
-    }).trim()
-    if (output === '') return []
-    const out: string[] = []
-    for (const raw of output.split('\n')) {
-      const normalized = decodePorcelainPath(raw).replace(/\\/g, '/').trim()
-      if (normalized === '' || normalized.startsWith('..')) continue
-      if (!out.includes(normalized)) out.push(normalized)
-      if (out.length >= 80) break
-    }
-    return out
-  } catch {
-    return []
-  }
-}
-
 export async function runCliRuntime(options: CliRuntimeOptions): Promise<number> {
   let provider = new OpenAICompatProvider({
     apiKey: options.apiKey,
@@ -246,7 +147,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     pathGuidanceBudgets: loadPathGuidanceBudgetsFromEnv(),
   })
 
-  let engine = new QueryEngine({
+  const createEngine = (initialMessages?: ReturnType<QueryEngine['getMessages']>) => new QueryEngine({
     cwd: options.cwd,
     provider,
     registry,
@@ -254,7 +155,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     contextService,
     model: options.model,
     sessionId: session.sessionId,
-    initialMessages: options.resumeSessionId ? [] : undefined,
+    initialMessages,
     maxTurns: 100,
     askQuestions: (questions) => askStructuredQuestions(questions, { readLine: askLine }),
     sink,
@@ -280,13 +181,12 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     toolSchemaTokensEstimate,
     buildIntentContract: (prompt) => buildIntentContract(prompt) ?? undefined,
   })
+
+  let engine = createEngine(options.resumeSessionId ? [] : undefined)
   if (initialMessagesFromResume) {
     await contextService.prefetchIfSafe()
     await engine.resumeFromTranscript(initialMessagesFromResume)
   }
-  const taskRegistry = new RuntimeTaskRegistry()
-  taskRegistry.register(localTurnTaskHandler)
-  taskRegistry.register(verificationTaskHandler)
 
   await engine.initialize()
 
@@ -318,48 +218,14 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
       baseURL: options.baseURL,
       model: options.model
     })
-    engine = new QueryEngine({
-      cwd: options.cwd,
-      provider,
-      registry,
-      permissions,
-      contextService,
-      model: options.model,
-      sessionId: session.sessionId,
-      initialMessages: engine.getMessages(),
-      maxTurns: 100,
-      askQuestions: (questions) => askStructuredQuestions(questions, { readLine: askLine }),
-      sink,
-      promptObservabilityTracker,
-      persistMessage: async (message) => {
-        await appendTranscriptMessage(session.transcriptPath, message)
-      },
-      persistUsage: async (entry) => {
-        await appendUsage(session.usagePath, {
-          timestamp: new Date().toISOString(),
-          session_id: session.sessionId,
-          model: options.model,
-          provider: entry.provider,
-          prompt_tokens: entry.prompt_tokens,
-          completion_tokens: entry.completion_tokens,
-          cached_tokens: entry.cached_tokens ?? null,
-          tool_schema_tokens_estimate: toolSchemaTokensEstimate,
-          prompt_observability: entry.promptObservability,
-        })
-      },
-      usageTracker,
-      usageRates,
-      toolSchemaTokensEstimate,
-      buildIntentContract: (prompt) => buildIntentContract(prompt) ?? undefined,
-    })
-    await engine.resumeFromTranscript(engine.getMessages())
+    const currentMessages = engine.getMessages()
+    engine = createEngine(currentMessages)
+    await engine.resumeFromTranscript(currentMessages)
     return true
   }
 
   const runTurn = async (prompt: string) => {
-    const handler = taskRegistry.get<LocalTurnTaskInput, LocalTurnTaskOutput>('local_turn')
-    if (!handler) throw new Error('Missing local_turn task handler')
-    const taskResult = await handler.run(
+    const taskResult = await executeLocalTurn(
       {
         envelope: { kind: 'prompt', text: prompt.trim() },
         executeSlashCommand: async (name: string) => {
@@ -384,7 +250,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
           }
         },
       },
-      { engine },
+      engine,
     )
     return taskResult.loopResult ?? {
       terminal: taskResult.terminal as 'completed' | 'max_turns_exceeded' | 'model_error',
@@ -489,14 +355,12 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
   }
 
   if (!options.repl && options.verify) {
-    const checks = await discoverVerificationChecks(options.cwd)
+      const checks = await discoverVerificationChecks(options.cwd)
     if (checks.length > 0) {
       const verifyMaxRounds = Math.max(0, Math.floor(parseEnvNumber('MERLION_VERIFY_MAX_ROUNDS') ?? 2))
       const verifyTimeoutMs = Math.max(1000, Math.floor(parseEnvNumber('MERLION_VERIFY_TIMEOUT_MS') ?? 180_000))
       process.stdout.write(`[verify] discovered ${checks.length} checks\n`)
-      const verifyHandler = taskRegistry.get<VerificationTaskInput, VerificationTaskOutput>('verify_round')
-      if (!verifyHandler) throw new Error('Missing verify_round task handler')
-      const outcome = await verifyHandler.run({
+      const outcome = await executeVerificationRound({
         maxRounds: verifyMaxRounds,
         runVerification: async () =>
           runVerificationChecks({
@@ -520,7 +384,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
             process.stdout.write('[verify] all checks passed\n')
           }
         },
-      }, { engine })
+      })
 
       if (!outcome.passed) {
         process.stderr.write('[verify] failed after max fix rounds\n')

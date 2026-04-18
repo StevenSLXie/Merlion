@@ -1,5 +1,3 @@
-import { resolve } from 'node:path'
-
 import type { ChatMessage, LoopState, LoopTerminal, ModelProvider, ToolCall } from '../types.js'
 import type { AskUserQuestionItem, PermissionStore, ToolContext } from '../tools/types.js'
 import { executeToolCalls, type ToolCallResultEvent, type ToolCallStartEvent } from './executor.ts'
@@ -8,6 +6,53 @@ import { ToolRegistry } from '../tools/registry.ts'
 import { compactMessages, estimateMessagesChars } from '../context/compact.ts'
 import { createPromptObservabilityTracker, type PromptObservabilitySnapshot } from './prompt_observability.ts'
 import { isBugFixPrompt } from './intent_contract.ts'
+import {
+  BUGFIX_NO_MUTATION_BATCH_THRESHOLD,
+  formatExplorationBudgetHint,
+  formatLargeDiffHint,
+  formatMutationOscillationHint,
+  formatNoMutationHint,
+  formatNoProgressHint,
+  formatOverwriteAfterEditHint,
+  formatProviderErrorText,
+  formatTestFirstBugFixHint,
+  formatTodoDriftHint,
+  formatToolArgumentHint,
+  formatToolErrorHint,
+  formatVerificationHint,
+  inferVerificationStrength,
+  isExplorationToolCall,
+  isLargeMutation,
+  isMutationOscillation,
+  isToolArgumentValidationError,
+  looksLikeCodePath,
+  looksLikeTestPath,
+  MAX_AUTO_TOOL_ERROR_HINTS,
+  MAX_EXPLORATION_HINTS,
+  MAX_LARGE_DIFF_HINTS,
+  MAX_MUTATION_OSCILLATION_HINTS,
+  MAX_NO_MUTATION_HINTS,
+  MAX_NO_PROGRESS_HINTS,
+  MAX_OVERWRITE_AFTER_EDIT_HINTS,
+  MAX_TOOL_ARGUMENT_HINTS,
+  MAX_TODO_DRIFT_HINTS,
+  MAX_VERIFICATION_HINTS,
+  mentionsVerification,
+  NO_MUTATION_BATCH_THRESHOLD,
+  NO_PROGRESS_BATCH_THRESHOLD,
+  REPEATED_TOOL_ERROR_THRESHOLD,
+  shouldNudge,
+  shouldRecoverNoMutationStop,
+  strongerVerificationStrength,
+  TODO_ONLY_BATCH_THRESHOLD,
+  toolCallSignature,
+  toMutationEvent,
+  type MutationEvent,
+  type VerificationStrength,
+  extractRelevantPaths,
+} from './loop_guardrails.ts'
+
+export { shouldNudge } from './loop_guardrails.ts'
 
 export interface RunLoopOptions {
   provider: ModelProvider
@@ -51,81 +96,6 @@ export interface RunLoopResult {
   terminal: LoopTerminal
   finalText: string
   state: LoopState
-}
-
-// Action-plan detection intentionally combines intent + action + output
-// exemptions so it generalizes across phrasing/languages and avoids overfit.
-const ACTION_INTENT_PATTERNS: RegExp[] = [
-  /\bi('ll| will)\b/i,
-  /\blet me\b/i,
-  /\bi('m| am)\s+going\s+to\b/i,
-  /\b(i|we)\s+(need|should|can)\s+to\b/i,
-  /\b(first|next|then|after that|to start)\b/i,
-  /(我来|让我|我会|我将|我先|首先|接下来|下一步|准备)/,
-]
-
-const ACTION_VERB_PATTERNS: RegExp[] = [
-  /\b(start|begin|look|check|read|analy[sz]e|examine|fix|help|try|write|create|update|run|search|find|inspect|review|explore|open|verify|test|list)\b/i,
-  /(查看|检查|读取|搜索|查找|分析|修复|修改|创建|运行|执行|看看|浏览|审查|定位|测试|列出|打开)/,
-]
-
-const REPEATED_TOOL_ERROR_THRESHOLD = 3
-const MAX_AUTO_TOOL_ERROR_HINTS = 3
-const NO_PROGRESS_BATCH_THRESHOLD = 3
-const MAX_NO_PROGRESS_HINTS = 2
-const NO_MUTATION_BATCH_THRESHOLD = 4
-const BUGFIX_NO_MUTATION_BATCH_THRESHOLD = 3
-const MAX_NO_MUTATION_HINTS = 2
-const MAX_MUTATION_OSCILLATION_HINTS = 2
-const COMPLETION_HINT_PATTERNS: RegExp[] = [
-  /\b(done|finished|completed)\b/i,
-  /\b(all set|resolved|fixed)\b/i,
-  /已(完成|处理|修复|解决)/,
-  /已经(完成|处理|修复|解决)/,
-]
-
-const ACK_HINT_PATTERNS: RegExp[] = [
-  /^\s*(ok|okay|yes|yep|got it|sure|在|在的|好的|明白)\s*[\.\!\?。！？]*\s*$/i,
-]
-
-const CONCRETE_OUTPUT_PATTERNS: RegExp[] = [
-  /```/,
-  /\b(found|identified|updated|created|edited|ran|implemented)\b/i,
-  /(已(找到|读取|更新|修复)|已经(找到|读取|更新|修复)|发现了|已定位)/,
-]
-
-function hasAnyPattern(text: string, patterns: RegExp[]): boolean {
-  return patterns.some((pattern) => pattern.test(text))
-}
-
-function looksLikeAuthError(message: string): boolean {
-  const normalized = message.toLowerCase()
-  if (/\b(401|403)\b/.test(normalized)) return true
-  return (
-    normalized.includes('unauthorized') ||
-    normalized.includes('invalid api key') ||
-    normalized.includes('incorrect api key') ||
-    normalized.includes('authentication')
-  )
-}
-
-function formatProviderErrorText(error: unknown): string {
-  const raw = String(error ?? '').trim()
-  if (looksLikeAuthError(raw)) {
-    return [
-      'Provider authentication failed (401/403).',
-      'Your API key may be invalid, expired, or revoked.',
-      '',
-      'How to fix:',
-      '1. Run `merlion config` to reopen the setup wizard.',
-      '2. Or update key/model/provider in `~/.config/merlion/config.json`.',
-      '3. Or export env vars and retry: `MERLION_API_KEY` / `OPENROUTER_API_KEY` / `OPENAI_API_KEY`.',
-      '',
-      `Raw error: ${raw || '(empty error message)'}`
-    ].join('\n')
-  }
-  if (raw !== '') return raw
-  return 'Model provider request failed.'
 }
 
 function buildRequestMessages(
@@ -183,36 +153,6 @@ async function tryGenerateNaturalSummary(
   }
 }
 
-/**
- * Returns true when the model's response looks like a false start:
- * it promised to take action but produced no tool calls.
- *
- * Deliberately conservative to avoid nudging genuine short completions
- * ("done", "在", "yes") or complete summaries.
- */
-export function shouldNudge(text: string, state: LoopState): boolean {
-  // Hard cap: never nudge more than twice per session
-  if (state.nudgeCount >= 2) return false
-
-  const trimmed = text.trim()
-
-  // Very short text is conversational/ack-like — never nudge.
-  if (trimmed.length < 8) return false
-
-  if (hasAnyPattern(trimmed, ACK_HINT_PATTERNS)) return false
-
-  // Don't nudge explicit completion statements.
-  if (hasAnyPattern(trimmed, COMPLETION_HINT_PATTERNS)) return false
-
-  // If the assistant already provides concrete findings/output, don't force nudge.
-  if (hasAnyPattern(trimmed, CONCRETE_OUTPUT_PATTERNS)) return false
-
-  // Generic signal: action plan intent + action verb, but no execution evidence.
-  const hasIntent = hasAnyPattern(trimmed, ACTION_INTENT_PATTERNS)
-  const hasAction = hasAnyPattern(trimmed, ACTION_VERB_PATTERNS)
-  return hasIntent && hasAction
-}
-
 function createState(
   systemPrompt: string,
   userPrompt: string,
@@ -246,173 +186,6 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return value > 0 ? value : fallback
 }
 
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`
-  if (value && typeof value === 'object') {
-    const obj = value as Record<string, unknown>
-    const keys = Object.keys(obj).sort()
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(',')}}`
-  }
-  return JSON.stringify(value)
-}
-
-function toolCallSignature(call: ToolCall): string {
-  const raw = call.function.arguments
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    return `${call.function.name}:${stableStringify(parsed)}`
-  } catch {
-    return `${call.function.name}:${raw.trim()}`
-  }
-}
-
-function formatToolErrorHint(
-  call: ToolCall,
-  count: number,
-  cwd: string,
-): string {
-  return (
-    `Repeated tool failure detected: \`${call.function.name}\` with the same arguments failed ${count} times. ` +
-    `Do not repeat the same call again. Re-check paths from workspace root (${cwd}). ` +
-    'Use `list_dir` on `.` first, then call tools with real project paths. ' +
-    `If you need Merlion artifacts, only use project-local paths under \`${cwd}/.merlion\`. ` +
-    'Do not use `~/.merlion` and do not construct `.merlion/<project>/...` paths.'
-  )
-}
-
-function parseToolCallArgs(call: ToolCall): Record<string, unknown> {
-  try {
-    return JSON.parse(call.function.arguments) as Record<string, unknown>
-  } catch {
-    return {}
-  }
-}
-
-type MutationKind = 'materialize' | 'remove' | 'move'
-type MutationEvent = {
-  signature: string
-  detail: string
-  turn: number
-  kind: MutationKind
-  path: string
-}
-
-function normalizePathInput(cwd: string, value: unknown): string | null {
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  if (trimmed === '') return null
-  if (/[\u0000-\u001f]/.test(trimmed)) return null
-  return resolve(cwd, trimmed)
-}
-
-function toMutationEvent(cwd: string, event: ToolCallResultEvent, turn: number): MutationEvent | null {
-  if (event.isError) return null
-  const args = parseToolCallArgs(event.call)
-  const tool = event.call.function.name
-  if (tool === 'delete_file') {
-    const path = normalizePathInput(cwd, args.path)
-    if (!path) return null
-    return { signature: `path:${path}`, detail: `delete_file ${path}`, turn, kind: 'remove', path }
-  }
-  if (tool === 'create_file' || tool === 'write_file' || tool === 'append_file' || tool === 'edit_file') {
-    const rawPath = typeof args.path === 'string' ? args.path : args.file_path
-    const path = normalizePathInput(cwd, rawPath)
-    if (!path) return null
-    return { signature: `path:${path}`, detail: `${tool} ${path}`, turn, kind: 'materialize', path }
-  }
-  if (tool === 'move_file') {
-    const from = normalizePathInput(cwd, args.from_path)
-    const to = normalizePathInput(cwd, args.to_path)
-    if (!from || !to) return null
-    return { signature: `move:${from}->${to}`, detail: `move_file ${from} -> ${to}`, turn, kind: 'move', path: to }
-  }
-  return null
-}
-
-function looksLikeTestPath(path: string): boolean {
-  const normalized = path.replace(/\\/g, '/').toLowerCase()
-  return (
-    normalized.includes('/test/') ||
-    normalized.includes('/tests/') ||
-    normalized.includes('/spec/') ||
-    normalized.includes('/specs/') ||
-    /(?:^|\/)test_[^/]+\.[a-z0-9]+$/i.test(normalized) ||
-    /(?:^|\/)[^/]+_test\.[a-z0-9]+$/i.test(normalized) ||
-    /(?:^|\/)[^/]+(?:\.test|\.spec)\.[a-z0-9]+$/i.test(normalized)
-  )
-}
-
-function isMutationOscillation(previous: MutationEvent, current: MutationEvent): boolean {
-  if (
-    previous.signature === current.signature &&
-    (
-      (previous.kind === 'materialize' && current.kind === 'remove') ||
-      (previous.kind === 'remove' && current.kind === 'materialize')
-    )
-  ) {
-    return true
-  }
-  if (previous.kind === 'move' && current.kind === 'move') {
-    const previousPayload = previous.signature.slice('move:'.length)
-    const currentPayload = current.signature.slice('move:'.length)
-    const [prevFrom, prevTo] = previousPayload.split('->')
-    const [currFrom, currTo] = currentPayload.split('->')
-    if (prevFrom && prevTo && currFrom && currTo && prevFrom === currTo && prevTo === currFrom) {
-      return true
-    }
-  }
-  return false
-}
-
-function formatNoProgressHint(count: number): string {
-  return (
-    `No progress detected: the last ${count} tool batches all failed. ` +
-    'Stop retrying broad mutations. Re-plan with 2-3 concrete steps, ' +
-    'validate target paths via `list_dir`/`stat_path`, then run one minimal next tool call.'
-  )
-}
-
-function formatNoMutationHint(count: number, bugFixMode: boolean): string {
-  if (bugFixMode) {
-    return (
-      `Bug-fix convergence: the last ${count} tool batches produced no successful file change. ` +
-      'Stop broad exploration. Use the failing tests/logs and code you already inspected to pick one likely implementation/source file, ' +
-      'read it fully, and either apply one minimal source edit or state the concrete blocker. ' +
-      'Do not keep expanding into adjacent helpers or rewrite tests first unless the evidence is strong.'
-    )
-  }
-  return (
-    `No material progress detected: the last ${count} tool batches produced no successful file change. ` +
-    'Stop broad exploration. Inspect the target file or nearest tests, then either apply one minimal edit ' +
-    'or explain clearly why no edit is required.'
-  )
-}
-
-function shouldRecoverNoMutationStop(text: string): boolean {
-  const trimmed = text.trim()
-  if (trimmed === '') return true
-  if (hasAnyPattern(trimmed, COMPLETION_HINT_PATTERNS)) return true
-  return /\b(no changes|nothing to change|could not make changes|unable to edit)\b/i.test(trimmed)
-}
-
-function formatMutationOscillationHint(previous: MutationEvent, current: MutationEvent): string {
-  return (
-    'Mutation oscillation detected across successful file operations. ' +
-    `Recent sequence: ${previous.detail} -> ${current.detail}. ` +
-    'Stop toggling the same path(s). Re-check intent, inspect filesystem state, and only apply the minimal next change once.'
-  )
-}
-
-function formatTestFirstBugFixHint(paths: string[]): string {
-  const sample = paths.slice(0, 3).map((path) => `\`${path}\``).join(', ')
-  return (
-    'Bug-fix guardrail: your first successful file changes touched only test files' +
-    (sample ? ` (${sample})` : '') +
-    '. In bug-fix/regression work, treat tests as specification and prefer implementation/source changes first. ' +
-    'Only rewrite tests before source files when the user explicitly asked for test edits or strong evidence shows the tests are wrong.'
-  )
-}
-
 export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   const state = createState(options.systemPrompt, options.userPrompt, options.initialMessages)
   const maxTurns = options.maxTurns ?? 100
@@ -420,6 +193,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   let emptyStopRecoveryCount = 0
   let awaitingPostToolSummary = false
   let autoToolErrorHintCount = 0
+  let toolArgumentHintCount = 0
   let noProgressHintCount = 0
   let noMutationHintCount = 0
   let consecutiveAllErrorBatches = 0
@@ -429,8 +203,18 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   let totalToolBatches = 0
   let noMutationStopRecoveryCount = 0
   let mutationOscillationHintCount = 0
+  let explorationHintCount = 0
+  let verificationHintCount = 0
+  let todoDriftHintCount = 0
+  let consecutiveTodoOnlyBatches = 0
+  let largeDiffHintCount = 0
+  let overwriteAfterEditHintCount = 0
   let testFirstBugFixHintInjected = false
   let hasSuccessfulNonTestMutation = false
+  let hasCodeLikeMutation = false
+  let verificationStrength: VerificationStrength = 'none'
+  let consecutiveExplorationBatches = 0
+  const exploredPathsWindow = new Set<string>()
   const repeatedToolErrorCounts = new Map<string, number>()
   const hintedToolErrorSignatures = new Set<string>()
   const mutationHistory: MutationEvent[] = []
@@ -449,6 +233,10 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         description: tool.description,
         source: tool.source,
         searchHint: tool.searchHint,
+        modelGuidance: tool.modelGuidance,
+        modelExamples: tool.modelExamples,
+        guidancePriority: tool.guidancePriority,
+        requiredParameters: Array.isArray(tool.parameters.required) ? [...tool.parameters.required] : [],
         isReadOnly: tool.isReadOnly,
         isDestructive: tool.isDestructive,
         requiresUserInteraction: tool.requiresUserInteraction,
@@ -540,34 +328,48 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
       }
       totalToolBatches += 1
 
-      if (autoToolErrorHintCount < MAX_AUTO_TOOL_ERROR_HINTS) {
-        let hint: string | null = null
-        for (const event of toolResultEvents) {
-          const signature = toolCallSignature(event.call)
-          if (event.isError) {
-            sawAnyToolError = true
-            const nextCount = (repeatedToolErrorCounts.get(signature) ?? 0) + 1
-            repeatedToolErrorCounts.set(signature, nextCount)
-            if (
-              hint === null &&
-              nextCount >= REPEATED_TOOL_ERROR_THRESHOLD &&
-              !hintedToolErrorSignatures.has(signature)
-            ) {
-              hint = formatToolErrorHint(event.call, nextCount, options.cwd)
-              hintedToolErrorSignatures.add(signature)
-              autoToolErrorHintCount += 1
-            }
-            continue
+      let hint: string | null = null
+      let toolArgumentHint: string | null = null
+      for (const event of toolResultEvents) {
+        const signature = toolCallSignature(event.call)
+        if (event.isError) {
+          sawAnyToolError = true
+          if (
+            toolArgumentHint === null &&
+            toolArgumentHintCount < MAX_TOOL_ARGUMENT_HINTS &&
+            isToolArgumentValidationError(event.message.content ?? '')
+          ) {
+            toolArgumentHint = formatToolArgumentHint(event.call)
+            toolArgumentHintCount += 1
           }
-          repeatedToolErrorCounts.delete(signature)
-          hintedToolErrorSignatures.delete(signature)
+          const nextCount = (repeatedToolErrorCounts.get(signature) ?? 0) + 1
+          repeatedToolErrorCounts.set(signature, nextCount)
+          if (
+            hint === null &&
+            autoToolErrorHintCount < MAX_AUTO_TOOL_ERROR_HINTS &&
+            nextCount >= REPEATED_TOOL_ERROR_THRESHOLD &&
+            !hintedToolErrorSignatures.has(signature)
+          ) {
+            hint = formatToolErrorHint(event.call, nextCount, options.cwd)
+            hintedToolErrorSignatures.add(signature)
+            autoToolErrorHintCount += 1
+          }
+          continue
         }
+        repeatedToolErrorCounts.delete(signature)
+        hintedToolErrorSignatures.delete(signature)
+      }
 
-        if (hint) {
-          const correctionMessage: ChatMessage = { role: 'user', content: hint }
-          state.messages.push(correctionMessage)
-          await options.onMessageAppended?.(correctionMessage)
-        }
+      if (toolArgumentHint) {
+        const correctionMessage: ChatMessage = { role: 'user', content: toolArgumentHint }
+        state.messages.push(correctionMessage)
+        await options.onMessageAppended?.(correctionMessage)
+      }
+
+      if (hint) {
+        const correctionMessage: ChatMessage = { role: 'user', content: hint }
+        state.messages.push(correctionMessage)
+        await options.onMessageAppended?.(correctionMessage)
       }
 
       if (toolResultEvents.length > 0 && toolResultEvents.every((event) => event.isError)) {
@@ -594,10 +396,32 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
       let sawNonTestMutationInBatch = false
       const batchTestPaths: string[] = []
       let mutationHint: string | null = null
+      let largeDiffHint: string | null = null
+      let overwriteAfterEditHint: string | null = null
+      let batchExplorationCount = 0
+      let batchTodoWriteCount = 0
+      let batchNonTodoSuccessCount = 0
       for (const event of toolResultEvents) {
+        if (!event.isError) {
+          verificationStrength = strongerVerificationStrength(verificationStrength, inferVerificationStrength(event.call))
+          if (event.call.function.name === 'todo_write') {
+            batchTodoWriteCount += 1
+          } else {
+            batchNonTodoSuccessCount += 1
+          }
+          if (isExplorationToolCall(event.call)) {
+            batchExplorationCount += 1
+            for (const path of extractRelevantPaths(options.cwd, event.call)) {
+              exploredPathsWindow.add(path)
+            }
+          }
+        }
         const mutation = toMutationEvent(options.cwd, event, state.turnCount)
         if (!mutation) continue
         batchMutationCount += 1
+        if (looksLikeCodePath(mutation.path)) {
+          hasCodeLikeMutation = true
+        }
         if (looksLikeTestPath(mutation.path)) {
           batchTestPaths.push(mutation.path)
         } else {
@@ -616,6 +440,25 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
             mutationOscillationHintCount += 1
           }
         }
+        if (
+          largeDiffHint === null &&
+          largeDiffHintCount < MAX_LARGE_DIFF_HINTS &&
+          isLargeMutation(mutation)
+        ) {
+          largeDiffHint = formatLargeDiffHint(mutation)
+          largeDiffHintCount += 1
+        }
+        if (
+          overwriteAfterEditHint === null &&
+          overwriteAfterEditHintCount < MAX_OVERWRITE_AFTER_EDIT_HINTS &&
+          previous &&
+          previous.path === mutation.path &&
+          previous.toolName === 'edit_file' &&
+          mutation.toolName === 'write_file'
+        ) {
+          overwriteAfterEditHint = formatOverwriteAfterEditHint(previous, mutation)
+          overwriteAfterEditHintCount += 1
+        }
         mutationHistory.push(mutation)
         if (mutationHistory.length > 20) mutationHistory.shift()
       }
@@ -624,12 +467,36 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         state.messages.push(mutationMessage)
         await options.onMessageAppended?.(mutationMessage)
       }
+      if (largeDiffHint) {
+        const reviewMessage: ChatMessage = { role: 'user', content: largeDiffHint }
+        state.messages.push(reviewMessage)
+        await options.onMessageAppended?.(reviewMessage)
+      }
+      if (overwriteAfterEditHint) {
+        const overwriteMessage: ChatMessage = { role: 'user', content: overwriteAfterEditHint }
+        state.messages.push(overwriteMessage)
+        await options.onMessageAppended?.(overwriteMessage)
+      }
       sawTestOnlyMutationBatch = batchMutationCount > 0 && batchTestPaths.length === batchMutationCount
       if (batchMutationCount > 0) {
         sawAnySuccessfulMutation = true
         consecutiveNoMutationBatches = 0
+        consecutiveExplorationBatches = 0
+        consecutiveTodoOnlyBatches = 0
+        exploredPathsWindow.clear()
       } else if (toolResultEvents.length > 0) {
         consecutiveNoMutationBatches += 1
+        if (batchExplorationCount > 0) {
+          consecutiveExplorationBatches += 1
+        } else {
+          consecutiveExplorationBatches = 0
+          exploredPathsWindow.clear()
+        }
+        if (batchTodoWriteCount > 0 && batchNonTodoSuccessCount === 0 && !toolResultEvents.every((event) => event.isError)) {
+          consecutiveTodoOnlyBatches += 1
+        } else {
+          consecutiveTodoOnlyBatches = 0
+        }
       }
       if (sawNonTestMutationInBatch) {
         hasSuccessfulNonTestMutation = true
@@ -651,7 +518,25 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
       const noMutationThreshold = bugFixMode
         ? BUGFIX_NO_MUTATION_BATCH_THRESHOLD
         : NO_MUTATION_BATCH_THRESHOLD
+      let injectedExplorationHint = false
       if (
+        consecutiveExplorationBatches >= noMutationThreshold &&
+        explorationHintCount < MAX_EXPLORATION_HINTS &&
+        exploredPathsWindow.size >= 2
+      ) {
+        const explorationMessage: ChatMessage = {
+          role: 'user',
+          content: formatExplorationBudgetHint(consecutiveExplorationBatches, exploredPathsWindow.size, bugFixMode)
+        }
+        state.messages.push(explorationMessage)
+        await options.onMessageAppended?.(explorationMessage)
+        explorationHintCount += 1
+        consecutiveExplorationBatches = 0
+        exploredPathsWindow.clear()
+        injectedExplorationHint = true
+      }
+      if (
+        !injectedExplorationHint &&
         consecutiveNoMutationBatches >= noMutationThreshold &&
         noMutationHintCount < MAX_NO_MUTATION_HINTS
       ) {
@@ -663,6 +548,19 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         await options.onMessageAppended?.(noMutationMessage)
         noMutationHintCount += 1
         consecutiveNoMutationBatches = 0
+      }
+      if (
+        consecutiveTodoOnlyBatches >= TODO_ONLY_BATCH_THRESHOLD &&
+        todoDriftHintCount < MAX_TODO_DRIFT_HINTS
+      ) {
+        const todoDriftMessage: ChatMessage = {
+          role: 'user',
+          content: formatTodoDriftHint()
+        }
+        state.messages.push(todoDriftMessage)
+        await options.onMessageAppended?.(todoDriftMessage)
+        todoDriftHintCount += 1
+        consecutiveTodoOnlyBatches = 0
       }
 
       const postToolMessages = await options.onToolBatchComplete?.({
@@ -705,6 +603,13 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
       !sawAnySuccessfulMutation &&
       sawAnyToolError &&
       shouldRecoverNoMutationStop(text)
+    const shouldRecoverWeakVerificationStop =
+      verificationHintCount < MAX_VERIFICATION_HINTS &&
+      hasCodeLikeMutation &&
+      hasSuccessfulNonTestMutation &&
+      verificationStrength === 'none' &&
+      text.trim() !== '' &&
+      !mentionsVerification(text)
 
     if (assistant.finish_reason === 'stop' && text.trim() === '' && shouldRecoverEmptyStop) {
       if (emptyStopRecoveryCount < 1) {
@@ -738,6 +643,16 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         await options.onMessageAppended?.(recoveryMessage)
         continue
       }
+    }
+    if (assistant.finish_reason === 'stop' && shouldRecoverWeakVerificationStop) {
+      verificationHintCount += 1
+      const verificationMessage: ChatMessage = {
+        role: 'user',
+        content: formatVerificationHint()
+      }
+      state.messages.push(verificationMessage)
+      await options.onMessageAppended?.(verificationMessage)
+      continue
     }
     if (text.trim() !== '') {
       awaitingPostToolSummary = false

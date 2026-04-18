@@ -84,6 +84,54 @@ function makeAlwaysSuccessMutationTool(name: string): ToolDefinition {
   }
 }
 
+function makeEditDiffMutationTool(name: string, addedLines: number, removedLines: number): ToolDefinition {
+  return {
+    name,
+    description: `${name} stub`,
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+      }
+    },
+    concurrencySafe: false,
+    async execute(input) {
+      const path = typeof input.path === 'string' ? input.path : '/workspace/repo/src/example.ts'
+      return {
+        content: 'ok',
+        isError: false,
+        uiPayload: {
+          kind: 'edit_diff' as const,
+          path,
+          addedLines,
+          removedLines,
+          hunks: []
+        }
+      }
+    }
+  }
+}
+
+function makeAlwaysSuccessTool(name: string): ToolDefinition {
+  return {
+    name,
+    description: `${name} stub`,
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        file_path: { type: 'string' },
+        command: { type: 'string' },
+        script: { type: 'string' }
+      }
+    },
+    concurrencySafe: false,
+    async execute(input) {
+      return { content: JSON.stringify(input), isError: false }
+    }
+  }
+}
+
 test('loop executes tool call then completes', async () => {
   const provider = new StubProvider([
     {
@@ -818,6 +866,54 @@ test('loop appends post-tool batch messages from callback', async () => {
   )
 })
 
+test('loop injects immediate correction hint for invalid tool arguments', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', {}, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done after retry',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEchoTool())
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 8
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'done after retry')
+  const correctionMessage = result.state.messages.find((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Tool arguments were invalid for `echo_tool`')
+  ))
+  assert.ok(correctionMessage)
+  assert.match(correctionMessage?.content ?? '', /strict JSON/i)
+  assert.match(correctionMessage?.content ?? '', /required field/i)
+  assert.match(correctionMessage?.content ?? '', /path:/i)
+})
+
 test('loop injects no-progress hint after consecutive all-error tool batches', async () => {
   const provider = new StubProvider([
     {
@@ -990,6 +1086,243 @@ test('loop injects bug-fix convergence hint earlier for repeated no-mutation bat
   assert.match(convergenceMessages[0]?.content ?? '', /pick one likely implementation\/source file/i)
 })
 
+test('loop injects exploration budget hint after repeated read/search batches across multiple paths', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('read_file', { path: 'src/a.ts' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('read_file', { path: 'src/b.ts' }, 'call_2')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('read_file', { path: 'src/c.ts' }, 'call_3')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeAlwaysSuccessTool('read_file'))
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'Fix the regression in git branch handling.',
+    cwd: '/workspace/repo',
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  const explorationMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Exploration budget exceeded')
+  ))
+  assert.equal(explorationMessages.length, 1)
+  assert.match(explorationMessages[0]?.content ?? '', /inspected 3 path/)
+})
+
+test('loop injects verification reminder before concluding unvalidated code changes', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('edit_file', { path: 'src/auth.ts' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('bash', { command: 'npm test -- --runInBand' }, 'call_2')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'validated with npm test',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeAlwaysSuccessMutationTool('edit_file'))
+  registry.register(makeAlwaysSuccessTool('bash'))
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'Update the authentication logic.',
+    cwd: '/workspace/repo',
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'validated with npm test')
+  const verificationMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Before concluding a code-change task')
+  ))
+  assert.equal(verificationMessages.length, 1)
+})
+
+test('loop injects todo drift hint after repeated todo-only batches', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('todo_write', { todos: [{ content: 'inspect', status: 'in_progress' }] }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('todo_write', { todos: [{ content: 'inspect', status: 'completed' }] }, 'call_2')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeAlwaysSuccessTool('todo_write'))
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'Fix the bug in parser behavior.',
+    cwd: '/workspace/repo',
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  const todoDriftMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Todo drift detected')
+  ))
+  assert.equal(todoDriftMessages.length, 1)
+})
+
+test('loop injects large patch self-review hint for oversized edit diffs', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('edit_file', { path: 'src/auth.ts' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done and verified',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEditDiffMutationTool('edit_file', 30, 15))
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'Update the authentication logic.',
+    cwd: '/workspace/repo',
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  const reviewMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Large patch self-review')
+  ))
+  assert.equal(reviewMessages.length, 1)
+  assert.match(reviewMessages[0]?.content ?? '', /src\/auth\.ts/)
+})
+
+test('loop injects overwrite-after-edit guardrail on same-path write_file after edit_file', async () => {
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('edit_file', { path: 'src/auth.ts' }, 'call_1')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('write_file', { path: 'src/auth.ts', content: 'line\\n'.repeat(100) }, 'call_2')],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'done and verified',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEditDiffMutationTool('edit_file', 1, 1))
+  registry.register(makeAlwaysSuccessMutationTool('write_file'))
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'Update the authentication logic.',
+    cwd: '/workspace/repo',
+    maxTurns: 10
+  })
+
+  assert.equal(result.terminal, 'completed')
+  const overwriteMessages = result.state.messages.filter((m) => (
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.includes('Overwrite-after-edit guardrail')
+  ))
+  assert.equal(overwriteMessages.length, 1)
+  assert.match(overwriteMessages[0]?.content ?? '', /edit_file .*write_file/i)
+})
+
 test('loop blocks premature completion after errored tool runs with no successful mutation', async () => {
   const provider = new StubProvider([
     {
@@ -1014,7 +1347,7 @@ test('loop blocks premature completion after errored tool runs with no successfu
     },
     {
       role: 'assistant',
-      content: 'fixed',
+      content: 'fixed and validated manually',
       finish_reason: 'stop',
       usage: { prompt_tokens: 1, completion_tokens: 1 }
     }
@@ -1034,7 +1367,7 @@ test('loop blocks premature completion after errored tool runs with no successfu
   })
 
   assert.equal(result.terminal, 'completed')
-  assert.equal(result.finalText, 'fixed')
+  assert.equal(result.finalText, 'fixed and validated manually')
   const recoveryMessage = result.state.messages.find((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&

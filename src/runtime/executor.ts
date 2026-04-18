@@ -9,12 +9,62 @@ interface ToolExecutionResult {
   uiPayload?: ToolUiPayload
 }
 
-function parseToolArgs(raw: string): Record<string, unknown> {
+function parseToolArgsStrict(raw: string): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
   try {
-    return JSON.parse(raw) as Record<string, unknown>
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, error: 'Tool argument validation failed: expected a strict JSON object.' }
+    }
+    return { ok: true, value: parsed as Record<string, unknown> }
   } catch {
-    return {}
+    return { ok: false, error: 'Tool argument validation failed: arguments must be strict JSON.' }
   }
+}
+
+function isPathLikeKey(key: string): boolean {
+  return key === 'path' || key === 'file_path' || key.endsWith('_path')
+}
+
+function looksLikeMalformedPath(value: string): boolean {
+  return (
+    /[\r\n]/.test(value) ||
+    value.includes('```') ||
+    value.includes('<|tool_call_argument_') ||
+    /^\s*>functions\./i.test(value) ||
+    /^\s*<parameter\s+name=/i.test(value) ||
+    /^(path|file_path|from_path|to_path)\s*[:=]/i.test(value) ||
+    /^[:<>"'`[{]/.test(value)
+  )
+}
+
+function validateToolArgs(
+  call: ToolCall,
+  tool: ReturnType<ToolRegistry['get']>,
+): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
+  const parsed = parseToolArgsStrict(call.function.arguments)
+  if (!parsed.ok) return parsed
+  const args = parsed.value
+  const required = tool?.parameters.required ?? []
+  for (const key of required) {
+    const value = args[key]
+    if (value === undefined || value === null) {
+      return { ok: false, error: `Tool argument validation failed: missing required argument \`${key}\`.` }
+    }
+    if (typeof value === 'string' && value.trim() === '') {
+      return { ok: false, error: `Tool argument validation failed: \`${key}\` must be a non-empty string.` }
+    }
+  }
+  for (const [key, value] of Object.entries(args)) {
+    if (!isPathLikeKey(key) || typeof value !== 'string') continue
+    const trimmed = value.trim()
+    if (trimmed === '') {
+      return { ok: false, error: `Tool argument validation failed: \`${key}\` must be a non-empty string.` }
+    }
+    if (looksLikeMalformedPath(trimmed)) {
+      return { ok: false, error: `Tool argument validation failed: \`${key}\` looks malformed; use a real workspace path.` }
+    }
+  }
+  return { ok: true, value: args }
 }
 
 function isConcurrencySafe(call: ToolCall, registry: ToolRegistry): boolean {
@@ -61,7 +111,18 @@ async function runToolCall(
       isError: true
     }
   }
-  const args = parseToolArgs(call.function.arguments)
+  const validatedArgs = validateToolArgs(call, tool)
+  if (!validatedArgs.ok) {
+    return {
+      message: {
+        role: 'tool',
+        tool_call_id: call.id,
+        content: validatedArgs.error,
+      },
+      isError: true,
+    }
+  }
+  const args = validatedArgs.value
   const result = await tool.execute(args, toolContext)
   const budget = resolveToolResultBudgetFromEnv()
   const budgeted = applyToolResultBudget(result.content, budget)

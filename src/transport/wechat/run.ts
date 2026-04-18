@@ -19,9 +19,6 @@ import type { ChatMessage } from '../../types.ts'
 import { createContextService } from '../../context/service.ts'
 import type { RuntimeSink } from '../../runtime/events.ts'
 import { QueryEngine } from '../../runtime/query_engine.ts'
-import { RuntimeTaskRegistry } from '../../runtime/tasks/registry.ts'
-import { wechatMessageTaskHandler } from '../../runtime/tasks/handlers/wechat_message.ts'
-import type { WechatMessageTaskInput, WechatMessageTaskOutput } from '../../runtime/tasks/types.ts'
 
 const MAX_CONSECUTIVE_FAILURES = 3
 const BACKOFF_DELAY_MS = 30_000
@@ -319,18 +316,12 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
         await contextService.prefetchIfSafe()
         await engine.resumeFromTranscript(history)
       }
-      const handler = taskRegistry.get<WechatMessageTaskInput, WechatMessageTaskOutput>('wechat_message')
-      if (!handler) throw new Error('Missing wechat_message task handler')
-      const taskResult = await handler.run({
-        text,
-        renderReply: (current: RunLoopResult) => toPlainText(renderWeixinReply(current)),
-      }, { engine })
-      const result = taskResult.result
+      const result = await engine.submitPrompt(text)
 
       // Persist updated history (result.state.messages includes the new turn)
       histories.set(senderId, trimHistory(result.state.messages))
 
-      const reply = taskResult.reply
+      const reply = toPlainText(renderWeixinReply(result))
       const chunks = splitForWeixin(reply)
       for (const chunk of chunks) {
         await sendWithRetry(chunk, contextToken)
@@ -448,5 +439,3 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
     }
   }
 }
-  const taskRegistry = new RuntimeTaskRegistry()
-  taskRegistry.register(wechatMessageTaskHandler)

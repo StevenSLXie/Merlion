@@ -21,6 +21,7 @@ export interface EditDiffUiPayload {
 
 export type ToolUiPayload = EditDiffUiPayload
 export type ToolSource = 'builtin' | 'mcp' | 'extension'
+export type ToolGuidancePriority = 'normal' | 'critical'
 
 export interface AskUserQuestionOption {
   label: string
@@ -52,6 +53,10 @@ export interface ToolSummary {
   description: string
   source?: ToolSource
   searchHint?: string
+  modelGuidance?: string
+  modelExamples?: string[]
+  guidancePriority?: ToolGuidancePriority
+  requiredParameters?: string[]
   isReadOnly?: boolean
   isDestructive?: boolean
   requiresUserInteraction?: boolean
@@ -71,6 +76,9 @@ export interface ToolDefinition {
   description: string
   source?: ToolSource
   searchHint?: string
+  modelGuidance?: string
+  modelExamples?: string[]
+  guidancePriority?: ToolGuidancePriority
   isReadOnly?: boolean
   isDestructive?: boolean
   requiresUserInteraction?: boolean

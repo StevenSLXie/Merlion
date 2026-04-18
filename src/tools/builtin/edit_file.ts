@@ -53,6 +53,17 @@ function buildEditDiffHunk(original: string, oldString: string, newString: strin
 export const editFileTool: ToolDefinition = {
   name: 'edit_file',
   description: 'Edit an existing file by replacing exact text. Prefer this over write_file when modifying existing files. Default mode requires a unique match; set replace_all=true to replace every occurrence.',
+  modelGuidance: [
+    '- Read the target file first so old_string matches the current file exactly.',
+    '- old_string and new_string must be raw file text. Do not include line numbers or markdown fences.',
+    '- Prefer the smallest unique old_string that isolates the intended change.',
+    '- Use replace_all=true only when every match should change in the same way.',
+    '- Prefer editing an existing file over creating a parallel replacement file.'
+  ].join('\n'),
+  modelExamples: [
+    '{"path":"src/app.ts","old_string":"return false;","new_string":"return true;"}'
+  ],
+  guidancePriority: 'critical',
   parameters: {
     type: 'object',
     properties: {

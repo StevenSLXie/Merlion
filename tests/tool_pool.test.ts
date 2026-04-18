@@ -41,6 +41,12 @@ test('builtin catalog returns stable tool list', () => {
   ])
   assert.equal(catalog.find((tool) => tool.name === 'read_file')?.source, 'builtin')
   assert.equal(catalog.find((tool) => tool.name === 'read_file')?.isReadOnly, true)
+  assert.match(catalog.find((tool) => tool.name === 'read_file')?.modelGuidance ?? '', /raw workspace path/i)
+  assert.match(catalog.find((tool) => tool.name === 'edit_file')?.modelGuidance ?? '', /Read the target file first/i)
+  assert.match(catalog.find((tool) => tool.name === 'bash')?.modelGuidance ?? '', /Use bash for tests/i)
+  assert.match(catalog.find((tool) => tool.name === 'write_file')?.modelGuidance ?? '', /replace the whole file contents/i)
+  assert.match(catalog.find((tool) => tool.name === 'tool_search')?.modelGuidance ?? '', /select:<tool_name>/i)
+  assert.match(catalog.find((tool) => tool.name === 'todo_write')?.modelGuidance ?? '', /verification or validation/i)
   assert.equal(catalog.find((tool) => tool.name === 'delete_file')?.isDestructive, true)
 })
 
