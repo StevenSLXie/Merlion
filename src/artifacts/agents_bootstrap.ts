@@ -1,8 +1,9 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-import { fileExists, findProjectRoot, GUIDANCE_FILENAMES } from './agents.ts'
+import { GUIDANCE_FILENAMES } from './agents.ts'
+import { fileExists, findProjectRoot } from './project_root.ts'
 import {
   bootstrapDepthForFileCount,
   collectDirectorySignals,

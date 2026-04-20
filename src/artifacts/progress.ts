@@ -1,6 +1,6 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { constants } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { fileExists, findProjectRoot } from './project_root.ts'
 
 export interface ProgressArtifact {
   path: string
@@ -21,25 +21,6 @@ export interface ReadProgressOptions {
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.F_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function findProjectRoot(startCwd: string): Promise<string> {
-  let cursor = resolve(startCwd)
-  for (;;) {
-    if (await fileExists(join(cursor, '.git'))) return cursor
-    const parent = resolve(cursor, '..')
-    if (parent === cursor) return resolve(startCwd)
-    cursor = parent
-  }
 }
 
 function sectionLines(items?: string[]): string[] {

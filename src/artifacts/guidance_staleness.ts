@@ -1,8 +1,9 @@
 import { readFile, stat } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
 
-import { fileExists, findProjectRoot, GUIDANCE_FILENAMES } from './agents.ts'
+import { GUIDANCE_FILENAMES } from './agents.ts'
 import { MANUAL_BEGIN, MANUAL_END } from './agents_auto.ts'
+import { fileExists, findProjectRoot } from './project_root.ts'
 
 export interface StaleGuidanceHint {
   guidanceFile: string

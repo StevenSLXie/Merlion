@@ -1,5 +1,3 @@
-import type { ChatMessage } from '../../types.js'
-
 export interface PermissionDecisionRecord {
   tool: string
   description: string
@@ -16,29 +14,13 @@ export interface PermissionState {
 
 export interface CompactState {
   hasAttemptedReactiveCompact: boolean
-  lastCompactBoundaryMessageCount: number | null
-  replayedInjectedMessages: ChatMessage[]
+  lastCompactBoundaryCount: number | null
   lastSummaryText: string | null
-}
-
-export interface SkillState {
-  discoveredSkillNames: Set<string>
-  activatedSkillNames: Set<string>
-  injectedSkillPayloadIds: Set<string>
-  activationCounts: Map<string, number>
-}
-
-export interface MemoryState {
-  loadedMemoryPaths: Set<string>
-  nestedMemoryExpansions: Set<string>
-  sourceProvenance: Map<string, string>
 }
 
 export interface RuntimeState {
   permissions: PermissionState
   compact: CompactState
-  skills: SkillState
-  memory: MemoryState
 }
 
 export interface RuntimeStateSnapshot {
@@ -50,20 +32,8 @@ export interface RuntimeStateSnapshot {
   }
   compact: {
     hasAttemptedReactiveCompact: boolean
-    lastCompactBoundaryMessageCount: number | null
-    replayedInjectedMessages: ChatMessage[]
+    lastCompactBoundaryCount: number | null
     lastSummaryText: string | null
-  }
-  skills: {
-    discoveredSkillNames: string[]
-    activatedSkillNames: string[]
-    injectedSkillPayloadIds: string[]
-    activationCounts: Array<{ name: string; count: number }>
-  }
-  memory: {
-    loadedMemoryPaths: string[]
-    nestedMemoryExpansions: string[]
-    sourceProvenance: Array<{ path: string; source: string }>
   }
 }
 
@@ -77,20 +47,8 @@ export function createRuntimeState(): RuntimeState {
     },
     compact: {
       hasAttemptedReactiveCompact: false,
-      lastCompactBoundaryMessageCount: null,
-      replayedInjectedMessages: [],
+      lastCompactBoundaryCount: null,
       lastSummaryText: null,
-    },
-    skills: {
-      discoveredSkillNames: new Set<string>(),
-      activatedSkillNames: new Set<string>(),
-      injectedSkillPayloadIds: new Set<string>(),
-      activationCounts: new Map<string, number>(),
-    },
-    memory: {
-      loadedMemoryPaths: new Set<string>(),
-      nestedMemoryExpansions: new Set<string>(),
-      sourceProvenance: new Map<string, string>(),
     },
   }
 }
@@ -105,24 +63,8 @@ export function snapshotRuntimeState(state: RuntimeState): RuntimeStateSnapshot 
     },
     compact: {
       hasAttemptedReactiveCompact: state.compact.hasAttemptedReactiveCompact,
-      lastCompactBoundaryMessageCount: state.compact.lastCompactBoundaryMessageCount,
-      replayedInjectedMessages: [...state.compact.replayedInjectedMessages],
+      lastCompactBoundaryCount: state.compact.lastCompactBoundaryCount,
       lastSummaryText: state.compact.lastSummaryText,
-    },
-    skills: {
-      discoveredSkillNames: [...state.skills.discoveredSkillNames].sort(),
-      activatedSkillNames: [...state.skills.activatedSkillNames].sort(),
-      injectedSkillPayloadIds: [...state.skills.injectedSkillPayloadIds].sort(),
-      activationCounts: [...state.skills.activationCounts.entries()]
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    },
-    memory: {
-      loadedMemoryPaths: [...state.memory.loadedMemoryPaths].sort(),
-      nestedMemoryExpansions: [...state.memory.nestedMemoryExpansions].sort(),
-      sourceProvenance: [...state.memory.sourceProvenance.entries()]
-        .map(([path, source]) => ({ path, source }))
-        .sort((a, b) => a.path.localeCompare(b.path)),
     },
   }
 }

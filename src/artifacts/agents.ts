@@ -1,6 +1,6 @@
-import { access, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { basename, join, relative, resolve, sep } from 'node:path'
-import { constants } from 'node:fs'
+import { fileExists, findProjectRoot } from './project_root.ts'
 
 export interface AgentsGuidance {
   text: string
@@ -21,25 +21,6 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
 }
 
-export async function fileExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.F_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-export async function findProjectRoot(startCwd: string): Promise<string> {
-  let cursor = resolve(startCwd)
-  for (;;) {
-    const gitPath = join(cursor, '.git')
-    if (await fileExists(gitPath)) return cursor
-    const parent = resolve(cursor, '..')
-    if (parent === cursor) return resolve(startCwd)
-    cursor = parent
-  }
-}
 
 function ancestorsFromRoot(projectRoot: string, cwd: string): string[] {
   const root = resolve(projectRoot)

@@ -1,5 +1,6 @@
-import { findProjectRoot, loadAgentsGuidance } from '../artifacts/agents.ts'
+import { loadAgentsGuidance } from '../artifacts/agents.ts'
 import { ensureCodebaseIndex, readCodebaseIndex } from '../artifacts/codebase_index.ts'
+import { findProjectRoot } from '../artifacts/project_root.ts'
 import { ensureProgressArtifact, readProgressArtifact } from '../artifacts/progress.ts'
 import { estimateRepositoryFileCount, orientationBudgetsForFileCount } from '../artifacts/repo_semantics.ts'
 

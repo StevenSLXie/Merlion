@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { relative, resolve } from 'node:path'
 
-import { findProjectRoot } from './agents.ts'
+import { findProjectRoot } from './project_root.ts'
 import { updateProgressArtifact } from './progress.ts'
 
 export interface AutoProgressSignals {

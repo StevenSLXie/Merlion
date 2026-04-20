@@ -15,7 +15,7 @@ class StubProvider implements ModelProvider {
     this.responses = responses
   }
 
-  async complete(messages: ChatMessage[]): Promise<AssistantResponse> {
+  async complete(_messages: ChatMessage[]): Promise<AssistantResponse> {
     const response = this.responses[this.index]
     if (!response) throw new Error(`unexpected provider call at index=${this.index}`)
     this.index += 1

@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 
-import type { ChatMessage, LoopState, ToolCall } from '../types.js'
+import type { LoopState, ToolCall } from '../types.js'
 import type { ToolCallResultEvent } from './executor.ts'
 
 // Action-plan detection intentionally combines intent + action + output

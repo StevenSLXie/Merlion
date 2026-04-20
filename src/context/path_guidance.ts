@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
-import { findProjectRoot, resolveAgentsGuidanceFileForDirectory } from '../artifacts/agents.ts'
+import { resolveAgentsGuidanceFileForDirectory } from '../artifacts/agents.ts'
+import { findProjectRoot } from '../artifacts/project_root.ts'
 
 export interface PathGuidanceState {
   loadedAgentFiles: Set<string>

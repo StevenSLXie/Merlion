@@ -1,6 +1,6 @@
 import { test, describe, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 

@@ -1,9 +1,10 @@
-import { appendFile, mkdir, readFile, stat } from 'node:fs/promises'
+import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 
 import type { ChatMessage, SessionMetaEntry, TranscriptMessageEntry } from '../types.js'
+import { fileExists, findProjectRoot } from '../artifacts/project_root.ts'
 import type { PromptObservabilitySnapshot } from './prompt_observability.ts'
 import {
   itemsToMessages,
@@ -176,25 +177,6 @@ function redactItem(item: ConversationItem): ConversationItem {
   return item
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path)
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function findProjectRoot(startCwd: string): Promise<string> {
-  let cursor = resolve(startCwd)
-  for (;;) {
-    if (await pathExists(join(cursor, '.git'))) return cursor
-    const parent = resolve(cursor, '..')
-    if (parent === cursor) return resolve(startCwd)
-    cursor = parent
-  }
-}
-
 interface SessionPathLayout {
   projectRoot: string
   projectHash: string
@@ -242,7 +224,7 @@ export async function getSessionFilesForResume(cwd: string, sessionId: string): 
 
   for (const projectDir of candidates) {
     const transcriptPath = join(projectDir, `${sessionId}.jsonl`)
-    if (!(await pathExists(transcriptPath))) continue
+    if (!(await fileExists(transcriptPath))) continue
     const usagePath = join(projectDir, `${sessionId}.usage.jsonl`)
     return {
       sessionId,

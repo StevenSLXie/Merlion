@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { ChatMessage, LoopState, LoopTerminal, ModelProvider, ToolCall } from '../types.js'
+import type { ChatMessage, LoopState, LoopTerminal, ModelProvider } from '../types.js'
 import type { AskUserQuestionItem, PermissionStore, ToolContext } from '../tools/types.js'
 import type { SubagentToolRuntime } from './subagent_types.ts'
 import { executeToolCalls, type ToolCallResultEvent, type ToolCallStartEvent } from './executor.ts'

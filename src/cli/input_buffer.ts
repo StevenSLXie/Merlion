@@ -1,5 +1,3 @@
-import type { ReadStream, WriteStream } from 'node:tty'
-
 import { askLine } from './ask.ts'
 import type { SlashCommand } from './commands.ts'
 import { formatInlineCompletionPreview, getSlashSuggestions } from './completion.ts'

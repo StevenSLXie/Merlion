@@ -16,7 +16,7 @@ import {
   getSessionFilesForResume,
   loadSessionTranscript,
 } from './session.ts'
-import { calculateUsageCostUsd, createUsageTracker, type UsageRates } from './usage.ts'
+import { createUsageTracker, type UsageRates } from './usage.ts'
 import { createContextService } from '../context/service.ts'
 import { buildDefaultRegistry } from '../tools/builtin/index.ts'
 import { bashTool } from '../tools/builtin/bash.ts'

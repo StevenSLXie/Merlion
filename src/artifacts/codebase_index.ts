@@ -1,9 +1,9 @@
-import { access, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
-import { constants } from 'node:fs'
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
 import { GUIDANCE_FILENAMES } from './agents.ts'
+import { fileExists, findProjectRoot } from './project_root.ts'
 import { collectDirectorySignals, inferDirectoryPurpose } from './repo_semantics.ts'
 
 export interface CodebaseIndexArtifact {
@@ -53,25 +53,6 @@ const IGNORE_FILE_SUFFIXES = ['.pyc', '.pyo', '.tmp', '.swp', '.swo', '.log', '.
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.F_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function findProjectRoot(startCwd: string): Promise<string> {
-  let cursor = resolve(startCwd)
-  for (;;) {
-    if (await fileExists(join(cursor, '.git'))) return cursor
-    const parent = resolve(cursor, '..')
-    if (parent === cursor) return resolve(startCwd)
-    cursor = parent
-  }
 }
 
 function runGit(root: string, args: string[]): string {
