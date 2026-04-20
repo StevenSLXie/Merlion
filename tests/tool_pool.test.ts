@@ -32,12 +32,14 @@ test('builtin catalog returns stable tool list', () => {
     'fetch',
     'lsp',
     'tool_search',
+    'spawn_agent',
     'todo_write',
     'ask_user_question',
     'config',
     'config_get',
     'config_set',
     'sleep',
+    'wait_agent',
   ])
   assert.equal(catalog.find((tool) => tool.name === 'read_file')?.source, 'builtin')
   assert.equal(catalog.find((tool) => tool.name === 'read_file')?.isReadOnly, true)

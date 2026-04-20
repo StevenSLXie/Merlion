@@ -30,6 +30,7 @@ import { askStructuredQuestions } from './ask_user_question.ts'
 import { QueryEngine } from './query_engine.ts'
 import { executeLocalTurn } from './local_turn.ts'
 import { executeVerificationRound } from './verify_round.ts'
+import { createSubagentRuntime as createChildSubagentRuntime } from './subagents.ts'
 
 export interface CliRuntimeOptions {
   task: string
@@ -152,12 +153,13 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     sessionId: session.sessionId,
     isRepl: options.repl
   })
-  const contextService = createContextService({
+  const createContextServiceForRuntime = () => createContextService({
     cwd: options.cwd,
     permissionMode: options.permissionMode,
     orientationBudgets: loadOrientationBudgetsFromEnv(),
     pathGuidanceBudgets: loadPathGuidanceBudgetsFromEnv(),
   })
+  const contextService = createContextServiceForRuntime()
 
   const createEngine = (initialItems?: ReturnType<QueryEngine['getItems']>) => new QueryEngine({
     cwd: options.cwd,
@@ -198,6 +200,22 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     usageRates,
     toolSchemaTokensEstimate,
     buildIntentContract: (prompt) => buildIntentContract(prompt) ?? undefined,
+    createSubagentRuntime: ({ prompt, history, runtimeState, depth }) => createChildSubagentRuntime({
+      cwd: options.cwd,
+      session,
+      model: options.model,
+      parentRegistry: registry,
+      permissions,
+      askQuestions: (questions) => askStructuredQuestions(questions, { readLine: askLine }),
+      buildIntentContract: (subPrompt) => buildIntentContract(subPrompt) ?? undefined,
+      sink,
+      runtimeState,
+      history,
+      prompt,
+      depth,
+      createProvider,
+      createContextService: createContextServiceForRuntime,
+    }),
   })
 
   let engine = createEngine(options.resumeSessionId ? [] : undefined)

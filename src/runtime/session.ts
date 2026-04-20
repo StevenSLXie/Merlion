@@ -20,6 +20,7 @@ export interface SessionFiles {
   projectDir: string
   transcriptPath: string
   usagePath: string
+  childRegistryPath: string
 }
 
 export interface UsageEntry {
@@ -228,7 +229,8 @@ export async function createSessionFiles(cwd: string): Promise<SessionFiles> {
     projectHash: layout.projectHash,
     projectDir,
     transcriptPath: join(projectDir, `${sessionId}.jsonl`),
-    usagePath: join(projectDir, `${sessionId}.usage.jsonl`)
+    usagePath: join(projectDir, `${sessionId}.usage.jsonl`),
+    childRegistryPath: join(projectDir, `${sessionId}.child-agents.jsonl`),
   }
 }
 
@@ -247,7 +249,8 @@ export async function getSessionFilesForResume(cwd: string, sessionId: string): 
       projectHash: layout.projectHash,
       projectDir,
       transcriptPath,
-      usagePath
+      usagePath,
+      childRegistryPath: join(projectDir, `${sessionId}.child-agents.jsonl`),
     }
   }
 

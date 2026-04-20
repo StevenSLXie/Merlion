@@ -1,3 +1,5 @@
+import type { SubagentToolRuntime } from '../runtime/subagent_types.ts'
+
 export interface EditDiffLine {
   type: 'context' | 'add' | 'remove'
   text: string
@@ -69,6 +71,7 @@ export interface ToolContext {
   permissions?: PermissionStore
   listTools?: () => ToolSummary[]
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
+  subagents?: SubagentToolRuntime
 }
 
 export interface ToolDefinition {

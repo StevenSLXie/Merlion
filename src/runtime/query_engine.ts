@@ -2,6 +2,7 @@ import type { ChatMessage, ModelProvider } from '../types.js'
 import type { ConversationItem, ProviderResponseBoundary } from './items.ts'
 import { itemsToMessages, messagesToItems } from './items.ts'
 import type { AskUserQuestionItem, PermissionStore } from '../tools/types.js'
+import type { SubagentToolRuntime } from './subagent_types.ts'
 import { ToolRegistry } from '../tools/registry.ts'
 import { runLoop, type RunLoopResult } from './loop.ts'
 import type { PromptObservabilitySnapshot } from './prompt_observability.ts'
@@ -66,6 +67,14 @@ export interface QueryEngineOptions {
   usageTracker?: UsageTrackerLike
   usageRates?: UsageRates
   toolSchemaTokensEstimate?: number
+  createSubagentRuntime?: (context: {
+    prompt: string
+    history: ConversationItem[]
+    runtimeState: RuntimeState
+    sessionId?: string
+    model?: string
+    depth: number
+  }) => SubagentToolRuntime
 }
 
 export interface QueryEngineSnapshot {
@@ -180,6 +189,14 @@ export class QueryEngine {
       askQuestions: this.options.askQuestions,
       initialItems: seededItems,
       persistInitialMessages: false,
+      subagents: this.options.createSubagentRuntime?.({
+        prompt,
+        history: [...this.history],
+        runtimeState: this.runtimeState,
+        sessionId: this.options.sessionId,
+        model: this.options.model,
+        depth: 0,
+      }),
       promptObservabilityTracker: this.options.promptObservabilityTracker,
       onItemAppended: async (entry) => {
         await this.persistItem(entry.item, entry.origin, entry.runtimeResponseId)

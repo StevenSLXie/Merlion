@@ -25,8 +25,10 @@ import { runScriptTool } from './builtin/run_script.ts'
 import { searchTool } from './builtin/search.ts'
 import { sleepTool } from './builtin/sleep.ts'
 import { statPathTool } from './builtin/stat_path.ts'
+import { spawnAgentTool } from './builtin/spawn_agent.ts'
 import { todoWriteTool } from './builtin/todo_write.ts'
 import { toolSearchTool } from './builtin/tool_search.ts'
+import { waitAgentTool } from './builtin/wait_agent.ts'
 import { writeFileTool } from './builtin/write_file.ts'
 
 type BuiltinToolMetadata = Pick<
@@ -58,12 +60,14 @@ const BUILTIN_TOOL_METADATA: Record<string, BuiltinToolMetadata> = {
   fetch: { source: 'builtin', searchHint: 'fetch web page', isReadOnly: true },
   lsp: { source: 'builtin', searchHint: 'semantic code navigation and diagnostics', isReadOnly: true },
   tool_search: { source: 'builtin', searchHint: 'find matching tool by capability', isReadOnly: true },
+  spawn_agent: { source: 'builtin', searchHint: 'delegate a subtask to a specialized child agent' },
   todo_write: { source: 'builtin', searchHint: 'update todo list', isDestructive: true },
   ask_user_question: { source: 'builtin', searchHint: 'ask the user clarifying questions', requiresUserInteraction: true },
   config: { source: 'builtin', searchHint: 'read or change merlion config', isDestructive: true, requiresUserInteraction: true },
   config_get: { source: 'builtin', searchHint: 'read merlion config value', isReadOnly: true },
   config_set: { source: 'builtin', searchHint: 'change merlion config value', isDestructive: true, requiresUserInteraction: true },
   sleep: { source: 'builtin', searchHint: 'wait before next step' },
+  wait_agent: { source: 'builtin', searchHint: 'check child agent status', isReadOnly: true },
 }
 
 const BUILTIN_TOOL_CATALOG: ToolDefinition[] = [
@@ -90,12 +94,14 @@ const BUILTIN_TOOL_CATALOG: ToolDefinition[] = [
   fetchTool,
   lspTool,
   toolSearchTool,
+  spawnAgentTool,
   todoWriteTool,
   askUserQuestionTool,
   configTool,
   configGetTool,
   configSetTool,
   sleepTool,
+  waitAgentTool,
 ]
 
 export function getBuiltinToolCatalog(): ToolDefinition[] {

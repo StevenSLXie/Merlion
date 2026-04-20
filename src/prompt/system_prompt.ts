@@ -30,6 +30,12 @@ export const SYSTEM_PROMPT_STATIC_SECTIONS: string[] = [
     'Completion discipline:',
     'before claiming the task is done, run the strongest relevant verification you can,',
     'and if verification is partial, say exactly what you did and what remains unverified.'
+  ].join(' '),
+  [
+    'Delegation discipline:',
+    'subagents are expensive and should be used deliberately,',
+    'use explorer for read-heavy investigation, worker for bounded implementation,',
+    'and verifier for independent validation when a clean context boundary helps.'
   ].join(' ')
 ]
 

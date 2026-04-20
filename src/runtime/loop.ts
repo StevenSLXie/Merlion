@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { ChatMessage, LoopState, LoopTerminal, ModelProvider, ToolCall } from '../types.js'
 import type { AskUserQuestionItem, PermissionStore, ToolContext } from '../tools/types.js'
+import type { SubagentToolRuntime } from './subagent_types.ts'
 import { executeToolCalls, type ToolCallResultEvent, type ToolCallStartEvent } from './executor.ts'
 import { withRetry } from './retry.ts'
 import { ToolRegistry } from '../tools/registry.ts'
@@ -85,6 +86,7 @@ export interface RunLoopOptions {
   cwd: string
   permissions?: PermissionStore
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
+  subagents?: SubagentToolRuntime
   maxTurns?: number
   initialMessages?: ChatMessage[]
   initialItems?: ConversationItem[]
@@ -356,6 +358,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     cwd: options.cwd,
     permissions: options.permissions ?? defaultPermissions,
     askQuestions: options.askQuestions,
+    subagents: options.subagents,
     listTools: () =>
       options.registry.getAll().map((tool) => ({
         name: tool.name,
