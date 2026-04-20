@@ -417,7 +417,6 @@ function createBackgroundPermissionStore(): PermissionStore {
 
 function createChildPermissionStore(
   parentPermissions: PermissionStore,
-  role: SubagentRole,
   execution: ChildExecutionMode,
 ): PermissionStore {
   if (execution === 'background') return createBackgroundPermissionStore()
@@ -627,7 +626,7 @@ async function runChildAgent(
     cwd: options.cwd,
     provider: childProvider,
     registry,
-    permissions: createChildPermissionStore(options.permissions, input.role, execution),
+    permissions: createChildPermissionStore(options.permissions, execution),
     contextService: childContext,
     model: input.model ?? options.model,
     sessionId: childSession.sessionId,

@@ -118,6 +118,8 @@ test('QueryEngine initializes bootstrap context and tracks permission denials', 
   const snapshot = engine.getSnapshot()
   assert.equal(snapshot.runtimeState.permissions.deniedToolNames.includes('write_file'), true)
   assert.equal(snapshot.runtimeState.compact.lastSummaryText, 'Permission was denied for the README update request.')
+  assert.equal('skills' in (snapshot.runtimeState as unknown as Record<string, unknown>), false)
+  assert.equal('memory' in (snapshot.runtimeState as unknown as Record<string, unknown>), false)
   assert.equal(persisted[0]?.kind, 'message')
   assert.equal(persisted[0] && 'content' in persisted[0] ? persisted[0].content : '', 'system prompt')
   assert.equal(persisted[1] && 'content' in persisted[1] ? persisted[1].content : '', 'bootstrap orientation')
