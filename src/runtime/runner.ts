@@ -4,15 +4,17 @@ import { readReplInputLine } from '../cli/input_buffer.ts'
 import { runReplSession } from '../cli/repl.ts'
 import { createPermissionStore } from '../permissions/store.ts'
 import { OpenAICompatProvider } from '../providers/openai.ts'
+import { OpenAIResponsesProvider } from '../providers/openai_responses.ts'
 import { createPromptObservabilityTrackerWithToolSchema } from './prompt_observability.ts'
 import { buildIntentContract } from './intent_contract.ts'
 import {
+  appendTranscriptItem,
+  appendTranscriptResponse,
   appendSessionMeta,
-  appendTranscriptMessage,
   appendUsage,
   createSessionFiles,
   getSessionFilesForResume,
-  loadSessionMessages,
+  loadSessionTranscript,
 } from './session.ts'
 import { calculateUsageCostUsd, createUsageTracker, type UsageRates } from './usage.ts'
 import { createContextService } from '../context/service.ts'
@@ -114,11 +116,21 @@ function loadPathGuidanceBudgetsFromEnv(): Partial<{
 }
 
 export async function runCliRuntime(options: CliRuntimeOptions): Promise<number> {
-  let provider = new OpenAICompatProvider({
-    apiKey: options.apiKey,
-    baseURL: options.baseURL,
-    model: options.model
-  })
+  const createProvider = () => {
+    if (options.provider === 'openai') {
+      return new OpenAIResponsesProvider({
+        apiKey: options.apiKey,
+        baseURL: options.baseURL,
+        model: options.model
+      })
+    }
+    return new OpenAICompatProvider({
+      apiKey: options.apiKey,
+      baseURL: options.baseURL,
+      model: options.model
+    })
+  }
+  let provider = createProvider()
   const registry = buildDefaultRegistry({ mode: 'default' })
   const toolSchemaSerialized = serializeToolSchema(registry)
   const permissions = createPermissionStore(options.permissionMode)
@@ -130,8 +142,8 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
   }
   const toolSchemaTokensEstimate = estimateToolSchemaTokens(registry)
   const promptObservabilityTracker = createPromptObservabilityTrackerWithToolSchema(toolSchemaSerialized)
-  const initialMessagesFromResume = options.resumeSessionId
-    ? await loadSessionMessages(session.transcriptPath)
+  const initialTranscriptFromResume = options.resumeSessionId
+    ? await loadSessionTranscript(session.transcriptPath)
     : undefined
   const usageTracker = createUsageTracker()
   const usageRates = loadUsageRatesFromEnv()
@@ -147,7 +159,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     pathGuidanceBudgets: loadPathGuidanceBudgetsFromEnv(),
   })
 
-  const createEngine = (initialMessages?: ReturnType<QueryEngine['getMessages']>) => new QueryEngine({
+  const createEngine = (initialItems?: ReturnType<QueryEngine['getItems']>) => new QueryEngine({
     cwd: options.cwd,
     provider,
     registry,
@@ -155,13 +167,16 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     contextService,
     model: options.model,
     sessionId: session.sessionId,
-    initialMessages,
+    initialItems,
     maxTurns: 100,
     askQuestions: (questions) => askStructuredQuestions(questions, { readLine: askLine }),
     sink,
     promptObservabilityTracker,
-    persistMessage: async (message) => {
-      await appendTranscriptMessage(session.transcriptPath, message)
+    persistItem: async (item, origin, runtimeResponseId) => {
+      await appendTranscriptItem(session.transcriptPath, item, origin, runtimeResponseId)
+    },
+    persistResponseBoundary: async (boundary) => {
+      await appendTranscriptResponse(session.transcriptPath, boundary)
     },
     persistUsage: async (entry) => {
       await appendUsage(session.usagePath, {
@@ -173,6 +188,9 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
         completion_tokens: entry.completion_tokens,
         cached_tokens: entry.cached_tokens ?? null,
         tool_schema_tokens_estimate: toolSchemaTokensEstimate,
+        runtime_response_id: entry.runtimeResponseId,
+        provider_response_id: entry.providerResponseId,
+        provider_finish_reason: entry.providerFinishReason,
         prompt_observability: entry.promptObservability,
       })
     },
@@ -183,9 +201,9 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
   })
 
   let engine = createEngine(options.resumeSessionId ? [] : undefined)
-  if (initialMessagesFromResume) {
+  if (initialTranscriptFromResume) {
     await contextService.prefetchIfSafe()
-    await engine.resumeFromTranscript(initialMessagesFromResume)
+    await engine.resumeFromTranscript(initialTranscriptFromResume.items)
   }
 
   await engine.initialize()
@@ -213,14 +231,10 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     if (result.config.model) options.model = result.config.model
     if (typeof result.config.baseURL === 'string') options.baseURL = result.config.baseURL
 
-    provider = new OpenAICompatProvider({
-      apiKey: options.apiKey,
-      baseURL: options.baseURL,
-      model: options.model
-    })
-    const currentMessages = engine.getMessages()
-    engine = createEngine(currentMessages)
-    await engine.resumeFromTranscript(currentMessages)
+    provider = createProvider()
+    const currentItems = engine.getItems()
+    engine = createEngine(currentItems)
+    await engine.resumeFromTranscript(currentItems)
     return true
   }
 
@@ -255,7 +269,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     return taskResult.loopResult ?? {
       terminal: taskResult.terminal as 'completed' | 'max_turns_exceeded' | 'model_error',
       finalText: taskResult.output,
-      state: { messages: engine.getMessages(), turnCount: 0, maxOutputTokensRecoveryCount: 0, hasAttemptedReactiveCompact: false, nudgeCount: 0 },
+      state: { items: engine.getItems(), messages: engine.getMessages(), turnCount: 0, maxOutputTokensRecoveryCount: 0, hasAttemptedReactiveCompact: false, nudgeCount: 0 },
     }
   }
 

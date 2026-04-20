@@ -3,8 +3,16 @@ import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import type { ChatMessage, SessionMetaEntry, TranscriptEntry, TranscriptMessageEntry } from '../types.js'
+import type { ChatMessage, SessionMetaEntry, TranscriptMessageEntry } from '../types.js'
 import type { PromptObservabilitySnapshot } from './prompt_observability.ts'
+import {
+  itemsToMessages,
+  legacyMessageToItems,
+  type ConversationItem,
+  type ProviderResponseBoundary,
+  type TranscriptItemEntry,
+  type TranscriptResponseEntry,
+} from './items.ts'
 
 export interface SessionFiles {
   sessionId: string
@@ -23,10 +31,22 @@ export interface UsageEntry {
   completion_tokens: number
   cached_tokens: number | null
   tool_schema_tokens_estimate: number
+  runtime_response_id?: string
+  provider_response_id?: string
+  provider_finish_reason?: string
   prompt_observability?: PromptObservabilitySnapshot
 }
 
+export interface SessionTranscriptLoadResult {
+  items: ConversationItem[]
+  messages: ChatMessage[]
+  latestResponseBoundary: ProviderResponseBoundary | null
+  eligiblePreviousResponseId: string | null
+  hasLocalTailAfterLatestResponse: boolean
+}
+
 const VALID_ROLES = new Set(['system', 'user', 'assistant', 'tool'])
+const VALID_ITEM_ORIGINS = new Set(['provider_output', 'local_tool_output', 'local_runtime'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -43,7 +63,56 @@ function isTranscriptMessageEntry(value: unknown): value is TranscriptMessageEnt
   return true
 }
 
-function parseTranscriptEntry(line: string): TranscriptEntry | null {
+function isConversationItem(value: unknown): value is ConversationItem {
+  if (!isRecord(value) || typeof value.kind !== 'string') return false
+  if (value.kind === 'message') {
+    return (
+      (value.role === 'system' || value.role === 'user' || value.role === 'assistant') &&
+      typeof value.content === 'string' &&
+      typeof value.source === 'string'
+    )
+  }
+  if (value.kind === 'reasoning') return true
+  if (value.kind === 'function_call') {
+    return typeof value.callId === 'string' && typeof value.name === 'string' && typeof value.argumentsText === 'string'
+  }
+  if (value.kind === 'function_call_output') {
+    return typeof value.callId === 'string' && typeof value.outputText === 'string'
+  }
+  return false
+}
+
+function isTranscriptItemEntry(value: unknown): value is TranscriptItemEntry {
+  if (!isRecord(value) || value.type !== 'item') return false
+  if (!VALID_ITEM_ORIGINS.has(String(value.origin ?? ''))) return false
+  if ('runtimeResponseId' in value && value.runtimeResponseId !== undefined && typeof value.runtimeResponseId !== 'string') {
+    return false
+  }
+  return isConversationItem(value.item)
+}
+
+function isProviderResponseBoundary(value: unknown): value is ProviderResponseBoundary {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.runtimeResponseId === 'string' &&
+    typeof value.provider === 'string' &&
+    typeof value.finishReason === 'string' &&
+    typeof value.outputItemCount === 'number' &&
+    typeof value.createdAt === 'string'
+  )
+}
+
+function isTranscriptResponseEntry(value: unknown): value is TranscriptResponseEntry {
+  return isRecord(value) && value.type === 'response' && isProviderResponseBoundary(value.response)
+}
+
+type ParsedTranscriptEntry =
+  | SessionMetaEntry
+  | TranscriptMessageEntry
+  | TranscriptItemEntry
+  | TranscriptResponseEntry
+
+function parseTranscriptEntry(line: string): ParsedTranscriptEntry | null {
   let parsed: unknown
   try {
     parsed = JSON.parse(line)
@@ -51,9 +120,9 @@ function parseTranscriptEntry(line: string): TranscriptEntry | null {
     return null
   }
   if (!isRecord(parsed)) return null
-  if (parsed.type === 'message') {
-    return isTranscriptMessageEntry(parsed) ? parsed : null
-  }
+  if (parsed.type === 'message') return isTranscriptMessageEntry(parsed) ? parsed : null
+  if (parsed.type === 'item') return isTranscriptItemEntry(parsed) ? parsed : null
+  if (parsed.type === 'response') return isTranscriptResponseEntry(parsed) ? parsed : null
   if (parsed.type === 'session_meta') {
     if (
       typeof parsed.id === 'string' &&
@@ -61,14 +130,13 @@ function parseTranscriptEntry(line: string): TranscriptEntry | null {
       typeof parsed.model === 'string' &&
       typeof parsed.projectPath === 'string'
     ) {
-      const entry: SessionMetaEntry = {
+      return {
         type: 'session_meta',
         id: parsed.id,
         createdAt: parsed.createdAt,
         model: parsed.model,
         projectPath: parsed.projectPath
       }
-      return entry
     }
   }
   return null
@@ -87,21 +155,24 @@ export function redactSecrets(input: string): string {
   return output
 }
 
-function redactMessage(message: ChatMessage): ChatMessage {
-  const redacted: ChatMessage = { ...message }
-  if (typeof redacted.content === 'string') {
-    redacted.content = redactSecrets(redacted.content)
+function redactItem(item: ConversationItem): ConversationItem {
+  if (item.kind === 'message') {
+    return { ...item, content: redactSecrets(item.content) }
   }
-  if (redacted.tool_calls) {
-    redacted.tool_calls = redacted.tool_calls.map((call) => ({
-      ...call,
-      function: {
-        ...call.function,
-        arguments: redactSecrets(call.function.arguments)
-      }
-    }))
+  if (item.kind === 'function_call') {
+    return { ...item, argumentsText: redactSecrets(item.argumentsText) }
   }
-  return redacted
+  if (item.kind === 'function_call_output') {
+    return { ...item, outputText: redactSecrets(item.outputText) }
+  }
+  if (item.kind === 'reasoning') {
+    return {
+      ...item,
+      summaryText: item.summaryText ? redactSecrets(item.summaryText) : item.summaryText,
+      encryptedContent: item.encryptedContent ? redactSecrets(item.encryptedContent) : item.encryptedContent,
+    }
+  }
+  return item
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -199,9 +270,29 @@ export async function appendSessionMeta(
   await appendFile(transcriptPath, `${JSON.stringify(entry)}\n`, 'utf8')
 }
 
-export async function appendTranscriptMessage(transcriptPath: string, message: ChatMessage): Promise<void> {
-  const redacted = redactMessage(message)
-  const entry: TranscriptMessageEntry = { type: 'message', ...redacted }
+export async function appendTranscriptResponse(
+  transcriptPath: string,
+  boundary: ProviderResponseBoundary,
+): Promise<void> {
+  const entry: TranscriptResponseEntry = {
+    type: 'response',
+    response: boundary,
+  }
+  await appendFile(transcriptPath, `${JSON.stringify(entry)}\n`, 'utf8')
+}
+
+export async function appendTranscriptItem(
+  transcriptPath: string,
+  item: ConversationItem,
+  origin: TranscriptItemEntry['origin'],
+  runtimeResponseId?: string,
+): Promise<void> {
+  const entry: TranscriptItemEntry = {
+    type: 'item',
+    item: redactItem(item),
+    origin,
+    runtimeResponseId,
+  }
   await appendFile(transcriptPath, `${JSON.stringify(entry)}\n`, 'utf8')
 }
 
@@ -209,24 +300,59 @@ export async function appendUsage(usagePath: string, entry: UsageEntry): Promise
   await appendFile(usagePath, `${JSON.stringify(entry)}\n`, 'utf8')
 }
 
-export async function loadSessionMessages(transcriptPath: string): Promise<ChatMessage[]> {
+export async function loadSessionTranscript(transcriptPath: string): Promise<SessionTranscriptLoadResult> {
   const text = await readFile(transcriptPath, 'utf8')
   const lines = text.split('\n').filter((line) => line.trim() !== '')
-  const messages: ChatMessage[] = []
+  const parsedEntries: ParsedTranscriptEntry[] = []
 
   for (const line of lines) {
     const parsed = parseTranscriptEntry(line)
-    if (!parsed || parsed.type !== 'message') continue
-
-    const message: ChatMessage = {
-      role: parsed.role,
-      content: parsed.content ?? null,
-      tool_calls: parsed.tool_calls,
-      tool_call_id: parsed.tool_call_id,
-      name: parsed.name
-    }
-    messages.push(message)
+    if (parsed) parsedEntries.push(parsed)
   }
 
-  return messages
+  const items: ConversationItem[] = []
+  let systemIndex = 0
+  let latestResponseBoundary: ProviderResponseBoundary | null = null
+  let latestResponseIndex = -1
+
+  for (let index = 0; index < parsedEntries.length; index += 1) {
+    const parsed = parsedEntries[index]!
+    if (parsed.type === 'response') {
+      latestResponseBoundary = parsed.response
+      latestResponseIndex = index
+      continue
+    }
+    if (parsed.type === 'item') {
+      items.push(parsed.item)
+      continue
+    }
+    if (parsed.type === 'message') {
+      const converted = legacyMessageToItems(parsed, { systemIndex })
+      items.push(...converted)
+      if (parsed.role === 'system') systemIndex += 1
+    }
+  }
+
+  let hasLocalTailAfterLatestResponse = false
+  if (latestResponseBoundary && latestResponseIndex >= 0) {
+    for (let index = latestResponseIndex + 1; index < parsedEntries.length; index += 1) {
+      const parsed = parsedEntries[index]!
+      if (parsed.type !== 'item') continue
+      if (parsed.runtimeResponseId !== latestResponseBoundary.runtimeResponseId) {
+        hasLocalTailAfterLatestResponse = true
+        break
+      }
+    }
+  }
+
+  return {
+    items,
+    messages: itemsToMessages(items),
+    latestResponseBoundary,
+    eligiblePreviousResponseId:
+      latestResponseBoundary && !hasLocalTailAfterLatestResponse
+        ? latestResponseBoundary.providerResponseId ?? null
+        : null,
+    hasLocalTailAfterLatestResponse,
+  }
 }

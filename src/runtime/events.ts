@@ -33,6 +33,9 @@ export interface RuntimeUsageEvent {
   estimatedCost?: number
   provider?: string
   promptObservability?: PromptObservabilitySnapshot
+  runtimeResponseId?: string
+  providerResponseId?: string
+  providerFinishReason?: string
 }
 
 export interface RuntimeSink {

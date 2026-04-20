@@ -3,16 +3,16 @@
  *
  * Tests the complete persistence + restore pipeline:
  *   Session 1 — agent creates marker.txt with a unique string,
- *               every message is persisted to a JSONL transcript via
- *               appendTranscriptMessage.
- *   Restore   — loadSessionMessages reads the transcript back into a
- *               ChatMessage array.
- *   Session 2 — a fresh runLoop receives the restored messages as
- *               initialMessages and a new userPrompt. It reads marker.txt
+ *               every item is persisted to a JSONL transcript via
+ *               appendTranscriptItem.
+ *   Restore   — loadSessionTranscript reads the transcript back into an
+ *               item array.
+ *   Session 2 — a fresh runLoop receives the restored items as
+ *               initialItems and a new userPrompt. It reads marker.txt
  *               and must report the marker string (proving the prior
  *               context was successfully injected and the file is intact).
  *
- * Covers: appendTranscriptMessage, loadSessionMessages, runLoop initialMessages.
+ * Covers: appendTranscriptItem, loadSessionTranscript, runLoop initialItems.
  *
  * Skipped when OPENROUTER_API_KEY is not set.
  */
@@ -32,8 +32,8 @@ import {
 } from './helpers.ts'
 import { runLoop } from '../../src/runtime/loop.ts'
 import {
-  appendTranscriptMessage,
-  loadSessionMessages,
+  appendTranscriptItem,
+  loadSessionTranscript,
 } from '../../src/runtime/session.ts'
 
 // Unique marker embedded in the file so we can assert on it cross-session.
@@ -59,7 +59,12 @@ if (SKIP) {
           cwd: sandbox,
           maxTurns: 15,
           permissions: { ask: async () => 'allow_session' },
-          onMessageAppended: (msg) => appendTranscriptMessage(transcriptPath, msg),
+          onItemAppended: (entry) => appendTranscriptItem(
+            transcriptPath,
+            entry.item,
+            entry.origin,
+            entry.runtimeResponseId
+          ),
         })
 
         assert.equal(result1.terminal, 'completed', `Session 1 ended: ${result1.terminal}`)
@@ -72,30 +77,30 @@ if (SKIP) {
         )
 
         // ── Restore: load messages from JSONL transcript ──────────────────────
-        const restoredMessages = await loadSessionMessages(transcriptPath)
+        const restoredTranscript = await loadSessionTranscript(transcriptPath)
 
         assert.ok(
-          restoredMessages.length > 0,
-          'Transcript must contain at least one message',
+          restoredTranscript.items.length > 0,
+          'Transcript must contain at least one item',
         )
         assert.ok(
-          restoredMessages.some((m) => m.role === 'system'),
-          'Restored messages must include the system message',
+          restoredTranscript.messages.some((m) => m.role === 'system'),
+          'Restored transcript must include the system message',
         )
         assert.ok(
-          restoredMessages.some((m) => m.role === 'assistant'),
-          'Restored messages must include at least one assistant message',
+          restoredTranscript.messages.some((m) => m.role === 'assistant'),
+          'Restored transcript must include at least one assistant message',
         )
 
         // ── Session 2: inject restored context, ask about marker.txt ─────────
         const result2 = await runLoop({
           provider: makeProvider(),
           registry: makeRegistry(),
-          // systemPrompt is ignored when initialMessages is provided
+          // systemPrompt is ignored when initialItems is provided
           systemPrompt: SYSTEM_PROMPT,
           userPrompt: 'Read marker.txt and tell me its exact content.',
           cwd: sandbox,
-          initialMessages: restoredMessages,
+          initialItems: restoredTranscript.items,
           maxTurns: 15,
           permissions: { ask: async () => 'allow_session' },
         })

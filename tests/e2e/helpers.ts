@@ -19,11 +19,11 @@ import { createUsageTracker } from '../../src/runtime/usage.ts'
 export const FIXTURES_DIR = join(fileURLToPath(import.meta.url), '../fixtures')
 
 // Default model for E2E tests.
-// Priority: MERLION_E2E_MODEL > MERLION_MODEL > cheap default
+// Priority: MERLION_E2E_MODEL > MERLION_MODEL > pinned baseline default
 const E2E_MODEL =
   process.env.MERLION_E2E_MODEL ??
   process.env.MERLION_MODEL ??
-  'anthropic/claude-haiku-4-5'
+  'moonshotai/kimi-k2.5'
 const E2E_BASE_URL = process.env.MERLION_BASE_URL ?? 'https://openrouter.ai/api/v1'
 
 export const API_KEY = process.env.OPENROUTER_API_KEY ?? ''

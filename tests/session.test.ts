@@ -5,13 +5,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  appendTranscriptMessage,
+  appendTranscriptItem,
   appendUsage,
   createSessionFiles,
   getSessionFilesForResume,
-  loadSessionMessages,
+  loadSessionTranscript,
   redactSecrets
 } from '../src/runtime/session.ts'
+import { createAssistantItem, createExternalUserItem, createSystemItem } from '../src/runtime/items.ts'
 
 async function makeTempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'merlion-session-'))
@@ -42,13 +43,15 @@ test('appends transcript lines', async () => {
   process.env.MERLION_DATA_DIR = cwd
   const session = await createSessionFiles('/project/a')
 
-  await appendTranscriptMessage(session.transcriptPath, {
-    role: 'assistant',
-    content: 'token Bearer abc.def',
-  })
+  await appendTranscriptItem(
+    session.transcriptPath,
+    createAssistantItem('token Bearer abc.def'),
+    'provider_output',
+    'rt_1'
+  )
 
   const text = await readFile(session.transcriptPath, 'utf8')
-  assert.match(text, /"type":"message"/)
+  assert.match(text, /"type":"item"/)
   assert.match(text, /Bearer \[REDACTED\]/)
 })
 
@@ -72,19 +75,19 @@ test('appends usage lines', async () => {
   assert.match(text, /"completion_tokens":40/)
 })
 
-test('loads messages from existing transcript', async () => {
+test('loads item transcript from existing transcript', async () => {
   const cwd = await makeTempDir()
   process.env.MERLION_DATA_DIR = cwd
   const session = await createSessionFiles('/project/c')
 
-  await appendTranscriptMessage(session.transcriptPath, { role: 'system', content: 's' })
-  await appendTranscriptMessage(session.transcriptPath, { role: 'user', content: 'u' })
-  await appendTranscriptMessage(session.transcriptPath, { role: 'assistant', content: 'a' })
+  await appendTranscriptItem(session.transcriptPath, createSystemItem('s', 'static'), 'local_runtime')
+  await appendTranscriptItem(session.transcriptPath, createExternalUserItem('u'), 'local_runtime')
+  await appendTranscriptItem(session.transcriptPath, createAssistantItem('a'), 'provider_output', 'rt_1')
 
-  const loaded = await loadSessionMessages(session.transcriptPath)
-  assert.equal(loaded.length, 3)
-  assert.equal(loaded[0]?.role, 'system')
-  assert.equal(loaded[2]?.content, 'a')
+  const loaded = await loadSessionTranscript(session.transcriptPath)
+  assert.equal(loaded.items.length, 3)
+  assert.equal(loaded.messages[0]?.role, 'system')
+  assert.equal(loaded.messages[2]?.content, 'a')
 })
 
 test('ignores malformed transcript lines and invalid message role on load', async () => {
@@ -103,10 +106,10 @@ test('ignores malformed transcript lines and invalid message role on load', asyn
     'utf8'
   )
 
-  const loaded = await loadSessionMessages(session.transcriptPath)
-  assert.equal(loaded.length, 1)
-  assert.equal(loaded[0]?.role, 'user')
-  assert.equal(loaded[0]?.content, 'good')
+  const loaded = await loadSessionTranscript(session.transcriptPath)
+  assert.equal(loaded.messages.length, 1)
+  assert.equal(loaded.messages[0]?.role, 'user')
+  assert.equal(loaded.messages[0]?.content, 'good')
 })
 
 test('throws when session transcript not found', async () => {

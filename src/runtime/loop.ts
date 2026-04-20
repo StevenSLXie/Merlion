@@ -1,10 +1,32 @@
+import { randomUUID } from 'node:crypto'
+
 import type { ChatMessage, LoopState, LoopTerminal, ModelProvider, ToolCall } from '../types.js'
 import type { AskUserQuestionItem, PermissionStore, ToolContext } from '../tools/types.js'
 import { executeToolCalls, type ToolCallResultEvent, type ToolCallStartEvent } from './executor.ts'
 import { withRetry } from './retry.ts'
 import { ToolRegistry } from '../tools/registry.ts'
-import { compactMessages, estimateMessagesChars } from '../context/compact.ts'
-import { createPromptObservabilityTracker, type PromptObservabilitySnapshot } from './prompt_observability.ts'
+import { compactItems, estimateItemsChars } from '../context/compact.ts'
+import {
+  createPromptObservabilityTracker,
+  type PromptObservabilitySnapshot,
+  withResponseBoundaryPromptObservability,
+} from './prompt_observability.ts'
+import {
+  assistantResponseToItems,
+  countFunctionCallItems,
+  createExternalUserItem,
+  createRuntimeUserItem,
+  createSystemItem,
+  findLastAssistantText,
+  functionCallItemsToToolCalls,
+  itemsToMessages,
+  messagesToItems,
+  toolResultMessageToOutputItem,
+  type ConversationItem,
+  type ProviderResponseBoundary,
+  type ProviderResult,
+  type TranscriptItemEntry,
+} from './items.ts'
 import { isBugFixPrompt } from './intent_contract.ts'
 import {
   BUGFIX_NO_MUTATION_BATCH_THRESHOLD,
@@ -65,17 +87,23 @@ export interface RunLoopOptions {
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
   maxTurns?: number
   initialMessages?: ChatMessage[]
+  initialItems?: ConversationItem[]
   persistInitialMessages?: boolean
   onMessageAppended?: (message: ChatMessage) => Promise<void> | void
+  onItemAppended?: (entry: TranscriptItemEntry) => Promise<void> | void
+  onResponseBoundary?: (boundary: ProviderResponseBoundary) => Promise<void> | void
   onUsage?: (usage: {
     prompt_tokens: number
     completion_tokens: number
     cached_tokens?: number | null
     provider?: string
+    runtimeResponseId?: string
+    providerResponseId?: string
+    providerFinishReason?: string
   }) => Promise<void> | void
   onPromptObservability?: (snapshot: PromptObservabilitySnapshot) => Promise<void> | void
   promptObservabilityTracker?: {
-    record: (turn: number, messages: ChatMessage[]) => PromptObservabilitySnapshot
+    record: (turn: number, items: ConversationItem[] | ChatMessage[]) => PromptObservabilitySnapshot
   }
   onTurnStart?: (event: { turn: number }) => Promise<void> | void
   onAssistantResponse?: (event: {
@@ -89,7 +117,7 @@ export interface RunLoopOptions {
   onToolBatchComplete?: (event: {
     turn: number
     results: ToolCallResultEvent[]
-  }) => Promise<ChatMessage[] | void> | ChatMessage[] | void
+  }) => Promise<ConversationItem[] | ChatMessage[] | void> | ConversationItem[] | ChatMessage[] | void
 }
 
 export interface RunLoopResult {
@@ -99,54 +127,151 @@ export interface RunLoopResult {
 }
 
 function buildRequestMessages(
-  messages: ChatMessage[],
+  items: ConversationItem[],
   intentContract?: string,
-): ChatMessage[] {
+): ConversationItem[] {
   const contract = intentContract?.trim()
-  if (!contract) return messages
+  if (!contract) return items
   return [
-    ...messages,
-    {
-      role: 'system',
-      content:
-        'Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\n' +
+    ...items,
+    createSystemItem(
+      'Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\n' +
         contract,
-    },
+      'runtime'
+    ),
   ]
+}
+
+function ensureBoundary(
+  boundary: ProviderResponseBoundary | undefined,
+  result: ProviderResult,
+  provider: ModelProvider,
+): ProviderResponseBoundary {
+  if (boundary) return boundary
+  return {
+    runtimeResponseId: randomUUID(),
+    providerResponseId: result.providerResponseId,
+    provider: result.usage.provider ?? provider.constructor.name,
+    finishReason: result.finishReason,
+    outputItemCount: result.outputItems.length,
+    createdAt: new Date().toISOString(),
+  }
+}
+
+function normalizeInjectedItems(
+  value: ConversationItem[] | ChatMessage[] | void
+): ConversationItem[] {
+  if (!Array.isArray(value) || value.length === 0) return []
+  const first = value[0] as ConversationItem | ChatMessage
+  if (first && typeof first === 'object' && 'kind' in first) {
+    return value as ConversationItem[]
+  }
+  return messagesToItems(value as ChatMessage[])
+}
+
+function ensureStateItems(state: LoopState): ConversationItem[] {
+  if (!state.items) {
+    state.items = messagesToItems(state.messages)
+  }
+  return state.items
+}
+
+function findLastSignificantItem(items: ConversationItem[]): ConversationItem | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (!item) continue
+    if (
+      item.kind === 'message' &&
+      ((item.role === 'user' && item.source === 'runtime') || (item.role === 'system' && item.source === 'runtime'))
+    ) {
+      continue
+    }
+    return item
+  }
+  return undefined
+}
+
+async function completeProviderTurn(
+  options: RunLoopOptions,
+  items: ConversationItem[],
+): Promise<ProviderResult> {
+  if (typeof options.provider.completeItems === 'function') {
+    return await options.provider.completeItems(items, options.registry.getAll())
+  }
+  const messages = itemsToMessages(items)
+  const assistant = await options.provider.complete(messages, options.registry.getAll())
+  return {
+    outputItems: assistantResponseToItems(assistant),
+    finishReason: assistant.finish_reason,
+    usage: assistant.usage,
+    responseBoundary: {
+      runtimeResponseId: randomUUID(),
+      provider: assistant.usage.provider ?? options.provider.constructor.name,
+      finishReason: assistant.finish_reason,
+      outputItemCount: assistantResponseToItems(assistant).length,
+      createdAt: new Date().toISOString(),
+    }
+  }
+}
+
+async function appendItems(
+  state: LoopState,
+  options: RunLoopOptions,
+  items: ConversationItem[],
+  origin: TranscriptItemEntry['origin'],
+  runtimeResponseId?: string,
+): Promise<void> {
+  if (items.length === 0) return
+  const stateItems = ensureStateItems(state)
+  for (const item of items) {
+    stateItems.push(item)
+    await options.onItemAppended?.({
+      type: 'item',
+      item,
+      origin,
+      runtimeResponseId,
+    })
+  }
+  const rendered = itemsToMessages(items)
+  if (rendered.length > 0) {
+    for (const message of rendered) {
+      await options.onMessageAppended?.(message)
+    }
+  }
+  state.messages = itemsToMessages(stateItems)
 }
 
 async function tryGenerateNaturalSummary(
   options: RunLoopOptions,
   state: LoopState,
 ): Promise<string | null> {
-  const summaryRequest: ChatMessage = {
-    role: 'user',
-    content:
-      'Write a natural-language summary of what you completed in this run. ' +
+  const summaryRequest = createRuntimeUserItem(
+    'Write a natural-language summary of what you completed in this run. ' +
       'Focus on concrete outcomes and mention unfinished parts only if needed. ' +
-      'Do not call tools.',
-  }
+      'Do not call tools.'
+  )
 
-  state.messages.push(summaryRequest)
-  await options.onMessageAppended?.(summaryRequest)
+  await appendItems(state, options, [summaryRequest], 'local_runtime')
 
-  const requestMessages = buildRequestMessages(state.messages, options.intentContract)
+  const requestItems = buildRequestMessages(ensureStateItems(state), options.intentContract)
 
   try {
-    const assistant = await withRetry(
-      () => options.provider.complete(requestMessages, []),
+    const result = await withRetry(
+      () => completeProviderTurn({ ...options, registry: new ToolRegistry() }, requestItems),
       { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 5_000 },
     )
-    const assistantMessage: ChatMessage = {
-      role: 'assistant',
-      content: assistant.content,
-      tool_calls: assistant.tool_calls,
-    }
-    state.messages.push(assistantMessage)
-    await options.onMessageAppended?.(assistantMessage)
-    await options.onUsage?.(assistant.usage)
 
-    const text = (assistant.content ?? '').trim()
+    const boundary = ensureBoundary(result.responseBoundary, result, options.provider)
+    await options.onResponseBoundary?.(boundary)
+    await appendItems(state, options, result.outputItems, 'provider_output', boundary.runtimeResponseId)
+    await options.onUsage?.({
+      ...result.usage,
+      runtimeResponseId: boundary.runtimeResponseId,
+      providerResponseId: boundary.providerResponseId,
+      providerFinishReason: boundary.finishReason,
+    })
+
+    const text = findLastAssistantText(result.outputItems).trim()
     return text === '' ? null : text
   } catch {
     return null
@@ -157,20 +282,24 @@ function createState(
   systemPrompt: string,
   userPrompt: string,
   initialMessages?: ChatMessage[],
+  initialItems?: ConversationItem[],
 ): LoopState {
-  const messages: ChatMessage[] = initialMessages
-    ? [...initialMessages]
-    : [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ]
+  const items: ConversationItem[] = initialItems
+    ? [...initialItems]
+    : initialMessages
+      ? messagesToItems(initialMessages)
+      : [
+          createSystemItem(systemPrompt, 'static'),
+          ...(userPrompt.trim() !== '' ? [createExternalUserItem(userPrompt)] : []),
+        ]
 
-  if (initialMessages && userPrompt.trim() !== '') {
-    messages.push({ role: 'user', content: userPrompt })
+  if ((initialItems || initialMessages) && userPrompt.trim() !== '') {
+    items.push(createExternalUserItem(userPrompt))
   }
 
   return {
-    messages,
+    items,
+    messages: itemsToMessages(items),
     turnCount: 0,
     maxOutputTokensRecoveryCount: 0,
     hasAttemptedReactiveCompact: false,
@@ -187,7 +316,7 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 }
 
 export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
-  const state = createState(options.systemPrompt, options.userPrompt, options.initialMessages)
+  const state = createState(options.systemPrompt, options.userPrompt, options.initialMessages, options.initialItems)
   const maxTurns = options.maxTurns ?? 100
   let finalText = ''
   let emptyStopRecoveryCount = 0
@@ -245,6 +374,13 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
   }
 
   if (options.persistInitialMessages !== false) {
+    for (const item of ensureStateItems(state)) {
+      await options.onItemAppended?.({
+        type: 'item',
+        item,
+        origin: item.kind === 'function_call_output' ? 'local_tool_output' : 'local_runtime',
+      })
+    }
     for (const msg of state.messages) {
       await options.onMessageAppended?.(msg)
     }
@@ -261,24 +397,25 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     }
 
     let assistant
+    let promptSnapshot: PromptObservabilitySnapshot | undefined
     try {
       const compactTriggerChars = parsePositiveInt(process.env.MERLION_COMPACT_TRIGGER_CHARS, 60_000)
       const keepRecent = parsePositiveInt(process.env.MERLION_COMPACT_KEEP_RECENT, 10)
-      const chars = estimateMessagesChars(state.messages)
+      const chars = estimateItemsChars(ensureStateItems(state))
       if (chars > compactTriggerChars && !state.hasAttemptedReactiveCompact) {
-        const compacted = compactMessages(state.messages, { keepRecent })
+        const compacted = compactItems(ensureStateItems(state), { keepRecent })
         if (compacted.compacted) {
-          state.messages = compacted.messages
+          state.items = compacted.items
+          state.messages = itemsToMessages(compacted.items)
           state.hasAttemptedReactiveCompact = true
         }
       }
-      const requestMessages = buildRequestMessages(state.messages, options.intentContract)
-      await options.onPromptObservability?.(
-        promptObservability.record(state.turnCount + 1, requestMessages)
-      )
+      const requestItems = buildRequestMessages(ensureStateItems(state), options.intentContract)
+      promptSnapshot = promptObservability.record(state.turnCount + 1, requestItems)
+      await options.onPromptObservability?.(promptSnapshot)
       await options.onTurnStart?.({ turn: state.turnCount + 1 })
       assistant = await withRetry(
-        () => options.provider.complete(requestMessages, options.registry.getAll()),
+        () => completeProviderTurn(options, requestItems),
         { maxAttempts: 5, baseDelayMs: 200, maxDelayMs: 32_000 },
       )
     } catch (error) {
@@ -287,31 +424,37 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
 
     state.turnCount += 1
 
-    const assistantMessage: ChatMessage = {
-      role: 'assistant',
-      content: assistant.content,
-      tool_calls: assistant.tool_calls,
+    const lastSignificantItemBeforeAssistant = findLastSignificantItem(ensureStateItems(state))
+    const boundary = ensureBoundary(assistant.responseBoundary, assistant, options.provider)
+    await options.onResponseBoundary?.(boundary)
+    if (promptSnapshot) {
+      promptSnapshot = withResponseBoundaryPromptObservability(promptSnapshot, boundary)
+      await options.onPromptObservability?.(promptSnapshot)
     }
-    state.messages.push(assistantMessage)
-    await options.onMessageAppended?.(assistantMessage)
-    await options.onUsage?.(assistant.usage)
+    await appendItems(state, options, assistant.outputItems, 'provider_output', boundary.runtimeResponseId)
+    await options.onUsage?.({
+      ...assistant.usage,
+      runtimeResponseId: boundary.runtimeResponseId,
+      providerResponseId: boundary.providerResponseId,
+      providerFinishReason: boundary.finishReason,
+    })
     await options.onAssistantResponse?.({
       turn: state.turnCount,
-      finish_reason: assistant.finish_reason,
-      tool_calls_count: assistant.tool_calls?.length ?? 0,
-      content: assistant.content
+      finish_reason: assistant.finishReason,
+      tool_calls_count: countFunctionCallItems(assistant.outputItems),
+      content: findLastAssistantText(assistant.outputItems) || null
     })
 
     // ── tool_calls ──────────────────────────────────────────────────────────
     if (
-      assistant.finish_reason === 'tool_calls' &&
-      assistant.tool_calls &&
-      assistant.tool_calls.length > 0
+      assistant.finishReason === 'tool_calls' &&
+      assistant.outputItems.some((item) => item.kind === 'function_call')
     ) {
       const toolResultEvents: ToolCallResultEvent[] = []
       const maxConcurrency = Number(process.env.MERLION_MAX_TOOL_CONCURRENCY ?? '10')
+      const functionCalls = assistant.outputItems.filter((item) => item.kind === 'function_call')
       const toolMessages = await executeToolCalls({
-        toolCalls: assistant.tool_calls,
+        toolCalls: functionCallItemsToToolCalls(functionCalls),
         registry: options.registry,
         toolContext,
         maxConcurrency: Number.isFinite(maxConcurrency) ? Math.max(1, Math.floor(maxConcurrency)) : 10,
@@ -322,10 +465,8 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         },
       })
 
-      for (const toolMsg of toolMessages) {
-        state.messages.push(toolMsg)
-        await options.onMessageAppended?.(toolMsg)
-      }
+      const toolOutputItems = toolMessages.map((message) => toolResultMessageToOutputItem(message)).filter(Boolean) as ConversationItem[]
+      await appendItems(state, options, toolOutputItems, 'local_tool_output')
       totalToolBatches += 1
 
       let hint: string | null = null
@@ -361,15 +502,11 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
       }
 
       if (toolArgumentHint) {
-        const correctionMessage: ChatMessage = { role: 'user', content: toolArgumentHint }
-        state.messages.push(correctionMessage)
-        await options.onMessageAppended?.(correctionMessage)
+        await appendItems(state, options, [createRuntimeUserItem(toolArgumentHint)], 'local_runtime')
       }
 
       if (hint) {
-        const correctionMessage: ChatMessage = { role: 'user', content: hint }
-        state.messages.push(correctionMessage)
-        await options.onMessageAppended?.(correctionMessage)
+        await appendItems(state, options, [createRuntimeUserItem(hint)], 'local_runtime')
       }
 
       if (toolResultEvents.length > 0 && toolResultEvents.every((event) => event.isError)) {
@@ -381,12 +518,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         consecutiveAllErrorBatches >= NO_PROGRESS_BATCH_THRESHOLD &&
         noProgressHintCount < MAX_NO_PROGRESS_HINTS
       ) {
-        const noProgressMessage: ChatMessage = {
-          role: 'user',
-          content: formatNoProgressHint(consecutiveAllErrorBatches)
-        }
-        state.messages.push(noProgressMessage)
-        await options.onMessageAppended?.(noProgressMessage)
+        await appendItems(state, options, [createRuntimeUserItem(formatNoProgressHint(consecutiveAllErrorBatches))], 'local_runtime')
         noProgressHintCount += 1
         consecutiveAllErrorBatches = 0
       }
@@ -463,19 +595,13 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         if (mutationHistory.length > 20) mutationHistory.shift()
       }
       if (mutationHint) {
-        const mutationMessage: ChatMessage = { role: 'user', content: mutationHint }
-        state.messages.push(mutationMessage)
-        await options.onMessageAppended?.(mutationMessage)
+        await appendItems(state, options, [createRuntimeUserItem(mutationHint)], 'local_runtime')
       }
       if (largeDiffHint) {
-        const reviewMessage: ChatMessage = { role: 'user', content: largeDiffHint }
-        state.messages.push(reviewMessage)
-        await options.onMessageAppended?.(reviewMessage)
+        await appendItems(state, options, [createRuntimeUserItem(largeDiffHint)], 'local_runtime')
       }
       if (overwriteAfterEditHint) {
-        const overwriteMessage: ChatMessage = { role: 'user', content: overwriteAfterEditHint }
-        state.messages.push(overwriteMessage)
-        await options.onMessageAppended?.(overwriteMessage)
+        await appendItems(state, options, [createRuntimeUserItem(overwriteAfterEditHint)], 'local_runtime')
       }
       sawTestOnlyMutationBatch = batchMutationCount > 0 && batchTestPaths.length === batchMutationCount
       if (batchMutationCount > 0) {
@@ -507,12 +633,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         !hasSuccessfulNonTestMutation &&
         sawTestOnlyMutationBatch
       ) {
-        const bugFixHintMessage: ChatMessage = {
-          role: 'user',
-          content: formatTestFirstBugFixHint(batchTestPaths)
-        }
-        state.messages.push(bugFixHintMessage)
-        await options.onMessageAppended?.(bugFixHintMessage)
+        await appendItems(state, options, [createRuntimeUserItem(formatTestFirstBugFixHint(batchTestPaths))], 'local_runtime')
         testFirstBugFixHintInjected = true
       }
       const noMutationThreshold = bugFixMode
@@ -524,12 +645,12 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         explorationHintCount < MAX_EXPLORATION_HINTS &&
         exploredPathsWindow.size >= 2
       ) {
-        const explorationMessage: ChatMessage = {
-          role: 'user',
-          content: formatExplorationBudgetHint(consecutiveExplorationBatches, exploredPathsWindow.size, bugFixMode)
-        }
-        state.messages.push(explorationMessage)
-        await options.onMessageAppended?.(explorationMessage)
+        await appendItems(
+          state,
+          options,
+          [createRuntimeUserItem(formatExplorationBudgetHint(consecutiveExplorationBatches, exploredPathsWindow.size, bugFixMode))],
+          'local_runtime'
+        )
         explorationHintCount += 1
         consecutiveExplorationBatches = 0
         exploredPathsWindow.clear()
@@ -540,12 +661,12 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         consecutiveNoMutationBatches >= noMutationThreshold &&
         noMutationHintCount < MAX_NO_MUTATION_HINTS
       ) {
-        const noMutationMessage: ChatMessage = {
-          role: 'user',
-          content: formatNoMutationHint(consecutiveNoMutationBatches, bugFixMode)
-        }
-        state.messages.push(noMutationMessage)
-        await options.onMessageAppended?.(noMutationMessage)
+        await appendItems(
+          state,
+          options,
+          [createRuntimeUserItem(formatNoMutationHint(consecutiveNoMutationBatches, bugFixMode))],
+          'local_runtime'
+        )
         noMutationHintCount += 1
         consecutiveNoMutationBatches = 0
       }
@@ -553,12 +674,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         consecutiveTodoOnlyBatches >= TODO_ONLY_BATCH_THRESHOLD &&
         todoDriftHintCount < MAX_TODO_DRIFT_HINTS
       ) {
-        const todoDriftMessage: ChatMessage = {
-          role: 'user',
-          content: formatTodoDriftHint()
-        }
-        state.messages.push(todoDriftMessage)
-        await options.onMessageAppended?.(todoDriftMessage)
+        await appendItems(state, options, [createRuntimeUserItem(formatTodoDriftHint())], 'local_runtime')
         todoDriftHintCount += 1
         consecutiveTodoOnlyBatches = 0
       }
@@ -567,36 +683,32 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         turn: state.turnCount,
         results: toolResultEvents
       })
-      if (Array.isArray(postToolMessages)) {
-        for (const postToolMessage of postToolMessages) {
-          state.messages.push(postToolMessage)
-          await options.onMessageAppended?.(postToolMessage)
-        }
+      if (Array.isArray(postToolMessages) && postToolMessages.length > 0) {
+        await appendItems(state, options, normalizeInjectedItems(postToolMessages), 'local_runtime')
       }
       continue
     }
 
     // ── length (output truncated) ────────────────────────────────────────────
-    if (assistant.finish_reason === 'length' && state.maxOutputTokensRecoveryCount < 3) {
+    if (assistant.finishReason === 'length' && state.maxOutputTokensRecoveryCount < 3) {
       state.maxOutputTokensRecoveryCount += 1
-      const continueMessage: ChatMessage = {
-        role: 'user',
-        content: 'Output was cut off. Continue directly from where you stopped. No recap, no apology.',
-      }
-      state.messages.push(continueMessage)
-      await options.onMessageAppended?.(continueMessage)
+      await appendItems(
+        state,
+        options,
+        [createRuntimeUserItem('Output was cut off. Continue directly from where you stopped. No recap, no apology.')],
+        'local_runtime'
+      )
       continue
     }
 
     // ── content_filter ───────────────────────────────────────────────────────
-    if (assistant.finish_reason === 'content_filter') {
+    if (assistant.finishReason === 'content_filter') {
       return { terminal: 'model_error', finalText, state }
     }
 
     // ── stop (and length-recovery exhausted) ────────────────────────────────
-    const text = assistant.content ?? ''
-    const previousMessage = state.messages[state.messages.length - 2]
-    const previousWasTool = previousMessage?.role === 'tool'
+    const text = findLastAssistantText(assistant.outputItems)
+    const previousWasTool = lastSignificantItemBeforeAssistant?.kind === 'function_call_output'
     const shouldRecoverEmptyStop = previousWasTool || awaitingPostToolSummary
     const shouldRecoverMutationlessStop =
       totalToolBatches > 0 &&
@@ -611,17 +723,16 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
       text.trim() !== '' &&
       !mentionsVerification(text)
 
-    if (assistant.finish_reason === 'stop' && text.trim() === '' && shouldRecoverEmptyStop) {
+    if (assistant.finishReason === 'stop' && text.trim() === '' && shouldRecoverEmptyStop) {
       if (emptyStopRecoveryCount < 1) {
         emptyStopRecoveryCount += 1
         awaitingPostToolSummary = true
-        const summaryRequest: ChatMessage = {
-          role: 'user',
-          content:
-            'You just finished tool execution. Please provide a natural-language final summary for this request.',
-        }
-        state.messages.push(summaryRequest)
-        await options.onMessageAppended?.(summaryRequest)
+        await appendItems(
+          state,
+          options,
+          [createRuntimeUserItem('You just finished tool execution. Please provide a natural-language final summary for this request.')],
+          'local_runtime'
+        )
         continue
       }
       finalText =
@@ -629,29 +740,27 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         'Task completed via tool execution, but the model returned no final summary.'
       return { terminal: 'completed', finalText, state }
     }
-    if (assistant.finish_reason === 'stop' && shouldRecoverMutationlessStop) {
+    if (assistant.finishReason === 'stop' && shouldRecoverMutationlessStop) {
       if (noMutationStopRecoveryCount < 1) {
         noMutationStopRecoveryCount += 1
-        const recoveryMessage: ChatMessage = {
-          role: 'user',
-          content:
-            'You have not made any successful file changes yet. Do not finish now. ' +
-            'Either inspect the explicit target files/tests and apply one minimal edit, ' +
-            'or explain with concrete evidence why no edit is required.'
-        }
-        state.messages.push(recoveryMessage)
-        await options.onMessageAppended?.(recoveryMessage)
+        await appendItems(
+          state,
+          options,
+          [
+            createRuntimeUserItem(
+              'You have not made any successful file changes yet. Do not finish now. ' +
+                'Either inspect the explicit target files/tests and apply one minimal edit, ' +
+                'or explain with concrete evidence why no edit is required.'
+            )
+          ],
+          'local_runtime'
+        )
         continue
       }
     }
-    if (assistant.finish_reason === 'stop' && shouldRecoverWeakVerificationStop) {
+    if (assistant.finishReason === 'stop' && shouldRecoverWeakVerificationStop) {
       verificationHintCount += 1
-      const verificationMessage: ChatMessage = {
-        role: 'user',
-        content: formatVerificationHint()
-      }
-      state.messages.push(verificationMessage)
-      await options.onMessageAppended?.(verificationMessage)
+      await appendItems(state, options, [createRuntimeUserItem(formatVerificationHint())], 'local_runtime')
       continue
     }
     if (text.trim() !== '') {
@@ -660,14 +769,15 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
 
     // Nudge: model promised action but made no tool call
     if (shouldNudge(text, state)) {
-      const nudgeMessage: ChatMessage = {
-        role: 'user',
-        content:
+      await appendItems(
+        state,
+        options,
+        [createRuntimeUserItem(
           'Continue with the task. Use your tools to make progress. ' +
-          'If you have completed everything, describe what was done.',
-      }
-      state.messages.push(nudgeMessage)
-      await options.onMessageAppended?.(nudgeMessage)
+            'If you have completed everything, describe what was done.'
+        )],
+        'local_runtime'
+      )
       state.nudgeCount += 1
       continue
     }

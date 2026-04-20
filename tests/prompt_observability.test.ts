@@ -4,8 +4,10 @@ import assert from 'node:assert/strict'
 import type { ChatMessage } from '../src/types.ts'
 import {
   createPromptObservabilityTracker,
-  createPromptObservabilityTrackerWithToolSchema
+  createPromptObservabilityTrackerWithToolSchema,
+  withResponseBoundaryPromptObservability,
 } from '../src/runtime/prompt_observability.ts'
+import { createExternalUserItem, createFunctionCallOutputItem, createSystemItem } from '../src/runtime/items.ts'
 
 test('prompt observability tracks role tokens and stable prefix hash', () => {
   const tracker = createPromptObservabilityTracker()
@@ -54,4 +56,48 @@ test('prompt observability includes stable tool schema tokens across turns', () 
   assert.equal(second.tool_schema_tokens_estimate, first.tool_schema_tokens_estimate)
   assert.equal(second.stable_prefix_tokens >= second.tool_schema_tokens_estimate, true)
   assert.equal(typeof second.stable_prefix_hash, 'string')
+})
+
+test('prompt observability can track stable prefix over item transcripts', () => {
+  const tracker = createPromptObservabilityTracker()
+
+  const first = tracker.record(1, [
+    createSystemItem('sys', 'static'),
+    createExternalUserItem('task'),
+  ])
+  assert.equal(first.role_tokens.system > 0, true)
+  assert.equal(first.role_tokens.user > 0, true)
+
+  const second = tracker.record(2, [
+    createSystemItem('sys', 'static'),
+    createExternalUserItem('task'),
+    {
+      kind: 'function_call',
+      callId: 'call_1',
+      name: 'read_file',
+      argumentsText: '{"path":"src/app.ts"}',
+    },
+    createFunctionCallOutputItem('call_1', 'file content'),
+  ])
+  assert.equal(second.stable_prefix_tokens > 0, true)
+  assert.equal(second.role_tokens.tool > 0, true)
+})
+
+test('prompt observability can attach response boundary correlation fields', () => {
+  const tracker = createPromptObservabilityTracker()
+  const snapshot = tracker.record(1, [
+    createSystemItem('sys', 'static'),
+    createExternalUserItem('task'),
+  ])
+
+  const correlated = withResponseBoundaryPromptObservability(snapshot, {
+    runtimeResponseId: 'rt_1',
+    providerResponseId: 'resp_1',
+    finishReason: 'stop',
+  })
+
+  assert.equal(correlated.runtime_response_id, 'rt_1')
+  assert.equal(correlated.provider_response_id, 'resp_1')
+  assert.equal(correlated.provider_finish_reason, 'stop')
+  assert.equal(correlated.stable_prefix_hash, snapshot.stable_prefix_hash)
 })

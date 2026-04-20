@@ -1,0 +1,34 @@
+Version: 0.1.28
+Date: 2026-04-20
+
+Changes:
+- Responses/item runtime migration:
+  - add item-native transcript types and adapters for messages, function calls,
+    function-call outputs, and reasoning items.
+  - add an OpenAI Responses provider and make the OpenAI runtime path item-aware.
+  - migrate the main loop, query engine, prompt observability, and session
+    persistence to use item transcripts and response boundaries.
+- Runtime correctness and cleanup:
+  - fix empty-stop recovery for item-native tool runs so post-tool final-summary
+    recovery still triggers when the provider emits no assistant text item.
+  - fix Responses input replay so assistant history is encoded with input_text.
+  - attach response-level correlation fields to prompt observability and usage
+    logs.
+  - remove no-longer-needed message-persistence compatibility paths from
+    QueryEngine and session helpers.
+- Tests and validation:
+  - add unit coverage for runtime items, Responses provider behavior, session
+    response boundaries, and item-aware observability.
+  - migrate session-resume E2E coverage to item transcript persistence.
+  - pin the default E2E model back to moonshotai/kimi-k2.5 to match the
+    existing cost baseline.
+
+Validation:
+- npm run typecheck
+- npm test
+- MERLION_COST_GATE=warn npm run test:e2e
+
+Related commits:
+- feat(runtime): migrate transcript and provider flow to response items
+- fix(runtime): restore empty-stop recovery and response observability
+- test(e2e): migrate session resume to item transcripts and repin default model

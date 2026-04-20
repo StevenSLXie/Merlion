@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../src/types.ts'
+import type { ConversationItem, ProviderCapabilities, ProviderResult } from '../src/runtime/items.ts'
 import { ToolRegistry } from '../src/tools/registry.ts'
 import type { ToolDefinition } from '../src/tools/types.ts'
 import { runLoop, shouldNudge } from '../src/runtime/loop.ts'
@@ -29,6 +30,34 @@ class ThrowProvider implements ModelProvider {
   }
   async complete(): Promise<AssistantResponse> {
     throw this.error
+  }
+}
+
+class ItemStubProvider implements ModelProvider {
+  private index = 0
+  private readonly responses: ProviderResult[]
+
+  constructor(responses: ProviderResult[]) {
+    this.responses = responses
+  }
+
+  capabilities(): ProviderCapabilities {
+    return {
+      transcriptMode: 'items',
+      supportsReasoningItems: true,
+      supportsPreviousResponseId: false,
+    }
+  }
+
+  async complete(): Promise<AssistantResponse> {
+    throw new Error('legacy complete should not be called')
+  }
+
+  async completeItems(_items: ConversationItem[]): Promise<ProviderResult> {
+    const response = this.responses[this.index]
+    if (!response) throw new Error(`unexpected provider call at index=${this.index}`)
+    this.index += 1
+    return response
   }
 }
 
@@ -385,6 +414,100 @@ test('loop falls back to synthetic summary when stop remains empty after recover
 
   assert.equal(result.terminal, 'completed')
   assert.match(result.finalText, /returned no final summary/i)
+})
+
+test('item-native loop recovers empty stop after tool calls by requesting final summary', async () => {
+  const provider = new ItemStubProvider([
+    {
+      outputItems: [{
+        kind: 'function_call',
+        callId: 'call_1',
+        name: 'echo_tool',
+        argumentsText: '{"value":"ok"}',
+      }],
+      finishReason: 'tool_calls',
+      usage: { prompt_tokens: 1, completion_tokens: 1, provider: 'openai' },
+      providerResponseId: 'resp_1',
+    },
+    {
+      outputItems: [],
+      finishReason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1, provider: 'openai' },
+      providerResponseId: 'resp_2',
+    },
+    {
+      outputItems: [{
+        kind: 'message',
+        role: 'assistant',
+        content: 'Final summary after tool output.',
+        source: 'provider',
+      }],
+      finishReason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1, provider: 'openai' },
+      providerResponseId: 'resp_3',
+    },
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEchoTool())
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 8,
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'Final summary after tool output.')
+  assert.equal(
+    result.state.messages.some((message) => message.role === 'user' && /final summary/i.test(message.content ?? '')),
+    true
+  )
+})
+
+test('item-native loop emits usage correlated with runtime and provider response ids', async () => {
+  const provider = new ItemStubProvider([
+    {
+      outputItems: [{
+        kind: 'message',
+        role: 'assistant',
+        content: 'done',
+        source: 'provider',
+      }],
+      finishReason: 'stop',
+      usage: { prompt_tokens: 2, completion_tokens: 1, provider: 'openai' },
+      responseBoundary: {
+        runtimeResponseId: 'rt_1',
+        providerResponseId: 'resp_1',
+        provider: 'openai',
+        finishReason: 'stop',
+        outputItemCount: 1,
+        createdAt: new Date().toISOString(),
+      },
+    },
+  ])
+
+  let usageEvent: Record<string, unknown> | null = null
+  const result = await runLoop({
+    provider,
+    registry: new ToolRegistry(),
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 5,
+    onUsage: async (usage) => {
+      usageEvent = usage as Record<string, unknown>
+    },
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.ok(usageEvent)
+  assert.equal(usageEvent['runtimeResponseId'], 'rt_1')
+  assert.equal(usageEvent['providerResponseId'], 'resp_1')
+  assert.equal(usageEvent['providerFinishReason'], 'stop')
 })
 
 test('loop accepts initial messages', async () => {

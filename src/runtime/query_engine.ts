@@ -1,4 +1,6 @@
 import type { ChatMessage, ModelProvider } from '../types.js'
+import type { ConversationItem, ProviderResponseBoundary } from './items.ts'
+import { itemsToMessages, messagesToItems } from './items.ts'
 import type { AskUserQuestionItem, PermissionStore } from '../tools/types.js'
 import { ToolRegistry } from '../tools/registry.ts'
 import { runLoop, type RunLoopResult } from './loop.ts'
@@ -39,18 +41,23 @@ export interface QueryEngineOptions {
   sessionId?: string
   maxTurns?: number
   initialMessages?: ChatMessage[]
+  initialItems?: ConversationItem[]
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
   buildIntentContract?: (prompt: string) => string | undefined
   sink?: RuntimeSink
   promptObservabilityTracker?: {
-    record: (turn: number, messages: ChatMessage[]) => PromptObservabilitySnapshot
+    record: (turn: number, messages: ChatMessage[] | import('./items.ts').ConversationItem[]) => PromptObservabilitySnapshot
   }
-  persistMessage?: (message: ChatMessage) => Promise<void> | void
+  persistItem?: (item: ConversationItem, origin: 'provider_output' | 'local_tool_output' | 'local_runtime', runtimeResponseId?: string) => Promise<void> | void
+  persistResponseBoundary?: (boundary: ProviderResponseBoundary) => Promise<void> | void
   persistUsage?: (entry: {
     prompt_tokens: number
     completion_tokens: number
     cached_tokens?: number | null
     provider?: string
+    runtimeResponseId?: string
+    providerResponseId?: string
+    providerFinishReason?: string
     promptObservability?: PromptObservabilitySnapshot
     model?: string
     toolSchemaTokensEstimate?: number
@@ -62,6 +69,7 @@ export interface QueryEngineOptions {
 }
 
 export interface QueryEngineSnapshot {
+  items: ConversationItem[]
   messages: ChatMessage[]
   runtimeState: RuntimeStateSnapshot
   generatedMapMode: boolean
@@ -71,7 +79,7 @@ export class QueryEngine {
   private readonly options: QueryEngineOptions
   private readonly runtimeState: RuntimeState
   private readonly trackedPermissions: PermissionStore
-  private history: ChatMessage[]
+  private history: ConversationItem[]
   private initialized = false
   private startupMapSummary: string | null = null
   private lastWorkingTreeFingerprint: string | null = null
@@ -80,7 +88,9 @@ export class QueryEngine {
     this.options = options
     this.runtimeState = createRuntimeState()
     this.trackedPermissions = createTrackingPermissionStore(options.permissions, this.runtimeState.permissions)
-    this.history = [...(options.initialMessages ?? [])]
+    this.history = options.initialItems
+      ? [...options.initialItems]
+      : messagesToItems(options.initialMessages ?? [])
   }
 
   getStartupMapSummary(): string | null {
@@ -91,29 +101,40 @@ export class QueryEngine {
     await this.ensureInitialized()
   }
 
-  getMessages(): ChatMessage[] {
+  getItems(): ConversationItem[] {
     return [...this.history]
+  }
+
+  getMessages(): ChatMessage[] {
+    return itemsToMessages(this.history)
   }
 
   getRuntimeState(): RuntimeState {
     return this.runtimeState
   }
 
-  async resumeFromTranscript(messages: ChatMessage[]): Promise<void> {
-    this.history = [...messages]
+  async resumeFromTranscript(messages: ChatMessage[] | ConversationItem[]): Promise<void> {
+    this.history = Array.isArray(messages) && messages.length > 0 && 'kind' in (messages[0] as any)
+      ? [...messages as ConversationItem[]]
+      : messagesToItems(messages as ChatMessage[])
     this.initialized = true
   }
 
   getSnapshot(): QueryEngineSnapshot {
     return {
-      messages: [...this.history],
+      items: [...this.history],
+      messages: itemsToMessages(this.history),
       runtimeState: snapshotRuntimeState(this.runtimeState),
       generatedMapMode: this.options.contextService.getGeneratedMapMode(),
     }
   }
 
-  private async persistMessage(message: ChatMessage): Promise<void> {
-    await this.options.persistMessage?.(message)
+  private async persistItem(
+    item: ConversationItem,
+    origin: 'provider_output' | 'local_tool_output' | 'local_runtime',
+    runtimeResponseId?: string,
+  ): Promise<void> {
+    await this.options.persistItem?.(item, origin, runtimeResponseId)
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -122,14 +143,14 @@ export class QueryEngine {
     const bootstrap = await this.options.contextService.prefetchIfSafe()
     this.startupMapSummary = bootstrap.startupMapSummary
     this.options.contextService.setGeneratedMapMode(bootstrap.generatedMapMode)
-    const initialMessages = [
-      { role: 'system' as const, content: systemPrompt },
-      ...bootstrap.initialMessages,
+    const initialItems = [
+      ...messagesToItems([{ role: 'system' as const, content: systemPrompt }]),
+      ...messagesToItems(bootstrap.initialMessages),
       ...this.history,
     ]
-    this.history = initialMessages
-    for (const message of initialMessages) {
-      await this.persistMessage(message)
+    this.history = initialItems
+    for (const item of initialItems) {
+      await this.persistItem(item, 'local_runtime')
     }
     this.initialized = true
   }
@@ -142,9 +163,9 @@ export class QueryEngine {
     let sawWorkspaceMutationSignal = false
     let workingTreeSnapshotChanged = false
     let latestPromptObservability: PromptObservabilitySnapshot | undefined
-    const seededMessages = [
+    const seededItems = [
       ...this.history,
-      ...(await this.options.contextService.buildPromptPrelude(prompt)),
+      ...messagesToItems(await this.options.contextService.buildPromptPrelude(prompt)),
     ]
 
     const result = await runLoop({
@@ -157,11 +178,14 @@ export class QueryEngine {
       maxTurns: this.options.maxTurns ?? 100,
       permissions: this.trackedPermissions,
       askQuestions: this.options.askQuestions,
-      initialMessages: seededMessages,
+      initialItems: seededItems,
       persistInitialMessages: false,
       promptObservabilityTracker: this.options.promptObservabilityTracker,
-      onMessageAppended: async (message) => {
-        await this.persistMessage(message)
+      onItemAppended: async (entry) => {
+        await this.persistItem(entry.item, entry.origin, entry.runtimeResponseId)
+      },
+      onResponseBoundary: async (boundary) => {
+        await this.options.persistResponseBoundary?.(boundary)
       },
       onUsage: async (usage) => {
         await this.options.persistUsage?.({
@@ -179,6 +203,9 @@ export class QueryEngine {
             estimatedCost,
             provider: usage.provider,
             promptObservability: latestPromptObservability,
+            runtimeResponseId: usage.runtimeResponseId,
+            providerResponseId: usage.providerResponseId,
+            providerFinishReason: usage.providerFinishReason,
           })
         }
       },
@@ -302,7 +329,7 @@ export class QueryEngine {
       }
     }
 
-    this.history = result.state.messages
+    this.history = result.state.items ?? messagesToItems(result.state.messages)
     syncCompactStateFromLoopState(this.runtimeState.compact, result.state)
     recordFinalSummary(this.runtimeState.compact, result.finalText)
     return result

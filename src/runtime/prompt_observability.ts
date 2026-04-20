@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import type { ChatMessage } from '../types.js'
+import type { ConversationItem } from './items.ts'
 
 export interface PromptRoleTokens {
   system: number
@@ -18,12 +19,19 @@ export interface PromptObservabilitySnapshot {
   stable_prefix_tokens: number
   stable_prefix_ratio: number
   stable_prefix_hash: string | null
+  runtime_response_id?: string
+  provider_response_id?: string
+  provider_finish_reason?: string
 }
 
 interface PromptTrackerState {
   signatures: string[]
   roleTokens: PromptRoleTokens
   initialized: boolean
+}
+
+function isConversationItemArray(value: ChatMessage[] | ConversationItem[]): value is ConversationItem[] {
+  return value.length > 0 && typeof value[0] === 'object' && value[0] !== null && 'kind' in value[0]!
 }
 
 function estimateTokensFromChars(chars: number): number {
@@ -51,6 +59,19 @@ function countMessageChars(message: ChatMessage): number {
   return chars
 }
 
+function countItemChars(item: ConversationItem): number {
+  if (item.kind === 'message') {
+    return item.role.length + item.source.length + item.content.length
+  }
+  if (item.kind === 'function_call') {
+    return item.callId.length + item.name.length + item.argumentsText.length
+  }
+  if (item.kind === 'function_call_output') {
+    return item.callId.length + item.outputText.length
+  }
+  return (item.summaryText?.length ?? 0) + (item.encryptedContent?.length ?? 0)
+}
+
 function messageSignature(message: ChatMessage): string {
   const toolCalls = Array.isArray(message.tool_calls)
     ? message.tool_calls.map((call) => `${call.id}|${call.type}|${call.function.name}|${call.function.arguments}`).join('||')
@@ -62,6 +83,19 @@ function messageSignature(message: ChatMessage): string {
     typeof message.content === 'string' ? message.content : '',
     toolCalls
   ].join('\n')
+}
+
+function itemSignature(item: ConversationItem): string {
+  if (item.kind === 'message') {
+    return [item.kind, item.role, item.source, item.content, item.itemId ?? ''].join('\n')
+  }
+  if (item.kind === 'function_call') {
+    return [item.kind, item.callId, item.name, item.argumentsText, item.itemId ?? ''].join('\n')
+  }
+  if (item.kind === 'function_call_output') {
+    return [item.kind, item.callId, item.outputText, String(item.isError ?? ''), item.itemId ?? ''].join('\n')
+  }
+  return [item.kind, item.summaryText ?? '', item.encryptedContent ?? '', item.itemId ?? ''].join('\n')
 }
 
 function shortHash(value: string): string {
@@ -91,6 +125,22 @@ export function createPromptObservabilityTracker() {
   return createPromptObservabilityTrackerWithToolSchema()
 }
 
+export function withResponseBoundaryPromptObservability(
+  snapshot: PromptObservabilitySnapshot,
+  boundary: {
+    runtimeResponseId: string
+    providerResponseId?: string
+    finishReason: string
+  }
+): PromptObservabilitySnapshot {
+  return {
+    ...snapshot,
+    runtime_response_id: boundary.runtimeResponseId,
+    provider_response_id: boundary.providerResponseId,
+    provider_finish_reason: boundary.finishReason,
+  }
+}
+
 export function createPromptObservabilityTrackerWithToolSchema(toolSchemaSerialized?: string) {
   const toolSchemaTokensEstimate = toolSchemaSerialized
     ? estimateTokensFromChars(toolSchemaSerialized.length)
@@ -103,18 +153,35 @@ export function createPromptObservabilityTrackerWithToolSchema(toolSchemaSeriali
   }
 
   return {
-    record(turn: number, messages: ChatMessage[]): PromptObservabilitySnapshot {
-      const signatures = messages.map(messageSignature)
-      const messageTokens = messages.map((message) => estimateTokensFromChars(countMessageChars(message)))
+    record(turn: number, input: ChatMessage[] | ConversationItem[]): PromptObservabilitySnapshot {
+      const signatures = isConversationItemArray(input)
+        ? input.map(itemSignature)
+        : input.map(messageSignature)
+      const messageTokens = isConversationItemArray(input)
+        ? input.map((item) => estimateTokensFromChars(countItemChars(item)))
+        : input.map((message) => estimateTokensFromChars(countMessageChars(message)))
       const roleTokens = emptyRoleTokens()
 
-      for (let i = 0; i < messages.length; i += 1) {
-        const role = messages[i]!.role
+      for (let i = 0; i < input.length; i += 1) {
         const tokens = messageTokens[i]!
-        if (role === 'system') roleTokens.system += tokens
-        else if (role === 'user') roleTokens.user += tokens
-        else if (role === 'assistant') roleTokens.assistant += tokens
-        else roleTokens.tool += tokens
+        if (isConversationItemArray(input)) {
+          const item = input[i]!
+          if (item.kind === 'message') {
+            if (item.role === 'system') roleTokens.system += tokens
+            else if (item.role === 'user') roleTokens.user += tokens
+            else roleTokens.assistant += tokens
+          } else if (item.kind === 'reasoning') {
+            roleTokens.assistant += tokens
+          } else {
+            roleTokens.tool += tokens
+          }
+        } else {
+          const role = input[i]!.role
+          if (role === 'system') roleTokens.system += tokens
+          else if (role === 'user') roleTokens.user += tokens
+          else if (role === 'assistant') roleTokens.assistant += tokens
+          else roleTokens.tool += tokens
+        }
       }
 
       const estimatedInputTokens =

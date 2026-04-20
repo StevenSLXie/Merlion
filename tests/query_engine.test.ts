@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../src/types.ts'
+import type { ConversationItem } from '../src/runtime/items.ts'
 import { ToolRegistry } from '../src/tools/registry.ts'
 import type { ToolDefinition } from '../src/tools/types.ts'
 import { QueryEngine } from '../src/runtime/query_engine.ts'
@@ -65,7 +66,7 @@ test('QueryEngine initializes bootstrap context and tracks permission denials', 
 
   const registry = new ToolRegistry()
   registry.register(makeApprovalTool())
-  const persisted: ChatMessage[] = []
+  const persisted: ConversationItem[] = []
   const engine = new QueryEngine({
     cwd: process.cwd(),
     provider,
@@ -101,8 +102,8 @@ test('QueryEngine initializes bootstrap context and tracks permission denials', 
         return []
       },
     },
-    persistMessage: async (message) => {
-      persisted.push(message)
+    persistItem: async (item) => {
+      persisted.push(item)
     },
     model: 'test-model',
   })
@@ -117,6 +118,7 @@ test('QueryEngine initializes bootstrap context and tracks permission denials', 
   const snapshot = engine.getSnapshot()
   assert.equal(snapshot.runtimeState.permissions.deniedToolNames.includes('write_file'), true)
   assert.equal(snapshot.runtimeState.compact.lastSummaryText, 'Permission was denied for the README update request.')
-  assert.equal(persisted[0]?.content, 'system prompt')
-  assert.equal(persisted[1]?.content, 'bootstrap orientation')
+  assert.equal(persisted[0]?.kind, 'message')
+  assert.equal(persisted[0] && 'content' in persisted[0] ? persisted[0].content : '', 'system prompt')
+  assert.equal(persisted[1] && 'content' in persisted[1] ? persisted[1].content : '', 'bootstrap orientation')
 })

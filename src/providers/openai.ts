@@ -1,4 +1,5 @@
 import type { AssistantResponse, ChatMessage, ModelProvider } from '../types.js'
+import { itemsToMessages, messagesToItems, type ConversationItem, type ProviderCapabilities, type ProviderResult } from '../runtime/items.ts'
 import { buildModelToolDescription } from '../tools/model_guidance.ts'
 import type { ToolDefinition } from '../tools/types.js'
 
@@ -50,6 +51,14 @@ export class OpenAICompatProvider implements ModelProvider {
     this.maxTokens = tokens
   }
 
+  capabilities(): ProviderCapabilities {
+    return {
+      transcriptMode: 'messages',
+      supportsReasoningItems: false,
+      supportsPreviousResponseId: false,
+    }
+  }
+
   async complete(messages: ChatMessage[], tools: ToolDefinition[]): Promise<AssistantResponse> {
     const response = await fetch(`${this.config.baseURL.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
@@ -89,6 +98,20 @@ export class OpenAICompatProvider implements ModelProvider {
         cached_tokens: extractCachedTokens(json.usage),
         provider: typeof json.provider === 'string' ? json.provider : undefined
       }
+    }
+  }
+
+  async completeItems(items: ConversationItem[], tools: ToolDefinition[]): Promise<ProviderResult> {
+    const messages = itemsToMessages(items)
+    const assistant = await this.complete(messages, tools)
+    return {
+      outputItems: messagesToItems([{
+        role: 'assistant',
+        content: assistant.content,
+        tool_calls: assistant.tool_calls,
+      }]),
+      finishReason: assistant.finish_reason,
+      usage: assistant.usage,
     }
   }
 }

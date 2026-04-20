@@ -1,4 +1,5 @@
 import type { ToolDefinition } from './tools/types.js'
+import type { ConversationItem, ProviderCapabilities, ProviderResult } from './runtime/items.ts'
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool'
 
@@ -35,11 +36,14 @@ export interface AssistantResponse {
 }
 
 export interface ModelProvider {
+  capabilities?(): ProviderCapabilities
   complete(messages: ChatMessage[], tools: ToolDefinition[]): Promise<AssistantResponse>
+  completeItems?(items: ConversationItem[], tools: ToolDefinition[]): Promise<ProviderResult>
   setMaxOutputTokens?(tokens: number): void
 }
 
 export interface LoopState {
+  items?: ConversationItem[]
   messages: ChatMessage[]
   turnCount: number
   maxOutputTokensRecoveryCount: number
