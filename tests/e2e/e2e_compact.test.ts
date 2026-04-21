@@ -19,6 +19,7 @@ import assert from 'node:assert/strict'
 import type { ChatMessage } from '../../src/types.js'
 
 import { makeSandbox, rmSandbox, SKIP, makeProvider, makeRegistry, SYSTEM_PROMPT } from './helpers.ts'
+import { messagesToItems } from '../../src/runtime/items.ts'
 import { runLoop } from '../../src/runtime/loop.ts'
 
 /** Build a 7-message fake conversation history (no tool calls). */
@@ -54,11 +55,11 @@ if (SKIP) {
         const result = await runLoop({
           provider: makeProvider(),
           registry: makeRegistry(),
-          // systemPrompt is ignored — provided via initialMessages
+          // systemPrompt is ignored — provided via initialItems
           systemPrompt: SYSTEM_PROMPT,
           userPrompt: 'Read hello.txt and tell me the content of the first line.',
           cwd: sandbox,
-          initialMessages: makeFakeHistory(),
+          initialItems: messagesToItems(makeFakeHistory()),
           maxTurns: 15,
           permissions: { ask: async () => 'allow_session' },
         })

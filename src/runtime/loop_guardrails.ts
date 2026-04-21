@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 
-import type { LoopState, ToolCall } from '../types.js'
+import type { ToolCall } from '../types.js'
 import type { ToolCallResultEvent } from './executor.ts'
 
 // Action-plan detection intentionally combines intent + action + output
@@ -95,7 +95,7 @@ export function formatProviderErrorText(error: unknown): string {
  * Deliberately conservative to avoid nudging genuine short completions
  * ("done", "在", "yes") or complete summaries.
  */
-export function shouldNudge(text: string, state: LoopState): boolean {
+export function shouldNudge(text: string, state: { nudgeCount: number }): boolean {
   if (state.nudgeCount >= 2) return false
 
   const trimmed = text.trim()

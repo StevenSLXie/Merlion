@@ -35,6 +35,7 @@ import {
   appendTranscriptItem,
   loadSessionTranscript,
 } from '../../src/runtime/session.ts'
+import { itemsToMessages } from '../../src/runtime/items.ts'
 
 // Unique marker embedded in the file so we can assert on it cross-session.
 const MARKER = `merlion-session-resume-${randomUUID().slice(0, 12)}`
@@ -84,11 +85,11 @@ if (SKIP) {
           'Transcript must contain at least one item',
         )
         assert.ok(
-          restoredTranscript.messages.some((m) => m.role === 'system'),
+          itemsToMessages(restoredTranscript.items).some((m) => m.role === 'system'),
           'Restored transcript must include the system message',
         )
         assert.ok(
-          restoredTranscript.messages.some((m) => m.role === 'assistant'),
+          itemsToMessages(restoredTranscript.items).some((m) => m.role === 'assistant'),
           'Restored transcript must include at least one assistant message',
         )
 
@@ -113,10 +114,10 @@ if (SKIP) {
           `Session 2 should report the marker content.\nMarker: ${MARKER}\nGot: ${result2.finalText}`,
         )
 
-        // Session 2 message array is strictly larger (it has all prior messages + new ones)
+        // Session 2 item array is strictly larger (it has all prior items + new ones)
         assert.ok(
-          result2.state.messages.length > result1.state.messages.length,
-          'Session 2 should accumulate more messages than session 1',
+          result2.state.items.length > result1.state.items.length,
+          'Session 2 should accumulate more items than session 1',
         )
       } finally {
         await rmSandbox(sandbox)

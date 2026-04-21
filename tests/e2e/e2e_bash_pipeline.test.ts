@@ -12,6 +12,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { itemsToMessages } from '../../src/runtime/items.ts'
 import { makeSandbox, rmSandbox, runAgent, SKIP } from './helpers.ts'
 
 if (SKIP) {
@@ -40,7 +41,7 @@ if (SKIP) {
         )
 
         // Verify bash was called
-        const assistantMessages = result.state.messages.filter(
+        const assistantMessages = itemsToMessages(result.state.items).filter(
           (m) => m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0,
         )
         const calledBash = assistantMessages.some((m) =>

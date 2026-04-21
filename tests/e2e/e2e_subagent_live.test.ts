@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../../src/types.ts'
 import { createContextService } from '../../src/context/service.ts'
+import { itemsToMessages } from '../../src/runtime/items.ts'
 import { QueryEngine } from '../../src/runtime/query_engine.ts'
 import { createSubagentRuntime } from '../../src/runtime/subagents.ts'
 import { createRuntimeState } from '../../src/runtime/state/types.ts'
@@ -121,7 +122,7 @@ if (SKIP) {
         assert.match(result.finalText, /\badd\b/i, `Expected add in final text, got: ${result.finalText}`)
         assert.match(result.finalText, /\bmultiply\b/i, `Expected multiply in final text, got: ${result.finalText}`)
 
-        const toolMessages = result.state.messages.filter((message) => message.role === 'tool')
+        const toolMessages = itemsToMessages(result.state.items).filter((message) => message.role === 'tool')
         assert.ok(
           toolMessages.some((message) => (message.content ?? '').includes('"role": "explorer"')),
           'Expected spawn_agent explorer result in parent transcript',
@@ -173,7 +174,7 @@ if (SKIP) {
         assert.equal(result.terminal, 'completed', `Loop ended with: ${result.terminal}`)
         assert.match(result.finalText, /foreground verifier completed successfully/i, `Expected completion summary, got: ${result.finalText}`)
 
-        const toolMessages = result.state.messages.filter((message) => message.role === 'tool')
+        const toolMessages = itemsToMessages(result.state.items).filter((message) => message.role === 'tool')
         assert.ok(
           toolMessages.some((message) => (message.content ?? '').includes('"role": "verifier"')),
           'Expected verifier subagent result in parent transcript',

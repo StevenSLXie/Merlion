@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { itemsToMessages } from '../../src/runtime/items.ts'
 import { makeSandbox, rmSandbox, runAgent, SKIP } from './helpers.ts'
 
 if (SKIP) {
@@ -50,7 +51,7 @@ if (SKIP) {
         assert.match(original, /Line three is the last/)
 
         // At minimum: read_file + create_file calls
-        const toolMessages = result.state.messages.filter((m) => m.role === 'tool')
+        const toolMessages = itemsToMessages(result.state.items).filter((m) => m.role === 'tool')
         assert.ok(toolMessages.length >= 2, 'Expected at least 2 tool calls')
       } finally {
         await rmSandbox(sandbox)

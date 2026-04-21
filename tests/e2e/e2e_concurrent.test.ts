@@ -13,6 +13,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { itemsToMessages } from '../../src/runtime/items.ts'
 import { makeSandbox, rmSandbox, runAgent, SKIP } from './helpers.ts'
 
 if (SKIP) {
@@ -42,11 +43,11 @@ if (SKIP) {
         assert.match(result.finalText, /multiply/, 'Expected "multiply" in response')
 
         // At minimum 2 read_file calls must have occurred
-        const toolMessages = result.state.messages.filter((m) => m.role === 'tool')
+        const toolMessages = itemsToMessages(result.state.items).filter((m) => m.role === 'tool')
         assert.ok(toolMessages.length >= 2, 'Expected at least 2 tool result messages')
 
         // Ideally both files were read in one parallel assistant turn
-        const parallelTurn = result.state.messages.find(
+        const parallelTurn = itemsToMessages(result.state.items).find(
           (m) =>
             m.role === 'assistant' &&
             m.tool_calls !== undefined &&

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../../src/types.ts'
 import { QueryEngine } from '../../src/runtime/query_engine.ts'
+import { itemsToMessages } from '../../src/runtime/items.ts'
 import { buildDefaultRegistry } from '../../src/tools/builtin/index.ts'
 import { createSessionFiles } from '../../src/runtime/session.ts'
 import { createRuntimeState } from '../../src/runtime/state/types.ts'
@@ -100,7 +101,7 @@ function makeContextService() {
     getGeneratedMapMode: () => false,
     setGeneratedMapMode() {},
     async prefetchIfSafe() {
-      return { initialMessages: [], startupMapSummary: null, generatedMapMode: false }
+      return { initialItems: [], startupMapSummary: null, generatedMapMode: false }
     },
     async getSystemPrompt() {
       return 'system prompt'
@@ -108,8 +109,8 @@ function makeContextService() {
     async buildPromptPrelude() {
       return []
     },
-    async buildPathGuidanceMessages() {
-      return { messages: [], loadedFiles: [] }
+    async buildPathGuidanceItems() {
+      return { items: [], loadedFiles: [] }
     },
     async extractCandidatePathsFromText() {
       return []
@@ -152,9 +153,8 @@ test('e2e local loop can spawn and wait for a background worker subagent', async
 
     assert.equal(result.terminal, 'completed')
     assert.match(result.finalText, /completed worker result/i)
-    assert.equal(result.state.messages.some((message) => message.role === 'tool' && /"status": "completed"/.test(message.content ?? '')), true)
+    assert.equal(itemsToMessages(result.state.items).some((message) => message.role === 'tool' && /"status": "completed"/.test(message.content ?? '')), true)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }
 })
-

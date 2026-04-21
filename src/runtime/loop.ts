@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { ChatMessage, LoopState, LoopTerminal, ModelProvider } from '../types.js'
+import type { LoopState, LoopTerminal, ModelProvider } from '../types.js'
 import type { AskUserQuestionItem, PermissionStore, ToolContext } from '../tools/types.js'
 import type { SubagentToolRuntime } from './subagent_types.ts'
 import { executeToolCalls, type ToolCallResultEvent, type ToolCallStartEvent } from './executor.ts'
@@ -21,7 +21,6 @@ import {
   findLastAssistantText,
   functionCallItemsToToolCalls,
   itemsToMessages,
-  messagesToItems,
   toolResultMessageToOutputItem,
   type ConversationItem,
   type ProviderResponseBoundary,
@@ -88,10 +87,8 @@ export interface RunLoopOptions {
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
   subagents?: SubagentToolRuntime
   maxTurns?: number
-  initialMessages?: ChatMessage[]
   initialItems?: ConversationItem[]
   persistInitialMessages?: boolean
-  onMessageAppended?: (message: ChatMessage) => Promise<void> | void
   onItemAppended?: (entry: TranscriptItemEntry) => Promise<void> | void
   onResponseBoundary?: (boundary: ProviderResponseBoundary) => Promise<void> | void
   onUsage?: (usage: {
@@ -105,7 +102,7 @@ export interface RunLoopOptions {
   }) => Promise<void> | void
   onPromptObservability?: (snapshot: PromptObservabilitySnapshot) => Promise<void> | void
   promptObservabilityTracker?: {
-    record: (turn: number, items: ConversationItem[] | ChatMessage[]) => PromptObservabilitySnapshot
+    record: (turn: number, items: ConversationItem[]) => PromptObservabilitySnapshot
   }
   onTurnStart?: (event: { turn: number }) => Promise<void> | void
   onAssistantResponse?: (event: {
@@ -119,7 +116,7 @@ export interface RunLoopOptions {
   onToolBatchComplete?: (event: {
     turn: number
     results: ToolCallResultEvent[]
-  }) => Promise<ConversationItem[] | ChatMessage[] | void> | ConversationItem[] | ChatMessage[] | void
+  }) => Promise<ConversationItem[] | void> | ConversationItem[] | void
 }
 
 export interface RunLoopResult {
@@ -160,22 +157,27 @@ function ensureBoundary(
   }
 }
 
-function normalizeInjectedItems(
-  value: ConversationItem[] | ChatMessage[] | void
-): ConversationItem[] {
+function normalizeInjectedItems(value: ConversationItem[] | void): ConversationItem[] {
   if (!Array.isArray(value) || value.length === 0) return []
-  const first = value[0] as ConversationItem | ChatMessage
-  if (first && typeof first === 'object' && 'kind' in first) {
-    return value as ConversationItem[]
-  }
-  return messagesToItems(value as ChatMessage[])
+  return value
 }
 
-function ensureStateItems(state: LoopState): ConversationItem[] {
-  if (!state.items) {
-    state.items = messagesToItems(state.messages)
+interface InternalLoopState {
+  items: ConversationItem[]
+  turnCount: number
+  maxOutputTokensRecoveryCount: number
+  hasAttemptedReactiveCompact: boolean
+  nudgeCount: number
+}
+
+function projectLoopState(state: InternalLoopState): LoopState {
+  return {
+    items: [...state.items],
+    turnCount: state.turnCount,
+    maxOutputTokensRecoveryCount: state.maxOutputTokensRecoveryCount,
+    hasAttemptedReactiveCompact: state.hasAttemptedReactiveCompact,
+    nudgeCount: state.nudgeCount,
   }
-  return state.items
 }
 
 function findLastSignificantItem(items: ConversationItem[]): ConversationItem | undefined {
@@ -217,16 +219,15 @@ async function completeProviderTurn(
 }
 
 async function appendItems(
-  state: LoopState,
+  state: InternalLoopState,
   options: RunLoopOptions,
   items: ConversationItem[],
   origin: TranscriptItemEntry['origin'],
   runtimeResponseId?: string,
 ): Promise<void> {
   if (items.length === 0) return
-  const stateItems = ensureStateItems(state)
   for (const item of items) {
-    stateItems.push(item)
+    state.items.push(item)
     await options.onItemAppended?.({
       type: 'item',
       item,
@@ -234,18 +235,11 @@ async function appendItems(
       runtimeResponseId,
     })
   }
-  const rendered = itemsToMessages(items)
-  if (rendered.length > 0) {
-    for (const message of rendered) {
-      await options.onMessageAppended?.(message)
-    }
-  }
-  state.messages = itemsToMessages(stateItems)
 }
 
 async function tryGenerateNaturalSummary(
   options: RunLoopOptions,
-  state: LoopState,
+  state: InternalLoopState,
 ): Promise<string | null> {
   const summaryRequest = createRuntimeUserItem(
     'Write a natural-language summary of what you completed in this run. ' +
@@ -255,7 +249,7 @@ async function tryGenerateNaturalSummary(
 
   await appendItems(state, options, [summaryRequest], 'local_runtime')
 
-  const requestItems = buildRequestMessages(ensureStateItems(state), options.intentContract)
+  const requestItems = buildRequestMessages(state.items, options.intentContract)
 
   try {
     const result = await withRetry(
@@ -283,25 +277,21 @@ async function tryGenerateNaturalSummary(
 function createState(
   systemPrompt: string,
   userPrompt: string,
-  initialMessages?: ChatMessage[],
   initialItems?: ConversationItem[],
-): LoopState {
+): InternalLoopState {
   const items: ConversationItem[] = initialItems
     ? [...initialItems]
-    : initialMessages
-      ? messagesToItems(initialMessages)
-      : [
-          createSystemItem(systemPrompt, 'static'),
-          ...(userPrompt.trim() !== '' ? [createExternalUserItem(userPrompt)] : []),
-        ]
+    : [
+        createSystemItem(systemPrompt, 'static'),
+        ...(userPrompt.trim() !== '' ? [createExternalUserItem(userPrompt)] : []),
+      ]
 
-  if ((initialItems || initialMessages) && userPrompt.trim() !== '') {
+  if (initialItems && userPrompt.trim() !== '') {
     items.push(createExternalUserItem(userPrompt))
   }
 
   return {
     items,
-    messages: itemsToMessages(items),
     turnCount: 0,
     maxOutputTokensRecoveryCount: 0,
     hasAttemptedReactiveCompact: false,
@@ -317,44 +307,79 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return value > 0 ? value : fallback
 }
 
-export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
-  const state = createState(options.systemPrompt, options.userPrompt, options.initialMessages, options.initialItems)
-  const maxTurns = options.maxTurns ?? 100
-  let finalText = ''
-  let emptyStopRecoveryCount = 0
-  let awaitingPostToolSummary = false
-  let autoToolErrorHintCount = 0
-  let toolArgumentHintCount = 0
-  let noProgressHintCount = 0
-  let noMutationHintCount = 0
-  let consecutiveAllErrorBatches = 0
-  let consecutiveNoMutationBatches = 0
-  let sawAnyToolError = false
-  let sawAnySuccessfulMutation = false
-  let totalToolBatches = 0
-  let noMutationStopRecoveryCount = 0
-  let mutationOscillationHintCount = 0
-  let explorationHintCount = 0
-  let verificationHintCount = 0
-  let todoDriftHintCount = 0
-  let consecutiveTodoOnlyBatches = 0
-  let largeDiffHintCount = 0
-  let overwriteAfterEditHintCount = 0
-  let testFirstBugFixHintInjected = false
-  let hasSuccessfulNonTestMutation = false
-  let hasCodeLikeMutation = false
-  let verificationStrength: VerificationStrength = 'none'
-  let consecutiveExplorationBatches = 0
-  const exploredPathsWindow = new Set<string>()
-  const repeatedToolErrorCounts = new Map<string, number>()
-  const hintedToolErrorSignatures = new Set<string>()
-  const mutationHistory: MutationEvent[] = []
-  const mutationOscillationSignatures = new Set<string>()
-  const promptObservability = options.promptObservabilityTracker ?? createPromptObservabilityTracker()
-  const bugFixMode = isBugFixPrompt(options.userPrompt)
+interface LoopGuardrailState {
+  finalText: string
+  emptyStopRecoveryCount: number
+  awaitingPostToolSummary: boolean
+  autoToolErrorHintCount: number
+  toolArgumentHintCount: number
+  noProgressHintCount: number
+  noMutationHintCount: number
+  consecutiveAllErrorBatches: number
+  consecutiveNoMutationBatches: number
+  sawAnyToolError: boolean
+  sawAnySuccessfulMutation: boolean
+  totalToolBatches: number
+  noMutationStopRecoveryCount: number
+  mutationOscillationHintCount: number
+  explorationHintCount: number
+  verificationHintCount: number
+  todoDriftHintCount: number
+  consecutiveTodoOnlyBatches: number
+  largeDiffHintCount: number
+  overwriteAfterEditHintCount: number
+  testFirstBugFixHintInjected: boolean
+  hasSuccessfulNonTestMutation: boolean
+  hasCodeLikeMutation: boolean
+  verificationStrength: VerificationStrength
+  consecutiveExplorationBatches: number
+  exploredPathsWindow: Set<string>
+  repeatedToolErrorCounts: Map<string, number>
+  hintedToolErrorSignatures: Set<string>
+  mutationHistory: MutationEvent[]
+  mutationOscillationSignatures: Set<string>
+  bugFixMode: boolean
+}
 
+function createLoopGuardrailState(userPrompt: string): LoopGuardrailState {
+  return {
+    finalText: '',
+    emptyStopRecoveryCount: 0,
+    awaitingPostToolSummary: false,
+    autoToolErrorHintCount: 0,
+    toolArgumentHintCount: 0,
+    noProgressHintCount: 0,
+    noMutationHintCount: 0,
+    consecutiveAllErrorBatches: 0,
+    consecutiveNoMutationBatches: 0,
+    sawAnyToolError: false,
+    sawAnySuccessfulMutation: false,
+    totalToolBatches: 0,
+    noMutationStopRecoveryCount: 0,
+    mutationOscillationHintCount: 0,
+    explorationHintCount: 0,
+    verificationHintCount: 0,
+    todoDriftHintCount: 0,
+    consecutiveTodoOnlyBatches: 0,
+    largeDiffHintCount: 0,
+    overwriteAfterEditHintCount: 0,
+    testFirstBugFixHintInjected: false,
+    hasSuccessfulNonTestMutation: false,
+    hasCodeLikeMutation: false,
+    verificationStrength: 'none',
+    consecutiveExplorationBatches: 0,
+    exploredPathsWindow: new Set<string>(),
+    repeatedToolErrorCounts: new Map<string, number>(),
+    hintedToolErrorSignatures: new Set<string>(),
+    mutationHistory: [],
+    mutationOscillationSignatures: new Set<string>(),
+    bugFixMode: isBugFixPrompt(userPrompt),
+  }
+}
+
+function buildToolContext(options: RunLoopOptions): ToolContext {
   const defaultPermissions: PermissionStore = { ask: async () => 'allow' }
-  const toolContext: ToolContext = {
+  return {
     cwd: options.cwd,
     permissions: options.permissions ?? defaultPermissions,
     askQuestions: options.askQuestions,
@@ -375,45 +400,434 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         requiresTrustedWorkspace: tool.requiresTrustedWorkspace,
       })),
   }
+}
 
-  if (options.persistInitialMessages !== false) {
-    for (const item of ensureStateItems(state)) {
-      await options.onItemAppended?.({
-        type: 'item',
-        item,
-        origin: item.kind === 'function_call_output' ? 'local_tool_output' : 'local_runtime',
-      })
+async function persistInitialLoopState(
+  state: InternalLoopState,
+  options: RunLoopOptions,
+): Promise<void> {
+  if (options.persistInitialMessages === false) return
+  for (const item of state.items) {
+    await options.onItemAppended?.({
+      type: 'item',
+      item,
+      origin: item.kind === 'function_call_output' ? 'local_tool_output' : 'local_runtime',
+    })
+  }
+}
+
+function applyReactiveCompact(state: InternalLoopState): void {
+  const compactTriggerChars = parsePositiveInt(process.env.MERLION_COMPACT_TRIGGER_CHARS, 60_000)
+  const keepRecent = parsePositiveInt(process.env.MERLION_COMPACT_KEEP_RECENT, 10)
+  const chars = estimateItemsChars(state.items)
+  if (chars <= compactTriggerChars || state.hasAttemptedReactiveCompact) return
+  const compacted = compactItems(state.items, { keepRecent })
+  if (!compacted.compacted) return
+  state.items = compacted.items
+  state.hasAttemptedReactiveCompact = true
+}
+
+async function handleToolCallPhase(params: {
+  assistant: ProviderResult
+  options: RunLoopOptions
+  state: InternalLoopState
+  guardrails: LoopGuardrailState
+  toolContext: ToolContext
+}): Promise<boolean> {
+  const { assistant, options, state, guardrails, toolContext } = params
+  if (
+    assistant.finishReason !== 'tool_calls' ||
+    !assistant.outputItems.some((item) => item.kind === 'function_call')
+  ) {
+    return false
+  }
+
+  const toolResultEvents: ToolCallResultEvent[] = []
+  const maxConcurrency = Number(process.env.MERLION_MAX_TOOL_CONCURRENCY ?? '10')
+  const functionCalls = assistant.outputItems.filter((item) => item.kind === 'function_call')
+  const toolMessages = await executeToolCalls({
+    toolCalls: functionCallItemsToToolCalls(functionCalls),
+    registry: options.registry,
+    toolContext,
+    maxConcurrency: Number.isFinite(maxConcurrency) ? Math.max(1, Math.floor(maxConcurrency)) : 10,
+    onToolCallStart: options.onToolCallStart,
+    onToolCallResult: async (event) => {
+      toolResultEvents.push(event)
+      await options.onToolCallResult?.(event)
+    },
+  })
+
+  const toolOutputItems = toolMessages.map((message) => toolResultMessageToOutputItem(message)).filter(Boolean) as ConversationItem[]
+  await appendItems(state, options, toolOutputItems, 'local_tool_output')
+  guardrails.totalToolBatches += 1
+
+  let hint: string | null = null
+  let toolArgumentHint: string | null = null
+  for (const event of toolResultEvents) {
+    const signature = toolCallSignature(event.call)
+    if (event.isError) {
+      guardrails.sawAnyToolError = true
+      if (
+        toolArgumentHint === null &&
+        guardrails.toolArgumentHintCount < MAX_TOOL_ARGUMENT_HINTS &&
+        isToolArgumentValidationError(event.message.content ?? '')
+      ) {
+        toolArgumentHint = formatToolArgumentHint(event.call)
+        guardrails.toolArgumentHintCount += 1
+      }
+      const nextCount = (guardrails.repeatedToolErrorCounts.get(signature) ?? 0) + 1
+      guardrails.repeatedToolErrorCounts.set(signature, nextCount)
+      if (
+        hint === null &&
+        guardrails.autoToolErrorHintCount < MAX_AUTO_TOOL_ERROR_HINTS &&
+        nextCount >= REPEATED_TOOL_ERROR_THRESHOLD &&
+        !guardrails.hintedToolErrorSignatures.has(signature)
+      ) {
+        hint = formatToolErrorHint(event.call, nextCount, options.cwd)
+        guardrails.hintedToolErrorSignatures.add(signature)
+        guardrails.autoToolErrorHintCount += 1
+      }
+      continue
     }
-    for (const msg of state.messages) {
-      await options.onMessageAppended?.(msg)
+    guardrails.repeatedToolErrorCounts.delete(signature)
+    guardrails.hintedToolErrorSignatures.delete(signature)
+  }
+
+  if (toolArgumentHint) {
+    await appendItems(state, options, [createRuntimeUserItem(toolArgumentHint)], 'local_runtime')
+  }
+  if (hint) {
+    await appendItems(state, options, [createRuntimeUserItem(hint)], 'local_runtime')
+  }
+
+  if (toolResultEvents.length > 0 && toolResultEvents.every((event) => event.isError)) {
+    guardrails.consecutiveAllErrorBatches += 1
+  } else {
+    guardrails.consecutiveAllErrorBatches = 0
+  }
+  if (
+    guardrails.consecutiveAllErrorBatches >= NO_PROGRESS_BATCH_THRESHOLD &&
+    guardrails.noProgressHintCount < MAX_NO_PROGRESS_HINTS
+  ) {
+    await appendItems(
+      state,
+      options,
+      [createRuntimeUserItem(formatNoProgressHint(guardrails.consecutiveAllErrorBatches))],
+      'local_runtime'
+    )
+    guardrails.noProgressHintCount += 1
+    guardrails.consecutiveAllErrorBatches = 0
+  }
+
+  let batchMutationCount = 0
+  let sawTestOnlyMutationBatch = false
+  let sawNonTestMutationInBatch = false
+  const batchTestPaths: string[] = []
+  let mutationHint: string | null = null
+  let largeDiffHint: string | null = null
+  let overwriteAfterEditHint: string | null = null
+  let batchExplorationCount = 0
+  let batchTodoWriteCount = 0
+  let batchNonTodoSuccessCount = 0
+
+  for (const event of toolResultEvents) {
+    if (!event.isError) {
+      guardrails.verificationStrength = strongerVerificationStrength(
+        guardrails.verificationStrength,
+        inferVerificationStrength(event.call)
+      )
+      if (event.call.function.name === 'todo_write') {
+        batchTodoWriteCount += 1
+      } else {
+        batchNonTodoSuccessCount += 1
+      }
+      if (isExplorationToolCall(event.call)) {
+        batchExplorationCount += 1
+        for (const path of extractRelevantPaths(options.cwd, event.call)) {
+          guardrails.exploredPathsWindow.add(path)
+        }
+      }
+    }
+    const mutation = toMutationEvent(options.cwd, event, state.turnCount)
+    if (!mutation) continue
+    batchMutationCount += 1
+    if (looksLikeCodePath(mutation.path)) {
+      guardrails.hasCodeLikeMutation = true
+    }
+    if (looksLikeTestPath(mutation.path)) {
+      batchTestPaths.push(mutation.path)
+    } else {
+      sawNonTestMutationInBatch = true
+    }
+    const previous = guardrails.mutationHistory[guardrails.mutationHistory.length - 1]
+    if (
+      guardrails.mutationOscillationHintCount < MAX_MUTATION_OSCILLATION_HINTS &&
+      previous &&
+      isMutationOscillation(previous, mutation)
+    ) {
+      const oscillationKey = `${previous.signature}|${mutation.signature}`
+      if (!guardrails.mutationOscillationSignatures.has(oscillationKey)) {
+        mutationHint = formatMutationOscillationHint(previous, mutation)
+        guardrails.mutationOscillationSignatures.add(oscillationKey)
+        guardrails.mutationOscillationHintCount += 1
+      }
+    }
+    if (
+      largeDiffHint === null &&
+      guardrails.largeDiffHintCount < MAX_LARGE_DIFF_HINTS &&
+      isLargeMutation(mutation)
+    ) {
+      largeDiffHint = formatLargeDiffHint(mutation)
+      guardrails.largeDiffHintCount += 1
+    }
+    if (
+      overwriteAfterEditHint === null &&
+      guardrails.overwriteAfterEditHintCount < MAX_OVERWRITE_AFTER_EDIT_HINTS &&
+      previous &&
+      previous.path === mutation.path &&
+      previous.toolName === 'edit_file' &&
+      mutation.toolName === 'write_file'
+    ) {
+      overwriteAfterEditHint = formatOverwriteAfterEditHint(previous, mutation)
+      guardrails.overwriteAfterEditHintCount += 1
+    }
+    guardrails.mutationHistory.push(mutation)
+    if (guardrails.mutationHistory.length > 20) guardrails.mutationHistory.shift()
+  }
+
+  if (mutationHint) {
+    await appendItems(state, options, [createRuntimeUserItem(mutationHint)], 'local_runtime')
+  }
+  if (largeDiffHint) {
+    await appendItems(state, options, [createRuntimeUserItem(largeDiffHint)], 'local_runtime')
+  }
+  if (overwriteAfterEditHint) {
+    await appendItems(state, options, [createRuntimeUserItem(overwriteAfterEditHint)], 'local_runtime')
+  }
+
+  sawTestOnlyMutationBatch = batchMutationCount > 0 && batchTestPaths.length === batchMutationCount
+  if (batchMutationCount > 0) {
+    guardrails.sawAnySuccessfulMutation = true
+    guardrails.consecutiveNoMutationBatches = 0
+    guardrails.consecutiveExplorationBatches = 0
+    guardrails.consecutiveTodoOnlyBatches = 0
+    guardrails.exploredPathsWindow.clear()
+  } else if (toolResultEvents.length > 0) {
+    guardrails.consecutiveNoMutationBatches += 1
+    if (batchExplorationCount > 0) {
+      guardrails.consecutiveExplorationBatches += 1
+    } else {
+      guardrails.consecutiveExplorationBatches = 0
+      guardrails.exploredPathsWindow.clear()
+    }
+    if (batchTodoWriteCount > 0 && batchNonTodoSuccessCount === 0 && !toolResultEvents.every((event) => event.isError)) {
+      guardrails.consecutiveTodoOnlyBatches += 1
+    } else {
+      guardrails.consecutiveTodoOnlyBatches = 0
     }
   }
 
+  if (sawNonTestMutationInBatch) {
+    guardrails.hasSuccessfulNonTestMutation = true
+  }
+  if (
+    guardrails.bugFixMode &&
+    !guardrails.testFirstBugFixHintInjected &&
+    !guardrails.hasSuccessfulNonTestMutation &&
+    sawTestOnlyMutationBatch
+  ) {
+    await appendItems(state, options, [createRuntimeUserItem(formatTestFirstBugFixHint(batchTestPaths))], 'local_runtime')
+    guardrails.testFirstBugFixHintInjected = true
+  }
+
+  const noMutationThreshold = guardrails.bugFixMode
+    ? BUGFIX_NO_MUTATION_BATCH_THRESHOLD
+    : NO_MUTATION_BATCH_THRESHOLD
+  let injectedExplorationHint = false
+  if (
+    guardrails.consecutiveExplorationBatches >= noMutationThreshold &&
+    guardrails.explorationHintCount < MAX_EXPLORATION_HINTS &&
+    guardrails.exploredPathsWindow.size >= 2
+  ) {
+    await appendItems(
+      state,
+      options,
+      [createRuntimeUserItem(
+        formatExplorationBudgetHint(
+          guardrails.consecutiveExplorationBatches,
+          guardrails.exploredPathsWindow.size,
+          guardrails.bugFixMode
+        )
+      )],
+      'local_runtime'
+    )
+    guardrails.explorationHintCount += 1
+    guardrails.consecutiveExplorationBatches = 0
+    guardrails.exploredPathsWindow.clear()
+    injectedExplorationHint = true
+  }
+  if (
+    !injectedExplorationHint &&
+    guardrails.consecutiveNoMutationBatches >= noMutationThreshold &&
+    guardrails.noMutationHintCount < MAX_NO_MUTATION_HINTS
+  ) {
+    await appendItems(
+      state,
+      options,
+      [createRuntimeUserItem(formatNoMutationHint(guardrails.consecutiveNoMutationBatches, guardrails.bugFixMode))],
+      'local_runtime'
+    )
+    guardrails.noMutationHintCount += 1
+    guardrails.consecutiveNoMutationBatches = 0
+  }
+  if (
+    guardrails.consecutiveTodoOnlyBatches >= TODO_ONLY_BATCH_THRESHOLD &&
+    guardrails.todoDriftHintCount < MAX_TODO_DRIFT_HINTS
+  ) {
+    await appendItems(state, options, [createRuntimeUserItem(formatTodoDriftHint())], 'local_runtime')
+    guardrails.todoDriftHintCount += 1
+    guardrails.consecutiveTodoOnlyBatches = 0
+  }
+
+  const postToolMessages = await options.onToolBatchComplete?.({
+    turn: state.turnCount,
+    results: toolResultEvents,
+  })
+  if (Array.isArray(postToolMessages) && postToolMessages.length > 0) {
+    await appendItems(state, options, normalizeInjectedItems(postToolMessages), 'local_runtime')
+  }
+  return true
+}
+
+async function handleTerminalPhase(params: {
+  assistant: ProviderResult
+  options: RunLoopOptions
+  state: InternalLoopState
+  guardrails: LoopGuardrailState
+  lastSignificantItemBeforeAssistant: ConversationItem | undefined
+}): Promise<'continue' | RunLoopResult> {
+  const { assistant, options, state, guardrails, lastSignificantItemBeforeAssistant } = params
+
+  if (assistant.finishReason === 'length' && state.maxOutputTokensRecoveryCount < 3) {
+    state.maxOutputTokensRecoveryCount += 1
+    await appendItems(
+      state,
+      options,
+      [createRuntimeUserItem('Output was cut off. Continue directly from where you stopped. No recap, no apology.')],
+      'local_runtime'
+    )
+    return 'continue'
+  }
+
+  if (assistant.finishReason === 'content_filter') {
+    return { terminal: 'model_error', finalText: guardrails.finalText, state: projectLoopState(state) }
+  }
+
+  const text = findLastAssistantText(assistant.outputItems)
+  const previousWasTool = lastSignificantItemBeforeAssistant?.kind === 'function_call_output'
+  const shouldRecoverEmptyStop = previousWasTool || guardrails.awaitingPostToolSummary
+  const shouldRecoverMutationlessStop =
+    guardrails.totalToolBatches > 0 &&
+    !guardrails.sawAnySuccessfulMutation &&
+    guardrails.sawAnyToolError &&
+    shouldRecoverNoMutationStop(text)
+  const shouldRecoverWeakVerificationStop =
+    guardrails.verificationHintCount < MAX_VERIFICATION_HINTS &&
+    guardrails.hasCodeLikeMutation &&
+    guardrails.hasSuccessfulNonTestMutation &&
+    guardrails.verificationStrength === 'none' &&
+    text.trim() !== '' &&
+    !mentionsVerification(text)
+
+  if (assistant.finishReason === 'stop' && text.trim() === '' && shouldRecoverEmptyStop) {
+    if (guardrails.emptyStopRecoveryCount < 1) {
+      guardrails.emptyStopRecoveryCount += 1
+      guardrails.awaitingPostToolSummary = true
+      await appendItems(
+        state,
+        options,
+        [createRuntimeUserItem('You just finished tool execution. Please provide a natural-language final summary for this request.')],
+        'local_runtime'
+      )
+      return 'continue'
+    }
+    guardrails.finalText =
+      (await tryGenerateNaturalSummary(options, state)) ??
+      'Task completed via tool execution, but the model returned no final summary.'
+    return { terminal: 'completed', finalText: guardrails.finalText, state: projectLoopState(state) }
+  }
+
+  if (assistant.finishReason === 'stop' && shouldRecoverMutationlessStop) {
+    if (guardrails.noMutationStopRecoveryCount < 1) {
+      guardrails.noMutationStopRecoveryCount += 1
+      await appendItems(
+        state,
+        options,
+        [
+          createRuntimeUserItem(
+            'You have not made any successful file changes yet. Do not finish now. ' +
+              'Either inspect the explicit target files/tests and apply one minimal edit, ' +
+              'or explain with concrete evidence why no edit is required.'
+          )
+        ],
+        'local_runtime'
+      )
+      return 'continue'
+    }
+  }
+
+  if (assistant.finishReason === 'stop' && shouldRecoverWeakVerificationStop) {
+    guardrails.verificationHintCount += 1
+    await appendItems(state, options, [createRuntimeUserItem(formatVerificationHint())], 'local_runtime')
+    return 'continue'
+  }
+
+  if (text.trim() !== '') {
+    guardrails.awaitingPostToolSummary = false
+  }
+
+  if (shouldNudge(text, state)) {
+    await appendItems(
+      state,
+      options,
+      [createRuntimeUserItem(
+        'Continue with the task. Use your tools to make progress. ' +
+          'If you have completed everything, describe what was done.'
+      )],
+      'local_runtime'
+    )
+    state.nudgeCount += 1
+    return 'continue'
+  }
+
+  guardrails.finalText = text
+  return { terminal: 'completed', finalText: guardrails.finalText, state: projectLoopState(state) }
+}
+
+export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
+  const state = createState(options.systemPrompt, options.userPrompt, options.initialItems)
+  const maxTurns = options.maxTurns ?? 100
+  const guardrails = createLoopGuardrailState(options.userPrompt)
+  const promptObservability = options.promptObservabilityTracker ?? createPromptObservabilityTracker()
+  const toolContext = buildToolContext(options)
+
+  await persistInitialLoopState(state, options)
+
   for (;;) {
     if (state.turnCount >= maxTurns) {
-      if (finalText.trim() === '') {
-        finalText =
+      if (guardrails.finalText.trim() === '') {
+        guardrails.finalText =
           (await tryGenerateNaturalSummary(options, state)) ??
           'Reached max turns before producing a final summary.'
       }
-      return { terminal: 'max_turns_exceeded', finalText, state }
+      return { terminal: 'max_turns_exceeded', finalText: guardrails.finalText, state: projectLoopState(state) }
     }
 
-    let assistant
+    let assistant: ProviderResult
     let promptSnapshot: PromptObservabilitySnapshot | undefined
     try {
-      const compactTriggerChars = parsePositiveInt(process.env.MERLION_COMPACT_TRIGGER_CHARS, 60_000)
-      const keepRecent = parsePositiveInt(process.env.MERLION_COMPACT_KEEP_RECENT, 10)
-      const chars = estimateItemsChars(ensureStateItems(state))
-      if (chars > compactTriggerChars && !state.hasAttemptedReactiveCompact) {
-        const compacted = compactItems(ensureStateItems(state), { keepRecent })
-        if (compacted.compacted) {
-          state.items = compacted.items
-          state.messages = itemsToMessages(compacted.items)
-          state.hasAttemptedReactiveCompact = true
-        }
-      }
-      const requestItems = buildRequestMessages(ensureStateItems(state), options.intentContract)
+      applyReactiveCompact(state)
+      const requestItems = buildRequestMessages(state.items, options.intentContract)
       promptSnapshot = promptObservability.record(state.turnCount + 1, requestItems)
       await options.onPromptObservability?.(promptSnapshot)
       await options.onTurnStart?.({ turn: state.turnCount + 1 })
@@ -422,12 +836,12 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         { maxAttempts: 5, baseDelayMs: 200, maxDelayMs: 32_000 },
       )
     } catch (error) {
-      return { terminal: 'model_error', finalText: formatProviderErrorText(error), state }
+      return { terminal: 'model_error', finalText: formatProviderErrorText(error), state: projectLoopState(state) }
     }
 
     state.turnCount += 1
 
-    const lastSignificantItemBeforeAssistant = findLastSignificantItem(ensureStateItems(state))
+    const lastSignificantItemBeforeAssistant = findLastSignificantItem(state.items)
     const boundary = ensureBoundary(assistant.responseBoundary, assistant, options.provider)
     await options.onResponseBoundary?.(boundary)
     if (promptSnapshot) {
@@ -445,347 +859,21 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
       turn: state.turnCount,
       finish_reason: assistant.finishReason,
       tool_calls_count: countFunctionCallItems(assistant.outputItems),
-      content: findLastAssistantText(assistant.outputItems) || null
+      content: findLastAssistantText(assistant.outputItems) || null,
     })
 
-    // ── tool_calls ──────────────────────────────────────────────────────────
-    if (
-      assistant.finishReason === 'tool_calls' &&
-      assistant.outputItems.some((item) => item.kind === 'function_call')
-    ) {
-      const toolResultEvents: ToolCallResultEvent[] = []
-      const maxConcurrency = Number(process.env.MERLION_MAX_TOOL_CONCURRENCY ?? '10')
-      const functionCalls = assistant.outputItems.filter((item) => item.kind === 'function_call')
-      const toolMessages = await executeToolCalls({
-        toolCalls: functionCallItemsToToolCalls(functionCalls),
-        registry: options.registry,
-        toolContext,
-        maxConcurrency: Number.isFinite(maxConcurrency) ? Math.max(1, Math.floor(maxConcurrency)) : 10,
-        onToolCallStart: options.onToolCallStart,
-        onToolCallResult: async (event) => {
-          toolResultEvents.push(event)
-          await options.onToolCallResult?.(event)
-        },
-      })
-
-      const toolOutputItems = toolMessages.map((message) => toolResultMessageToOutputItem(message)).filter(Boolean) as ConversationItem[]
-      await appendItems(state, options, toolOutputItems, 'local_tool_output')
-      totalToolBatches += 1
-
-      let hint: string | null = null
-      let toolArgumentHint: string | null = null
-      for (const event of toolResultEvents) {
-        const signature = toolCallSignature(event.call)
-        if (event.isError) {
-          sawAnyToolError = true
-          if (
-            toolArgumentHint === null &&
-            toolArgumentHintCount < MAX_TOOL_ARGUMENT_HINTS &&
-            isToolArgumentValidationError(event.message.content ?? '')
-          ) {
-            toolArgumentHint = formatToolArgumentHint(event.call)
-            toolArgumentHintCount += 1
-          }
-          const nextCount = (repeatedToolErrorCounts.get(signature) ?? 0) + 1
-          repeatedToolErrorCounts.set(signature, nextCount)
-          if (
-            hint === null &&
-            autoToolErrorHintCount < MAX_AUTO_TOOL_ERROR_HINTS &&
-            nextCount >= REPEATED_TOOL_ERROR_THRESHOLD &&
-            !hintedToolErrorSignatures.has(signature)
-          ) {
-            hint = formatToolErrorHint(event.call, nextCount, options.cwd)
-            hintedToolErrorSignatures.add(signature)
-            autoToolErrorHintCount += 1
-          }
-          continue
-        }
-        repeatedToolErrorCounts.delete(signature)
-        hintedToolErrorSignatures.delete(signature)
-      }
-
-      if (toolArgumentHint) {
-        await appendItems(state, options, [createRuntimeUserItem(toolArgumentHint)], 'local_runtime')
-      }
-
-      if (hint) {
-        await appendItems(state, options, [createRuntimeUserItem(hint)], 'local_runtime')
-      }
-
-      if (toolResultEvents.length > 0 && toolResultEvents.every((event) => event.isError)) {
-        consecutiveAllErrorBatches += 1
-      } else {
-        consecutiveAllErrorBatches = 0
-      }
-      if (
-        consecutiveAllErrorBatches >= NO_PROGRESS_BATCH_THRESHOLD &&
-        noProgressHintCount < MAX_NO_PROGRESS_HINTS
-      ) {
-        await appendItems(state, options, [createRuntimeUserItem(formatNoProgressHint(consecutiveAllErrorBatches))], 'local_runtime')
-        noProgressHintCount += 1
-        consecutiveAllErrorBatches = 0
-      }
-
-      let batchMutationCount = 0
-      let sawTestOnlyMutationBatch = false
-      let sawNonTestMutationInBatch = false
-      const batchTestPaths: string[] = []
-      let mutationHint: string | null = null
-      let largeDiffHint: string | null = null
-      let overwriteAfterEditHint: string | null = null
-      let batchExplorationCount = 0
-      let batchTodoWriteCount = 0
-      let batchNonTodoSuccessCount = 0
-      for (const event of toolResultEvents) {
-        if (!event.isError) {
-          verificationStrength = strongerVerificationStrength(verificationStrength, inferVerificationStrength(event.call))
-          if (event.call.function.name === 'todo_write') {
-            batchTodoWriteCount += 1
-          } else {
-            batchNonTodoSuccessCount += 1
-          }
-          if (isExplorationToolCall(event.call)) {
-            batchExplorationCount += 1
-            for (const path of extractRelevantPaths(options.cwd, event.call)) {
-              exploredPathsWindow.add(path)
-            }
-          }
-        }
-        const mutation = toMutationEvent(options.cwd, event, state.turnCount)
-        if (!mutation) continue
-        batchMutationCount += 1
-        if (looksLikeCodePath(mutation.path)) {
-          hasCodeLikeMutation = true
-        }
-        if (looksLikeTestPath(mutation.path)) {
-          batchTestPaths.push(mutation.path)
-        } else {
-          sawNonTestMutationInBatch = true
-        }
-        const previous = mutationHistory[mutationHistory.length - 1]
-        if (
-          mutationOscillationHintCount < MAX_MUTATION_OSCILLATION_HINTS &&
-          previous &&
-          isMutationOscillation(previous, mutation)
-        ) {
-          const oscillationKey = `${previous.signature}|${mutation.signature}`
-          if (!mutationOscillationSignatures.has(oscillationKey)) {
-            mutationHint = formatMutationOscillationHint(previous, mutation)
-            mutationOscillationSignatures.add(oscillationKey)
-            mutationOscillationHintCount += 1
-          }
-        }
-        if (
-          largeDiffHint === null &&
-          largeDiffHintCount < MAX_LARGE_DIFF_HINTS &&
-          isLargeMutation(mutation)
-        ) {
-          largeDiffHint = formatLargeDiffHint(mutation)
-          largeDiffHintCount += 1
-        }
-        if (
-          overwriteAfterEditHint === null &&
-          overwriteAfterEditHintCount < MAX_OVERWRITE_AFTER_EDIT_HINTS &&
-          previous &&
-          previous.path === mutation.path &&
-          previous.toolName === 'edit_file' &&
-          mutation.toolName === 'write_file'
-        ) {
-          overwriteAfterEditHint = formatOverwriteAfterEditHint(previous, mutation)
-          overwriteAfterEditHintCount += 1
-        }
-        mutationHistory.push(mutation)
-        if (mutationHistory.length > 20) mutationHistory.shift()
-      }
-      if (mutationHint) {
-        await appendItems(state, options, [createRuntimeUserItem(mutationHint)], 'local_runtime')
-      }
-      if (largeDiffHint) {
-        await appendItems(state, options, [createRuntimeUserItem(largeDiffHint)], 'local_runtime')
-      }
-      if (overwriteAfterEditHint) {
-        await appendItems(state, options, [createRuntimeUserItem(overwriteAfterEditHint)], 'local_runtime')
-      }
-      sawTestOnlyMutationBatch = batchMutationCount > 0 && batchTestPaths.length === batchMutationCount
-      if (batchMutationCount > 0) {
-        sawAnySuccessfulMutation = true
-        consecutiveNoMutationBatches = 0
-        consecutiveExplorationBatches = 0
-        consecutiveTodoOnlyBatches = 0
-        exploredPathsWindow.clear()
-      } else if (toolResultEvents.length > 0) {
-        consecutiveNoMutationBatches += 1
-        if (batchExplorationCount > 0) {
-          consecutiveExplorationBatches += 1
-        } else {
-          consecutiveExplorationBatches = 0
-          exploredPathsWindow.clear()
-        }
-        if (batchTodoWriteCount > 0 && batchNonTodoSuccessCount === 0 && !toolResultEvents.every((event) => event.isError)) {
-          consecutiveTodoOnlyBatches += 1
-        } else {
-          consecutiveTodoOnlyBatches = 0
-        }
-      }
-      if (sawNonTestMutationInBatch) {
-        hasSuccessfulNonTestMutation = true
-      }
-      if (
-        bugFixMode &&
-        !testFirstBugFixHintInjected &&
-        !hasSuccessfulNonTestMutation &&
-        sawTestOnlyMutationBatch
-      ) {
-        await appendItems(state, options, [createRuntimeUserItem(formatTestFirstBugFixHint(batchTestPaths))], 'local_runtime')
-        testFirstBugFixHintInjected = true
-      }
-      const noMutationThreshold = bugFixMode
-        ? BUGFIX_NO_MUTATION_BATCH_THRESHOLD
-        : NO_MUTATION_BATCH_THRESHOLD
-      let injectedExplorationHint = false
-      if (
-        consecutiveExplorationBatches >= noMutationThreshold &&
-        explorationHintCount < MAX_EXPLORATION_HINTS &&
-        exploredPathsWindow.size >= 2
-      ) {
-        await appendItems(
-          state,
-          options,
-          [createRuntimeUserItem(formatExplorationBudgetHint(consecutiveExplorationBatches, exploredPathsWindow.size, bugFixMode))],
-          'local_runtime'
-        )
-        explorationHintCount += 1
-        consecutiveExplorationBatches = 0
-        exploredPathsWindow.clear()
-        injectedExplorationHint = true
-      }
-      if (
-        !injectedExplorationHint &&
-        consecutiveNoMutationBatches >= noMutationThreshold &&
-        noMutationHintCount < MAX_NO_MUTATION_HINTS
-      ) {
-        await appendItems(
-          state,
-          options,
-          [createRuntimeUserItem(formatNoMutationHint(consecutiveNoMutationBatches, bugFixMode))],
-          'local_runtime'
-        )
-        noMutationHintCount += 1
-        consecutiveNoMutationBatches = 0
-      }
-      if (
-        consecutiveTodoOnlyBatches >= TODO_ONLY_BATCH_THRESHOLD &&
-        todoDriftHintCount < MAX_TODO_DRIFT_HINTS
-      ) {
-        await appendItems(state, options, [createRuntimeUserItem(formatTodoDriftHint())], 'local_runtime')
-        todoDriftHintCount += 1
-        consecutiveTodoOnlyBatches = 0
-      }
-
-      const postToolMessages = await options.onToolBatchComplete?.({
-        turn: state.turnCount,
-        results: toolResultEvents
-      })
-      if (Array.isArray(postToolMessages) && postToolMessages.length > 0) {
-        await appendItems(state, options, normalizeInjectedItems(postToolMessages), 'local_runtime')
-      }
+    if (await handleToolCallPhase({ assistant, options, state, guardrails, toolContext })) {
       continue
     }
 
-    // ── length (output truncated) ────────────────────────────────────────────
-    if (assistant.finishReason === 'length' && state.maxOutputTokensRecoveryCount < 3) {
-      state.maxOutputTokensRecoveryCount += 1
-      await appendItems(
-        state,
-        options,
-        [createRuntimeUserItem('Output was cut off. Continue directly from where you stopped. No recap, no apology.')],
-        'local_runtime'
-      )
-      continue
-    }
-
-    // ── content_filter ───────────────────────────────────────────────────────
-    if (assistant.finishReason === 'content_filter') {
-      return { terminal: 'model_error', finalText, state }
-    }
-
-    // ── stop (and length-recovery exhausted) ────────────────────────────────
-    const text = findLastAssistantText(assistant.outputItems)
-    const previousWasTool = lastSignificantItemBeforeAssistant?.kind === 'function_call_output'
-    const shouldRecoverEmptyStop = previousWasTool || awaitingPostToolSummary
-    const shouldRecoverMutationlessStop =
-      totalToolBatches > 0 &&
-      !sawAnySuccessfulMutation &&
-      sawAnyToolError &&
-      shouldRecoverNoMutationStop(text)
-    const shouldRecoverWeakVerificationStop =
-      verificationHintCount < MAX_VERIFICATION_HINTS &&
-      hasCodeLikeMutation &&
-      hasSuccessfulNonTestMutation &&
-      verificationStrength === 'none' &&
-      text.trim() !== '' &&
-      !mentionsVerification(text)
-
-    if (assistant.finishReason === 'stop' && text.trim() === '' && shouldRecoverEmptyStop) {
-      if (emptyStopRecoveryCount < 1) {
-        emptyStopRecoveryCount += 1
-        awaitingPostToolSummary = true
-        await appendItems(
-          state,
-          options,
-          [createRuntimeUserItem('You just finished tool execution. Please provide a natural-language final summary for this request.')],
-          'local_runtime'
-        )
-        continue
-      }
-      finalText =
-        (await tryGenerateNaturalSummary(options, state)) ??
-        'Task completed via tool execution, but the model returned no final summary.'
-      return { terminal: 'completed', finalText, state }
-    }
-    if (assistant.finishReason === 'stop' && shouldRecoverMutationlessStop) {
-      if (noMutationStopRecoveryCount < 1) {
-        noMutationStopRecoveryCount += 1
-        await appendItems(
-          state,
-          options,
-          [
-            createRuntimeUserItem(
-              'You have not made any successful file changes yet. Do not finish now. ' +
-                'Either inspect the explicit target files/tests and apply one minimal edit, ' +
-                'or explain with concrete evidence why no edit is required.'
-            )
-          ],
-          'local_runtime'
-        )
-        continue
-      }
-    }
-    if (assistant.finishReason === 'stop' && shouldRecoverWeakVerificationStop) {
-      verificationHintCount += 1
-      await appendItems(state, options, [createRuntimeUserItem(formatVerificationHint())], 'local_runtime')
-      continue
-    }
-    if (text.trim() !== '') {
-      awaitingPostToolSummary = false
-    }
-
-    // Nudge: model promised action but made no tool call
-    if (shouldNudge(text, state)) {
-      await appendItems(
-        state,
-        options,
-        [createRuntimeUserItem(
-          'Continue with the task. Use your tools to make progress. ' +
-            'If you have completed everything, describe what was done.'
-        )],
-        'local_runtime'
-      )
-      state.nudgeCount += 1
-      continue
-    }
-
-    finalText = text
-    return { terminal: 'completed', finalText, state }
+    const terminal = await handleTerminalPhase({
+      assistant,
+      options,
+      state,
+      guardrails,
+      lastSignificantItemBeforeAssistant,
+    })
+    if (terminal === 'continue') continue
+    return terminal
   }
 }

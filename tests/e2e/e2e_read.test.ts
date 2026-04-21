@@ -9,6 +9,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { itemsToMessages } from '../../src/runtime/items.ts'
 import { makeSandbox, rmSandbox, runAgent, SKIP } from './helpers.ts'
 
 if (SKIP) {
@@ -36,7 +37,7 @@ if (SKIP) {
         )
 
         // Verify the agent actually called read_file (not just guessed)
-        const toolMessages = result.state.messages.filter((m) => m.role === 'tool')
+        const toolMessages = itemsToMessages(result.state.items).filter((m) => m.role === 'tool')
         assert.ok(
           toolMessages.length > 0,
           'Expected at least one tool call (read_file)',

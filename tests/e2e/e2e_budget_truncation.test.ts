@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { itemsToMessages } from '../../src/runtime/items.ts'
 import { makeSandbox, rmSandbox, runAgent, SKIP } from './helpers.ts'
 
 const FIRST_SENTINEL = 'alpha-truncation-sentinel'
@@ -53,7 +54,7 @@ if (SKIP) {
         assert.equal(result.terminal, 'completed', `Loop ended with: ${result.terminal}`)
 
         // The tool result must carry a truncation marker
-        const toolMessages = result.state.messages.filter((m) => m.role === 'tool')
+        const toolMessages = itemsToMessages(result.state.items).filter((m) => m.role === 'tool')
         const truncated = toolMessages.some(
           (m) => typeof m.content === 'string' && m.content.includes('truncated'),
         )

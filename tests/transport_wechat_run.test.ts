@@ -9,6 +9,7 @@ import {
 } from '../src/transport/wechat/run.ts'
 import { buildDefaultRegistry } from '../src/tools/builtin/index.ts'
 import type { RunLoopResult } from '../src/runtime/loop.ts'
+import { messagesToItems } from '../src/runtime/items.ts'
 import type { ChatMessage, LoopTerminal } from '../src/types.ts'
 
 function makeLoopResult(params: {
@@ -21,7 +22,7 @@ function makeLoopResult(params: {
     terminal: params.terminal,
     finalText: params.finalText ?? '',
     state: {
-      messages: params.messages ?? [],
+      items: messagesToItems(params.messages ?? []),
       turnCount: params.turnCount ?? 1,
       maxOutputTokensRecoveryCount: 0,
       hasAttemptedReactiveCompact: false,

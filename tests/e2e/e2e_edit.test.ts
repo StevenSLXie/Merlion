@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { itemsToMessages } from '../../src/runtime/items.ts'
 import { makeSandbox, rmSandbox, runAgent, SKIP } from './helpers.ts'
 
 if (SKIP) {
@@ -43,7 +44,7 @@ if (SKIP) {
         assert.match(content, /function multiply/, 'multiply function must not be removed')
 
         // Verify edit_file was called (not create_file with a totally new file)
-        const toolMessages = result.state.messages.filter((m) => m.role === 'tool')
+        const toolMessages = itemsToMessages(result.state.items).filter((m) => m.role === 'tool')
         assert.ok(toolMessages.length >= 2, 'Expected at least read + edit tool calls')
       } finally {
         await rmSandbox(sandbox)

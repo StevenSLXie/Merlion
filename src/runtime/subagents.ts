@@ -7,6 +7,7 @@ import type { AskUserQuestionItem, PermissionDecision, PermissionStore, ToolDefi
 import { ToolRegistry } from '../tools/registry.ts'
 import { QueryEngine } from './query_engine.ts'
 import type { ConversationItem } from './items.ts'
+import { createSystemItem } from './items.ts'
 import {
   appendSessionMeta,
   appendTranscriptItem,
@@ -437,12 +438,9 @@ function createChildContextService(
       const bootstrap = await base.prefetchIfSafe()
       return {
         ...bootstrap,
-        initialMessages: [
-          ...bootstrap.initialMessages,
-          {
-            role: 'system',
-            content: briefingText,
-          },
+        initialItems: [
+          ...bootstrap.initialItems,
+          createSystemItem(briefingText, 'runtime'),
         ],
       }
     },
@@ -453,8 +451,8 @@ function createChildContextService(
     async buildPromptPrelude(prompt) {
       return await base.buildPromptPrelude(prompt)
     },
-    async buildPathGuidanceMessages(candidatePaths) {
-      return await base.buildPathGuidanceMessages(candidatePaths)
+    async buildPathGuidanceItems(candidatePaths) {
+      return await base.buildPathGuidanceItems(candidatePaths)
     },
     async extractCandidatePathsFromText(content) {
       return await base.extractCandidatePathsFromText(content)

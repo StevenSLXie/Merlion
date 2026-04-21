@@ -1,0 +1,19 @@
+Version: 0.1.29
+Date: 2026-04-21
+
+Changes:
+- Runtime item convergence completed:
+  - remove remaining `LoopState.messages` / `initialMessages` / message-native public runtime surfaces.
+  - `runLoop`, `QueryEngine`, context bootstrap, and prompt observability now operate on `ConversationItem[]` as the primary transcript shape.
+- WeChat and transcript boundary migration:
+  - WeChat sender history, fallback reply extraction, and resume flow now store and replay item-native transcripts.
+  - session restore keeps legacy transcript read compatibility while the runtime itself stays item-native.
+- Cleanup and structure:
+  - finish post-cutover dead-code cleanup and retain shared project-root helper usage.
+  - keep `runLoop()` / `QueryEngine.submitPrompt()` split into clearer execution and post-run maintenance phases.
+- Test and compatibility updates:
+  - update local/e2e/subagent/transport tests to assert through item-native state.
+  - validate with full test suite plus 5 live LLM e2e scenarios.
+
+Related docs:
+- docs/features/099-runtime-post-cutover-cleanup-and-item-convergence.md

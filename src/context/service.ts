@@ -1,4 +1,3 @@
-import type { ChatMessage } from '../types.js'
 import { loadAgentsGuidance } from '../artifacts/agents.ts'
 import { ensureGeneratedAgentsMaps } from '../artifacts/agents_bootstrap.ts'
 import { refreshCodebaseIndex } from '../artifacts/codebase_index.ts'
@@ -15,9 +14,10 @@ import {
 import { buildMerlionSystemPrompt } from '../prompt/system_prompt.ts'
 import { createPromptSectionCache, type PromptSectionCache } from '../prompt/sections.ts'
 import { resolveContextTrustLevel, shouldPrefetchExpensiveContext, type ContextTrustLevel } from './policies.ts'
+import { createSystemItem, type ConversationItem } from '../runtime/items.ts'
 
 export interface RuntimeContextBootstrapResult {
-  initialMessages: ChatMessage[]
+  initialItems: ConversationItem[]
   startupMapSummary: string | null
   generatedMapMode: boolean
 }
@@ -37,8 +37,8 @@ export interface ContextService {
   setGeneratedMapMode(value: boolean): void
   prefetchIfSafe(): Promise<RuntimeContextBootstrapResult>
   getSystemPrompt(): Promise<string>
-  buildPromptPrelude(prompt: string): Promise<ChatMessage[]>
-  buildPathGuidanceMessages(candidatePaths: string[]): Promise<{ messages: ChatMessage[]; loadedFiles: string[] }>
+  buildPromptPrelude(prompt: string): Promise<ConversationItem[]>
+  buildPathGuidanceItems(candidatePaths: string[]): Promise<{ items: ConversationItem[]; loadedFiles: string[] }>
   extractCandidatePathsFromText(content: string): Promise<string[]>
   extractCandidatePathsFromToolEvent(event: PathSignalToolEvent): Promise<string[]>
 }
@@ -77,7 +77,7 @@ export function createContextService(options: ContextServiceOptions): ContextSer
       generatedMapMode = value
     },
     async prefetchIfSafe(): Promise<RuntimeContextBootstrapResult> {
-      const initialMessages: ChatMessage[] = []
+      const initialItems: ConversationItem[] = []
       if (shouldPrefetchExpensiveContext(trustLevel)) {
         try {
           const bootstrap = await ensureGeneratedAgentsMaps(options.cwd)
@@ -100,12 +100,13 @@ export function createContextService(options: ContextServiceOptions): ContextSer
           await refreshCodebaseIndex(options.cwd)
           const orientation = await buildOrientationContext(options.cwd, options.orientationBudgets)
           if (orientation.text.trim() !== '') {
-            initialMessages.push({
-              role: 'system',
-              content:
+            initialItems.push(
+              createSystemItem(
                 'Project orientation context. Use this as a starting map, then verify with tools before edits.\n\n' +
-                orientation.text,
-            })
+                  orientation.text,
+                'runtime',
+              ),
+            )
           }
         } catch (error) {
           process.stderr.write(`Orientation build warning: ${String(error)}\n`)
@@ -114,7 +115,7 @@ export function createContextService(options: ContextServiceOptions): ContextSer
 
       await seedPathGuidanceState()
       return {
-        initialMessages,
+        initialItems,
         startupMapSummary,
         generatedMapMode,
       }
@@ -128,23 +129,23 @@ export function createContextService(options: ContextServiceOptions): ContextSer
       }
       return await systemPromptPromise
     },
-    async buildPromptPrelude(prompt: string): Promise<ChatMessage[]> {
+    async buildPromptPrelude(prompt: string): Promise<ConversationItem[]> {
       const promptPathCandidates = new Set<string>()
       for (const candidate of await extractCandidatePathsFromText(options.cwd, prompt)) {
         promptPathCandidates.add(candidate)
       }
       if (promptPathCandidates.size === 0) return []
       const seededList = [...promptPathCandidates].slice(0, 8)
-      const messages: ChatMessage[] = [
-        {
-          role: 'system',
-          content: [
+      const items: ConversationItem[] = [
+        createSystemItem(
+          [
             'User-specified target paths detected.',
             'Inspect these paths, or their nearest directories/tests, before any repo-wide recursive exploration.',
             'Only widen scope if these paths are missing, invalid, or insufficient for the task.',
             ...seededList.map((item) => `- ${item}`),
           ].join('\n'),
-        },
+          'runtime',
+        ),
       ]
       const promptDelta = await buildPathGuidanceDelta(
         options.cwd,
@@ -153,30 +154,31 @@ export function createContextService(options: ContextServiceOptions): ContextSer
         options.pathGuidanceBudgets,
       )
       if (promptDelta.text.trim() !== '') {
-        messages.push({
-          role: 'system',
-          content: 'Prompt-derived path guidance. Use this to focus your first tool calls.\n\n' + promptDelta.text,
-        })
+        items.push(
+          createSystemItem(
+            'Prompt-derived path guidance. Use this to focus your first tool calls.\n\n' + promptDelta.text,
+            'runtime',
+          ),
+        )
       }
-      return messages
+      return items
     },
-    async buildPathGuidanceMessages(candidatePaths: string[]) {
+    async buildPathGuidanceItems(candidatePaths: string[]) {
       const delta = await buildPathGuidanceDelta(
         options.cwd,
         candidatePaths,
         pathGuidanceState,
         options.pathGuidanceBudgets,
       )
-      if (delta.text.trim() === '') return { messages: [], loadedFiles: [] }
+      if (delta.text.trim() === '') return { items: [], loadedFiles: [] }
       return {
         loadedFiles: delta.loadedFiles,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Path guidance update. Use this to narrow your next tool calls before broad scans.\n\n' +
+        items: [
+          createSystemItem(
+            'Path guidance update. Use this to narrow your next tool calls before broad scans.\n\n' +
               delta.text,
-          },
+            'runtime',
+          ),
         ],
       }
     },

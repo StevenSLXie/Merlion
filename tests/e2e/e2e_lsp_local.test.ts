@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 import type { AssistantResponse, ChatMessage, ModelProvider } from '../../src/types.ts'
+import { itemsToMessages } from '../../src/runtime/items.ts'
 import { buildDefaultRegistry } from '../../src/tools/builtin/index.ts'
 import { runLoop } from '../../src/runtime/loop.ts'
 
@@ -66,7 +67,7 @@ test('e2e local lsp flow resolves symbol definition end-to-end', async () => {
 
     assert.equal(result.terminal, 'completed')
     assert.match(result.finalText, /src\/lib\.ts/)
-    assert.equal(result.state.messages.some((message) => message.role === 'tool' && /src\/lib\.ts/.test(message.content ?? '')), true)
+    assert.equal(itemsToMessages(result.state.items).some((message) => message.role === 'tool' && /src\/lib\.ts/.test(message.content ?? '')), true)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

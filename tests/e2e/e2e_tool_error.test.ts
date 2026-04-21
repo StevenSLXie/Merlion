@@ -12,6 +12,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { itemsToMessages } from '../../src/runtime/items.ts'
 import { makeSandbox, rmSandbox, runAgent, SKIP } from './helpers.ts'
 
 if (SKIP) {
@@ -49,7 +50,7 @@ if (SKIP) {
         )
 
         // read_file must have been called (not avoided)
-        const calledRead = result.state.messages.some(
+        const calledRead = itemsToMessages(result.state.items).some(
           (m) =>
             m.role === 'assistant' &&
             m.tool_calls?.some((tc) => tc.function.name === 'read_file'),

@@ -43,8 +43,7 @@ export interface ModelProvider {
 }
 
 export interface LoopState {
-  items?: ConversationItem[]
-  messages: ChatMessage[]
+  items: ConversationItem[]
   turnCount: number
   maxOutputTokensRecoveryCount: number
   hasAttemptedReactiveCompact: boolean

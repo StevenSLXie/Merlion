@@ -3,11 +3,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import type { ChatMessage, SessionMetaEntry, TranscriptMessageEntry } from '../types.js'
+import type { SessionMetaEntry, TranscriptMessageEntry } from '../types.js'
 import { fileExists, findProjectRoot } from '../artifacts/project_root.ts'
 import type { PromptObservabilitySnapshot } from './prompt_observability.ts'
 import {
-  itemsToMessages,
   legacyMessageToItems,
   type ConversationItem,
   type ProviderResponseBoundary,
@@ -41,7 +40,6 @@ export interface UsageEntry {
 
 export interface SessionTranscriptLoadResult {
   items: ConversationItem[]
-  messages: ChatMessage[]
   latestResponseBoundary: ProviderResponseBoundary | null
   eligiblePreviousResponseId: string | null
   hasLocalTailAfterLatestResponse: boolean
@@ -332,7 +330,6 @@ export async function loadSessionTranscript(transcriptPath: string): Promise<Ses
 
   return {
     items,
-    messages: itemsToMessages(items),
     latestResponseBoundary,
     eligiblePreviousResponseId:
       latestResponseBoundary && !hasLocalTailAfterLatestResponse

@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import type { AssistantResponse, ChatMessage, ModelProvider } from '../../src/types.ts'
+import { itemsToMessages } from '../../src/runtime/items.ts'
 import { buildDefaultRegistry } from '../../src/tools/builtin/index.ts'
 import { runLoop } from '../../src/runtime/loop.ts'
 
@@ -69,5 +70,5 @@ test('e2e local ask_user_question flow resumes after answer injection', async ()
 
   assert.equal(result.terminal, 'completed')
   assert.match(result.finalText, /focus on tests/i)
-  assert.equal(result.state.messages.some((message) => message.role === 'tool' && /"target": "Tests"/.test(message.content ?? '')), true)
+  assert.equal(itemsToMessages(result.state.items).some((message) => message.role === 'tool' && /"target": "Tests"/.test(message.content ?? '')), true)
 })

@@ -44,7 +44,7 @@ function makeContextService() {
     getGeneratedMapMode: () => false,
     setGeneratedMapMode() {},
     async prefetchIfSafe() {
-      return { initialMessages: [], startupMapSummary: null, generatedMapMode: false }
+      return { initialItems: [], startupMapSummary: null, generatedMapMode: false }
     },
     async getSystemPrompt() {
       return 'system prompt'
@@ -52,8 +52,8 @@ function makeContextService() {
     async buildPromptPrelude() {
       return []
     },
-    async buildPathGuidanceMessages() {
-      return { messages: [], loadedFiles: [] }
+    async buildPathGuidanceItems() {
+      return { items: [], loadedFiles: [] }
     },
     async extractCandidatePathsFromText() {
       return []
@@ -217,4 +217,3 @@ test('background worker can be waited to completion', async () => {
     await rm(cwd, { recursive: true, force: true })
   }
 })
-

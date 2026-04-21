@@ -41,7 +41,7 @@ test('e2e local turn dispatches prompt envelope through QueryEngine', async () =
       getGeneratedMapMode: () => false,
       setGeneratedMapMode() {},
       async prefetchIfSafe() {
-        return { initialMessages: [], startupMapSummary: null, generatedMapMode: false }
+        return { initialItems: [], startupMapSummary: null, generatedMapMode: false }
       },
       async getSystemPrompt() {
         return 'system prompt'
@@ -49,8 +49,8 @@ test('e2e local turn dispatches prompt envelope through QueryEngine', async () =
       async buildPromptPrelude() {
         return []
       },
-      async buildPathGuidanceMessages() {
-        return { messages: [], loadedFiles: [] }
+      async buildPathGuidanceItems() {
+        return { items: [], loadedFiles: [] }
       },
       async extractCandidatePathsFromText() {
         return []

@@ -3,9 +3,14 @@ import assert from 'node:assert/strict'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../src/types.ts'
 import type { ConversationItem, ProviderCapabilities, ProviderResult } from '../src/runtime/items.ts'
+import { itemsToMessages, messagesToItems } from '../src/runtime/items.ts'
 import { ToolRegistry } from '../src/tools/registry.ts'
 import type { ToolDefinition } from '../src/tools/types.ts'
 import { runLoop, shouldNudge } from '../src/runtime/loop.ts'
+
+function renderedMessages(items: ConversationItem[]) {
+  return itemsToMessages(items)
+}
 
 class StubProvider implements ModelProvider {
   private index = 0
@@ -198,7 +203,7 @@ test('loop executes tool call then completes', async () => {
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'done')
-  assert.equal(result.state.messages.some((m) => m.role === 'tool'), true)
+  assert.equal(renderedMessages(result.state.items).some((m) => m.role === 'tool'), true)
 })
 
 test('loop handles unknown tool safely', async () => {
@@ -235,7 +240,7 @@ test('loop handles unknown tool safely', async () => {
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'finished after retry')
-  const toolMsg = result.state.messages.find((m) => m.role === 'tool')
+  const toolMsg = renderedMessages(result.state.items).find((m) => m.role === 'tool')
   assert.ok(toolMsg)
   assert.match(toolMsg?.content ?? '', /Unknown tool/)
 })
@@ -330,7 +335,7 @@ test('loop supports ask_user_question-style interactive callback', async () => {
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'used the answer and finished')
-  const toolMsg = result.state.messages.find((message) => message.role === 'tool')
+  const toolMsg = renderedMessages(result.state.items).find((message) => message.role === 'tool')
   assert.match(toolMsg?.content ?? '', /"mode":"Safe"/)
 })
 
@@ -372,7 +377,7 @@ test('loop recovers empty stop after tool calls by requesting final summary', as
   assert.equal(result.terminal, 'completed')
   assert.match(result.finalText, /Edited tests\/executor\.test\.ts/)
   assert.equal(
-    result.state.messages.some((m) => m.role === 'user' && /final summary/i.test(m.content ?? '')),
+    renderedMessages(result.state.items).some((m) => m.role === 'user' && /final summary/i.test(m.content ?? '')),
     true
   )
 })
@@ -463,7 +468,7 @@ test('item-native loop recovers empty stop after tool calls by requesting final 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'Final summary after tool output.')
   assert.equal(
-    result.state.messages.some((message) => message.role === 'user' && /final summary/i.test(message.content ?? '')),
+    renderedMessages(result.state.items).some((message) => message.role === 'user' && /final summary/i.test(message.content ?? '')),
     true
   )
 })
@@ -510,7 +515,7 @@ test('item-native loop emits usage correlated with runtime and provider response
   assert.equal(usageEvent['providerFinishReason'], 'stop')
 })
 
-test('loop accepts initial messages', async () => {
+test('loop accepts initial items', async () => {
   const provider = new StubProvider([
     {
       role: 'assistant',
@@ -523,21 +528,21 @@ test('loop accepts initial messages', async () => {
   const result = await runLoop({
     provider,
     registry: new ToolRegistry(),
-    systemPrompt: 'ignored because initial messages provided',
+    systemPrompt: 'ignored because initial items provided',
     userPrompt: '',
     cwd: process.cwd(),
     maxTurns: 5,
-    initialMessages: [
+    initialItems: messagesToItems([
       { role: 'system', content: 's' },
       { role: 'user', content: 'u' },
       { role: 'assistant', content: 'a' }
-    ],
+    ]),
     persistInitialMessages: false
   })
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'continued')
-  assert.equal(result.state.messages.length >= 4, true)
+  assert.equal(result.state.items.length >= 4, true)
 })
 
 // ── shouldNudge unit tests ─────────────────────────────────────────────────
@@ -707,10 +712,10 @@ test('loop injects nudge then completes when model stops after nudge', async () 
   assert.equal(result.finalText, 'Task is now complete.')
   assert.equal(result.state.nudgeCount, 1)
   // Nudge message must be present in state
-  const nudgeMsg = result.state.messages.find(
+  const nudgeMsg = renderedMessages(result.state.items).find(
     (m) => m.role === 'user' && typeof m.content === 'string' && m.content.includes('Continue with the task'),
   )
-  assert.ok(nudgeMsg, 'nudge message should be in state.messages')
+  assert.ok(nudgeMsg, 'nudge message should be present in state.items')
 })
 
 test('loop returns model_error for content_filter finish_reason', async () => {
@@ -858,13 +863,13 @@ test('loop compacts oversized context once before provider call', async () => {
       userPrompt: 'go',
       cwd: process.cwd(),
       maxTurns: 5,
-      initialMessages: longHistory,
+      initialItems: messagesToItems(longHistory),
       persistInitialMessages: false,
     })
 
     assert.equal(result.terminal, 'completed')
     assert.equal(result.state.hasAttemptedReactiveCompact, true)
-    const summaryCount = result.state.messages.filter(
+    const summaryCount = renderedMessages(result.state.items).filter(
       (m) => typeof m.content === 'string' && m.content.includes('Conversation compact summary')
     ).length
     assert.equal(summaryCount, 1)
@@ -929,7 +934,7 @@ test('loop injects correction hint after repeated identical tool errors', async 
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'done after retry')
-  const hintMessages = result.state.messages.filter((m) => (
+  const hintMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Repeated tool failure detected')
@@ -974,17 +979,17 @@ test('loop appends post-tool batch messages from callback', async () => {
     userPrompt: 'test',
     cwd: process.cwd(),
     maxTurns: 6,
-    onToolBatchComplete: () => [
+    onToolBatchComplete: () => messagesToItems([
       {
         role: 'system',
         content: 'Path guidance update: narrowed to src/runtime'
       }
-    ]
+    ])
   })
 
   assert.equal(result.terminal, 'completed')
   assert.equal(
-    result.state.messages.some((m) => m.role === 'system' && (m.content ?? '').includes('Path guidance update')),
+    renderedMessages(result.state.items).some((m) => m.role === 'system' && (m.content ?? '').includes('Path guidance update')),
     true
   )
 })
@@ -1026,7 +1031,7 @@ test('loop injects immediate correction hint for invalid tool arguments', async 
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'done after retry')
-  const correctionMessage = result.state.messages.find((m) => (
+  const correctionMessage = renderedMessages(result.state.items).find((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Tool arguments were invalid for `echo_tool`')
@@ -1088,7 +1093,7 @@ test('loop injects no-progress hint after consecutive all-error tool batches', a
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'done after retry')
-  const noProgressMessages = result.state.messages.filter((m) => (
+  const noProgressMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('No progress detected')
@@ -1148,7 +1153,7 @@ test('loop injects no-mutation hint after consecutive tool batches without file 
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'done')
-  const noMutationMessages = result.state.messages.filter((m) => (
+  const noMutationMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('No material progress detected')
@@ -1200,7 +1205,7 @@ test('loop injects bug-fix convergence hint earlier for repeated no-mutation bat
   })
 
   assert.equal(result.terminal, 'completed')
-  const convergenceMessages = result.state.messages.filter((m) => (
+  const convergenceMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Bug-fix convergence:')
@@ -1253,7 +1258,7 @@ test('loop injects exploration budget hint after repeated read/search batches ac
   })
 
   assert.equal(result.terminal, 'completed')
-  const explorationMessages = result.state.messages.filter((m) => (
+  const explorationMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Exploration budget exceeded')
@@ -1307,7 +1312,7 @@ test('loop injects verification reminder before concluding unvalidated code chan
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'validated with npm test')
-  const verificationMessages = result.state.messages.filter((m) => (
+  const verificationMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Before concluding a code-change task')
@@ -1352,7 +1357,7 @@ test('loop injects todo drift hint after repeated todo-only batches', async () =
   })
 
   assert.equal(result.terminal, 'completed')
-  const todoDriftMessages = result.state.messages.filter((m) => (
+  const todoDriftMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Todo drift detected')
@@ -1390,7 +1395,7 @@ test('loop injects large patch self-review hint for oversized edit diffs', async
   })
 
   assert.equal(result.terminal, 'completed')
-  const reviewMessages = result.state.messages.filter((m) => (
+  const reviewMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Large patch self-review')
@@ -1437,7 +1442,7 @@ test('loop injects overwrite-after-edit guardrail on same-path write_file after 
   })
 
   assert.equal(result.terminal, 'completed')
-  const overwriteMessages = result.state.messages.filter((m) => (
+  const overwriteMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Overwrite-after-edit guardrail')
@@ -1491,7 +1496,7 @@ test('loop blocks premature completion after errored tool runs with no successfu
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'fixed and validated manually')
-  const recoveryMessage = result.state.messages.find((m) => (
+  const recoveryMessage = renderedMessages(result.state.items).find((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('You have not made any successful file changes yet')
@@ -1538,7 +1543,7 @@ test('loop injects mutation oscillation hint on create/delete toggle', async () 
 
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'done')
-  const oscillationMessages = result.state.messages.filter((m) => (
+  const oscillationMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Mutation oscillation detected')
@@ -1578,7 +1583,7 @@ test('loop injects bug-fix source-first hint when first successful mutation touc
   })
 
   assert.equal(result.terminal, 'completed')
-  const guardrailMessages = result.state.messages.filter((m) => (
+  const guardrailMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Bug-fix guardrail:')
@@ -1617,7 +1622,7 @@ test('loop does not inject bug-fix source-first hint when first mutation is a so
     maxTurns: 10
   })
 
-  const guardrailMessages = result.state.messages.filter((m) => (
+  const guardrailMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Bug-fix guardrail:')
@@ -1654,7 +1659,7 @@ test('loop does not inject bug-fix source-first hint for explicit test-edit requ
     maxTurns: 10
   })
 
-  const guardrailMessages = result.state.messages.filter((m) => (
+  const guardrailMessages = renderedMessages(result.state.items).filter((m) => (
     m.role === 'user' &&
     typeof m.content === 'string' &&
     m.content.includes('Bug-fix guardrail:')

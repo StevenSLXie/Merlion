@@ -1,6 +1,6 @@
-import type { ChatMessage, ModelProvider } from '../types.js'
+import type { ModelProvider } from '../types.js'
 import type { ConversationItem, ProviderResponseBoundary } from './items.ts'
-import { itemsToMessages, messagesToItems } from './items.ts'
+import { createSystemItem } from './items.ts'
 import type { AskUserQuestionItem, PermissionStore } from '../tools/types.js'
 import type { SubagentToolRuntime } from './subagent_types.ts'
 import { ToolRegistry } from '../tools/registry.ts'
@@ -41,13 +41,12 @@ export interface QueryEngineOptions {
   model?: string
   sessionId?: string
   maxTurns?: number
-  initialMessages?: ChatMessage[]
   initialItems?: ConversationItem[]
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
   buildIntentContract?: (prompt: string) => string | undefined
   sink?: RuntimeSink
   promptObservabilityTracker?: {
-    record: (turn: number, messages: ChatMessage[] | import('./items.ts').ConversationItem[]) => PromptObservabilitySnapshot
+    record: (turn: number, items: ConversationItem[]) => PromptObservabilitySnapshot
   }
   persistItem?: (item: ConversationItem, origin: 'provider_output' | 'local_tool_output' | 'local_runtime', runtimeResponseId?: string) => Promise<void> | void
   persistResponseBoundary?: (boundary: ProviderResponseBoundary) => Promise<void> | void
@@ -79,7 +78,6 @@ export interface QueryEngineOptions {
 
 export interface QueryEngineSnapshot {
   items: ConversationItem[]
-  messages: ChatMessage[]
   runtimeState: RuntimeStateSnapshot
   generatedMapMode: boolean
 }
@@ -97,9 +95,7 @@ export class QueryEngine {
     this.options = options
     this.runtimeState = createRuntimeState()
     this.trackedPermissions = createTrackingPermissionStore(options.permissions, this.runtimeState.permissions)
-    this.history = options.initialItems
-      ? [...options.initialItems]
-      : messagesToItems(options.initialMessages ?? [])
+    this.history = options.initialItems ? [...options.initialItems] : []
   }
 
   getStartupMapSummary(): string | null {
@@ -114,25 +110,18 @@ export class QueryEngine {
     return [...this.history]
   }
 
-  getMessages(): ChatMessage[] {
-    return itemsToMessages(this.history)
-  }
-
   getRuntimeState(): RuntimeState {
     return this.runtimeState
   }
 
-  async resumeFromTranscript(messages: ChatMessage[] | ConversationItem[]): Promise<void> {
-    this.history = Array.isArray(messages) && messages.length > 0 && 'kind' in (messages[0] as any)
-      ? [...messages as ConversationItem[]]
-      : messagesToItems(messages as ChatMessage[])
+  async resumeFromTranscript(items: ConversationItem[]): Promise<void> {
+    this.history = [...items]
     this.initialized = true
   }
 
   getSnapshot(): QueryEngineSnapshot {
     return {
       items: [...this.history],
-      messages: itemsToMessages(this.history),
       runtimeState: snapshotRuntimeState(this.runtimeState),
       generatedMapMode: this.options.contextService.getGeneratedMapMode(),
     }
@@ -146,36 +135,99 @@ export class QueryEngine {
     await this.options.persistItem?.(item, origin, runtimeResponseId)
   }
 
-  private async ensureInitialized(): Promise<void> {
-    if (this.initialized) return
-    const systemPrompt = await this.options.contextService.getSystemPrompt()
-    const bootstrap = await this.options.contextService.prefetchIfSafe()
-    this.startupMapSummary = bootstrap.startupMapSummary
-    this.options.contextService.setGeneratedMapMode(bootstrap.generatedMapMode)
-    const initialItems = [
-      ...messagesToItems([{ role: 'system' as const, content: systemPrompt }]),
-      ...messagesToItems(bootstrap.initialMessages),
+  private async createPromptSeed(prompt: string): Promise<ConversationItem[]> {
+    return [
       ...this.history,
+      ...await this.options.contextService.buildPromptPrelude(prompt),
     ]
-    this.history = initialItems
-    for (const item of initialItems) {
-      await this.persistItem(item, 'local_runtime')
-    }
-    this.initialized = true
   }
 
-  async submitPrompt(prompt: string): Promise<RunLoopResult> {
-    await this.ensureInitialized()
+  private async applyPostRunMaintenance(params: {
+    changedFiles: Set<string>
+    sawSuccessfulGitCommit: boolean
+    sawWorkspaceMutationSignal: boolean
+  }): Promise<void> {
+    const changedFiles = params.changedFiles
+    let workingTreeSnapshotChanged = false
+
+    if (params.sawWorkspaceMutationSignal || params.sawSuccessfulGitCommit) {
+      const workingTreePaths = collectGitWorkingTreePaths(this.options.cwd)
+      const fingerprint = [...new Set(workingTreePaths)].sort().join('\n')
+      if (fingerprint !== this.lastWorkingTreeFingerprint) {
+        workingTreeSnapshotChanged = true
+        this.lastWorkingTreeFingerprint = fingerprint
+        for (const item of workingTreePaths) changedFiles.add(item)
+      }
+    }
+    if (params.sawSuccessfulGitCommit) {
+      for (const item of collectLatestCommitPaths(this.options.cwd)) changedFiles.add(item)
+    }
+
+    if (changedFiles.size > 0) {
+      try {
+        await updateCodebaseIndexWithChangedFiles(this.options.cwd, [...changedFiles])
+        this.options.sink?.onMapUpdated(
+          `codebase index updated (${changedFiles.size} changed file${changedFiles.size === 1 ? '' : 's'})`
+        )
+      } catch (error) {
+        process.stderr.write(`Codebase index update warning: ${String(error)}\n`)
+      }
+    }
+
+    try {
+      const progressUpdate = await updateProgressFromRuntimeSignals(this.options.cwd, {
+        changedPaths: [...changedFiles],
+        sawSuccessfulGitCommit: params.sawSuccessfulGitCommit,
+      })
+      if (progressUpdate.updated) {
+        this.options.sink?.onPhaseUpdate('阶段更新：progress 快照已同步到 .merlion/progress.md。')
+      }
+    } catch (error) {
+      process.stderr.write(`Progress auto-update warning: ${String(error)}\n`)
+    }
+
+    if (changedFiles.size > 0) {
+      try {
+        const staleHints = await detectPotentialStaleGuidance(this.options.cwd, [...changedFiles])
+        if (staleHints.length > 0) {
+          const preview = staleHints.map((hint) => hint.guidanceFile).join(', ')
+          this.options.sink?.onMapUpdated(`guidance may be stale after code changes: ${preview}`)
+        }
+      } catch (error) {
+        process.stderr.write(`Guidance staleness warning: ${String(error)}\n`)
+      }
+    }
+
+    if (this.options.contextService.getGeneratedMapMode() && (params.sawSuccessfulGitCommit || workingTreeSnapshotChanged)) {
+      try {
+        const refreshed = await ensureGeneratedAgentsMaps(this.options.cwd, {
+          force: workingTreeSnapshotChanged && !params.sawSuccessfulGitCommit,
+        })
+        if (refreshed.created) {
+          this.options.sink?.onMapUpdated(
+            `generated project map refreshed (${refreshed.generatedFiles.length} scope${refreshed.generatedFiles.length === 1 ? '' : 's'})`
+          )
+        } else if (params.sawSuccessfulGitCommit) {
+          this.options.sink?.onMapUpdated('generated project map checked (up to date)')
+        }
+      } catch (error) {
+        process.stderr.write(`Generated map refresh warning: ${String(error)}\n`)
+      }
+    }
+  }
+
+  private async executeLoop(prompt: string): Promise<{
+    result: RunLoopResult
+    changedFiles: Set<string>
+    sawSuccessfulGitCommit: boolean
+    sawWorkspaceMutationSignal: boolean
+  }> {
     const changedFiles = new Set<string>()
     const toolPathSignals = new Set<string>()
     let sawSuccessfulGitCommit = false
     let sawWorkspaceMutationSignal = false
-    let workingTreeSnapshotChanged = false
     let latestPromptObservability: PromptObservabilitySnapshot | undefined
-    const seededItems = [
-      ...this.history,
-      ...messagesToItems(await this.options.contextService.buildPromptPrelude(prompt)),
-    ]
+    const seededItems = await this.createPromptSeed(prompt)
 
     const result = await runLoop({
       provider: this.options.provider,
@@ -271,84 +323,54 @@ export class QueryEngine {
         }
         if (detectSuccessfulGitCommit(results)) sawSuccessfulGitCommit = true
         if (results.length === 0 && toolPathSignals.size === 0) return
-        const guidance = await this.options.contextService.buildPathGuidanceMessages([...toolPathSignals])
+        const guidance = await this.options.contextService.buildPathGuidanceItems([...toolPathSignals])
         if (guidance.loadedFiles.length > 0) {
           this.options.sink?.onMapUpdated(
             `guidance updated (${guidance.loadedFiles.length} file${guidance.loadedFiles.length === 1 ? '' : 's'}): ${guidance.loadedFiles.join(', ')}`
           )
         }
-        return guidance.messages
+        return guidance.items
       },
     })
 
-    if (sawWorkspaceMutationSignal || sawSuccessfulGitCommit) {
-      const workingTreePaths = collectGitWorkingTreePaths(this.options.cwd)
-      const fingerprint = [...new Set(workingTreePaths)].sort().join('\n')
-      if (fingerprint !== this.lastWorkingTreeFingerprint) {
-        workingTreeSnapshotChanged = true
-        this.lastWorkingTreeFingerprint = fingerprint
-        for (const item of workingTreePaths) changedFiles.add(item)
-      }
+    return {
+      result,
+      changedFiles,
+      sawSuccessfulGitCommit,
+      sawWorkspaceMutationSignal,
     }
-    if (sawSuccessfulGitCommit) {
-      for (const item of collectLatestCommitPaths(this.options.cwd)) changedFiles.add(item)
-    }
+  }
 
-    if (changedFiles.size > 0) {
-      try {
-        await updateCodebaseIndexWithChangedFiles(this.options.cwd, [...changedFiles])
-        this.options.sink?.onMapUpdated(
-          `codebase index updated (${changedFiles.size} changed file${changedFiles.size === 1 ? '' : 's'})`
-        )
-      } catch (error) {
-        process.stderr.write(`Codebase index update warning: ${String(error)}\n`)
-      }
+  private async ensureInitialized(): Promise<void> {
+    if (this.initialized) return
+    const systemPrompt = await this.options.contextService.getSystemPrompt()
+    const bootstrap = await this.options.contextService.prefetchIfSafe()
+    this.startupMapSummary = bootstrap.startupMapSummary
+    this.options.contextService.setGeneratedMapMode(bootstrap.generatedMapMode)
+    const initialItems = [
+      createSystemItem(systemPrompt, 'static'),
+      ...bootstrap.initialItems,
+      ...this.history,
+    ]
+    this.history = initialItems
+    for (const item of initialItems) {
+      await this.persistItem(item, 'local_runtime')
     }
+    this.initialized = true
+  }
 
-    try {
-      const progressUpdate = await updateProgressFromRuntimeSignals(this.options.cwd, {
-        changedPaths: [...changedFiles],
-        sawSuccessfulGitCommit,
-      })
-      if (progressUpdate.updated) {
-        this.options.sink?.onPhaseUpdate('阶段更新：progress 快照已同步到 .merlion/progress.md。')
-      }
-    } catch (error) {
-      process.stderr.write(`Progress auto-update warning: ${String(error)}\n`)
-    }
+  async submitPrompt(prompt: string): Promise<RunLoopResult> {
+    await this.ensureInitialized()
+    const execution = await this.executeLoop(prompt)
+    await this.applyPostRunMaintenance({
+      changedFiles: execution.changedFiles,
+      sawSuccessfulGitCommit: execution.sawSuccessfulGitCommit,
+      sawWorkspaceMutationSignal: execution.sawWorkspaceMutationSignal,
+    })
 
-    if (changedFiles.size > 0) {
-      try {
-        const staleHints = await detectPotentialStaleGuidance(this.options.cwd, [...changedFiles])
-        if (staleHints.length > 0) {
-          const preview = staleHints.map((hint) => hint.guidanceFile).join(', ')
-          this.options.sink?.onMapUpdated(`guidance may be stale after code changes: ${preview}`)
-        }
-      } catch (error) {
-        process.stderr.write(`Guidance staleness warning: ${String(error)}\n`)
-      }
-    }
-
-    if (this.options.contextService.getGeneratedMapMode() && (sawSuccessfulGitCommit || workingTreeSnapshotChanged)) {
-      try {
-        const refreshed = await ensureGeneratedAgentsMaps(this.options.cwd, {
-          force: workingTreeSnapshotChanged && !sawSuccessfulGitCommit,
-        })
-        if (refreshed.created) {
-          this.options.sink?.onMapUpdated(
-            `generated project map refreshed (${refreshed.generatedFiles.length} scope${refreshed.generatedFiles.length === 1 ? '' : 's'})`
-          )
-        } else if (sawSuccessfulGitCommit) {
-          this.options.sink?.onMapUpdated('generated project map checked (up to date)')
-        }
-      } catch (error) {
-        process.stderr.write(`Generated map refresh warning: ${String(error)}\n`)
-      }
-    }
-
-    this.history = result.state.items ?? messagesToItems(result.state.messages)
-    syncCompactStateFromLoopState(this.runtimeState.compact, result.state)
-    recordFinalSummary(this.runtimeState.compact, result.finalText)
-    return result
+    this.history = [...execution.result.state.items]
+    syncCompactStateFromLoopState(this.runtimeState.compact, execution.result.state)
+    recordFinalSummary(this.runtimeState.compact, execution.result.finalText)
+    return execution.result
   }
 }

@@ -12,7 +12,7 @@ import {
   loadSessionTranscript,
   redactSecrets
 } from '../src/runtime/session.ts'
-import { createAssistantItem, createExternalUserItem, createSystemItem } from '../src/runtime/items.ts'
+import { createAssistantItem, createExternalUserItem, createSystemItem, itemsToMessages } from '../src/runtime/items.ts'
 
 async function makeTempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'merlion-session-'))
@@ -86,8 +86,9 @@ test('loads item transcript from existing transcript', async () => {
 
   const loaded = await loadSessionTranscript(session.transcriptPath)
   assert.equal(loaded.items.length, 3)
-  assert.equal(loaded.messages[0]?.role, 'system')
-  assert.equal(loaded.messages[2]?.content, 'a')
+  const messages = itemsToMessages(loaded.items)
+  assert.equal(messages[0]?.role, 'system')
+  assert.equal(messages[2]?.content, 'a')
 })
 
 test('ignores malformed transcript lines and invalid message role on load', async () => {
@@ -107,9 +108,10 @@ test('ignores malformed transcript lines and invalid message role on load', asyn
   )
 
   const loaded = await loadSessionTranscript(session.transcriptPath)
-  assert.equal(loaded.messages.length, 1)
-  assert.equal(loaded.messages[0]?.role, 'user')
-  assert.equal(loaded.messages[0]?.content, 'good')
+  const messages = itemsToMessages(loaded.items)
+  assert.equal(messages.length, 1)
+  assert.equal(messages[0]?.role, 'user')
+  assert.equal(messages[0]?.content, 'good')
 })
 
 test('throws when session transcript not found', async () => {

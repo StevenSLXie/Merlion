@@ -15,9 +15,9 @@ import { OpenAICompatProvider } from '../../providers/openai.ts'
 import { buildDefaultRegistry } from '../../tools/builtin/index.ts'
 import { createPermissionStore } from '../../permissions/store.ts'
 import type { RunLoopResult } from '../../runtime/loop.ts'
-import type { ChatMessage } from '../../types.ts'
 import { createContextService } from '../../context/service.ts'
 import type { RuntimeSink } from '../../runtime/events.ts'
+import type { ConversationItem } from '../../runtime/items.ts'
 import { QueryEngine } from '../../runtime/query_engine.ts'
 
 const MAX_CONSECUTIVE_FAILURES = 3
@@ -107,25 +107,24 @@ function extractText(msg: WeixinMessage): string | null {
   return null
 }
 
-function trimHistory(history: ChatMessage[]): ChatMessage[] {
+function trimHistory(history: ConversationItem[]): ConversationItem[] {
   if (history.length <= MAX_HISTORY_MESSAGES) return history
-  // Always keep the leading system message(s)
-  const firstNonSystem = history.findIndex((m) => m.role !== 'system')
+  const firstNonSystem = history.findIndex((item) => item.kind !== 'message' || item.role !== 'system')
   const systemBoundary = firstNonSystem < 0 ? history.length : firstNonSystem
-  const systemMessages = history.slice(0, systemBoundary)
-  if (systemMessages.length >= MAX_HISTORY_MESSAGES) {
-    return systemMessages.slice(-MAX_HISTORY_MESSAGES)
+  const systemItems = history.slice(0, systemBoundary)
+  if (systemItems.length >= MAX_HISTORY_MESSAGES) {
+    return systemItems.slice(-MAX_HISTORY_MESSAGES)
   }
   const rest = history.slice(systemBoundary)
-  const keep = rest.slice(-Math.max(MAX_HISTORY_MESSAGES - systemMessages.length, 20))
-  return [...systemMessages, ...keep]
+  const keep = rest.slice(-Math.max(MAX_HISTORY_MESSAGES - systemItems.length, 20))
+  return [...systemItems, ...keep]
 }
 
-function findLastAssistantText(messages: ChatMessage[]): string | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]
-    if (msg?.role !== 'assistant') continue
-    const text = msg.content?.trim()
+function findLastAssistantText(items: ConversationItem[]): string | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]
+    if (item?.kind !== 'message' || item.role !== 'assistant') continue
+    const text = item.content.trim()
     if (text) return text
   }
   return null
@@ -135,7 +134,7 @@ export function renderWeixinReply(result: RunLoopResult): string {
   const direct = result.finalText?.trim()
   if (direct) return direct
 
-  const fallbackAssistant = findLastAssistantText(result.state.messages)
+  const fallbackAssistant = findLastAssistantText(result.state.items)
   if (fallbackAssistant) return fallbackAssistant
 
   if (result.terminal === 'max_turns_exceeded') {
@@ -197,10 +196,10 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
   })
 
   // ── Per-sender state ──────────────────────────────────────────────────────
-  const histories = new Map<string, ChatMessage[]>()
+  const histories = new Map<string, ConversationItem[]>()
   const seenIds = new Set<number>()
 
-  function getHistory(senderId: string): ChatMessage[] {
+  function getHistory(senderId: string): ConversationItem[] {
     if (!histories.has(senderId)) {
       histories.set(senderId, [])
     }
@@ -308,7 +307,7 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
         permissions,
         contextService,
         model: opts.model,
-        initialMessages: [],
+        initialItems: [],
         sink,
         maxTurns,
       })
@@ -318,8 +317,7 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
       }
       const result = await engine.submitPrompt(text)
 
-      // Persist updated history (result.state.messages includes the new turn)
-      histories.set(senderId, trimHistory(result.state.messages))
+      histories.set(senderId, trimHistory(result.state.items))
 
       const reply = toPlainText(renderWeixinReply(result))
       const chunks = splitForWeixin(reply)

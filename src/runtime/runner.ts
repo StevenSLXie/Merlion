@@ -287,7 +287,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     return taskResult.loopResult ?? {
       terminal: taskResult.terminal as 'completed' | 'max_turns_exceeded' | 'model_error',
       finalText: taskResult.output,
-      state: { items: engine.getItems(), messages: engine.getMessages(), turnCount: 0, maxOutputTokensRecoveryCount: 0, hasAttemptedReactiveCompact: false, nudgeCount: 0 },
+      state: { items: engine.getItems(), turnCount: 0, maxOutputTokensRecoveryCount: 0, hasAttemptedReactiveCompact: false, nudgeCount: 0 },
     }
   }
 

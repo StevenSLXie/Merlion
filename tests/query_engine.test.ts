@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../src/types.ts'
 import type { ConversationItem } from '../src/runtime/items.ts'
+import { createSystemItem } from '../src/runtime/items.ts'
 import { ToolRegistry } from '../src/tools/registry.ts'
 import type { ToolDefinition } from '../src/tools/types.ts'
 import { QueryEngine } from '../src/runtime/query_engine.ts'
@@ -81,8 +82,8 @@ test('QueryEngine initializes bootstrap context and tracks permission denials', 
         return {
           startupMapSummary: 'generated project map up to date (1 scope)',
           generatedMapMode: false,
-          initialMessages: [
-            { role: 'system', content: 'bootstrap orientation' },
+          initialItems: [
+            createSystemItem('bootstrap orientation', 'runtime'),
           ],
         }
       },
@@ -92,8 +93,8 @@ test('QueryEngine initializes bootstrap context and tracks permission denials', 
       async buildPromptPrelude() {
         return []
       },
-      async buildPathGuidanceMessages() {
-        return { messages: [], loadedFiles: [] }
+      async buildPathGuidanceItems() {
+        return { items: [], loadedFiles: [] }
       },
       async extractCandidatePathsFromText() {
         return []
