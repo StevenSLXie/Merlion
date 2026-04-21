@@ -4,9 +4,9 @@
 
 **A lightweight CLI coding agent built as a reference implementation.**
 
-Merlion is a working coding agent you can run from the terminal or from WeChat. The reason this repo exists, though, is not to compete head-on with the most polished production agents. It exists to make the architecture of a coding agent explicit: how context is assembled, how tool calls are executed, how sessions persist, and how verification closes the loop.
+Merlion is a working coding agent you can run from the terminal or from WeChat. It is built as a reference implementation: small enough to read, but complete enough to show the real shape of a coding agent. Context assembly, tool execution, session persistence, and verification are all here in code you can actually follow.
 
-Compared with mature projects such as Claude Code, Codex CLI, or Aider, Merlion is deliberately narrower. It is a smaller local runtime, with a simpler dependency surface and fewer product layers. That makes it less complete as a product, but easier to read, modify, and use as a base for your own agent work.
+Compared with broader tools such as Claude Code and Codex CLI, Merlion keeps the product layer intentionally thin so the runtime stays legible. The point is twofold: the core path is compact without being partial, and if coding agents are going to matter, we need a lightweight system that helps us understand what one actually is.
 
 ## What This Repo Contains
 
@@ -18,12 +18,13 @@ Compared with mature projects such as Claude Code, Codex CLI, or Aider, Merlion 
 
 ## Why It Stays Lightweight
 
+- The core path stays short, but the essential pieces are still there: loop, tools, context, sessions, guardrails, verification
 - The codebase is small enough to read end-to-end without reverse-engineering a large product surface
 - It runs as a local Node.js runtime rather than depending on a hosted control plane
 - The tool layer is practical, but still narrow enough to understand without days of setup
 - The architecture is opinionated on purpose: fewer abstractions, fewer hidden systems, less ceremony
 
-Lightweight here does not mean toy. It means the runtime is kept narrow enough that design decisions are still visible.
+Lightweight here does not mean incomplete. It means the runtime is kept narrow enough that the design decisions are still visible.
 
 ## Quick Start
 
@@ -99,10 +100,10 @@ Interactive terminal approvals are not available in WeChat mode. The default fal
 
 ## What Merlion Is Not
 
-- Not a claim to be better than Claude Code, Codex CLI, or other production agents
-- Not trying to match the full product surface of mature agent tools
-- Not a stable SDK or platform layer
-- Not optimized for non-technical onboarding
+- Not a product-comparison project; it is a runtime to read, run, and extend
+- Not trying to reproduce every workflow and integration from broader agent tools
+- Not a stable SDK or platform layer yet
+- Not optimized for non-technical onboarding first
 - Not interested in hiding architectural tradeoffs behind a black box
 
-Merlion is a small, opinionated runtime meant to stay understandable.
+Merlion is a small, opinionated runtime meant to stay understandable while still covering the essential shape of a real coding agent.
