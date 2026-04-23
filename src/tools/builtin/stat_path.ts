@@ -2,7 +2,7 @@ import { stat } from 'node:fs/promises'
 import { relative, resolve } from 'node:path'
 
 import type { ToolDefinition } from '../types.js'
-import { validateAndResolveWorkspacePath } from './fs_common.ts'
+import { enforceReadPolicy, resolveReadTargetPath } from './fs_common.ts'
 
 export const statPathTool: ToolDefinition = {
   name: 'stat_path',
@@ -16,8 +16,10 @@ export const statPathTool: ToolDefinition = {
   },
   concurrencySafe: true,
   async execute(input, ctx) {
-    const validated = validateAndResolveWorkspacePath(ctx.cwd, input.path)
+    const validated = await resolveReadTargetPath(ctx.cwd, input.path)
     if (!validated.ok) return { content: validated.error, isError: true }
+    const readPolicy = enforceReadPolicy(ctx, validated.path)
+    if (!readPolicy.ok) return { content: readPolicy.error, isError: true }
     let st
     try {
       st = await stat(validated.path)

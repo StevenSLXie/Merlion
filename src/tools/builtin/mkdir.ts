@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises'
 
 import type { ToolDefinition } from '../types.js'
-import { validateAndResolveWorkspacePath } from './fs_common.ts'
+import { authorizeMutation, resolveMutationTargetPath } from './fs_common.ts'
 
 export const mkdirTool: ToolDefinition = {
   name: 'mkdir',
@@ -15,13 +15,10 @@ export const mkdirTool: ToolDefinition = {
   },
   concurrencySafe: false,
   async execute(input, ctx) {
-    const validated = validateAndResolveWorkspacePath(ctx.cwd, input.path)
+    const validated = await resolveMutationTargetPath(ctx.cwd, input.path)
     if (!validated.ok) return { content: validated.error, isError: true }
-
-    const decision = await ctx.permissions?.ask('mkdir', `Create directory: ${input.path}`)
-    if (decision === 'deny' || decision === undefined) {
-      return { content: '[Permission denied]', isError: true }
-    }
+    const authorization = await authorizeMutation(ctx, 'mkdir', validated.path, `Create directory: ${input.path}`)
+    if (!authorization.ok) return { content: authorization.error, isError: true }
 
     await mkdir(validated.path, { recursive: true })
     return { content: `Created directory ${validated.path}`, isError: false }

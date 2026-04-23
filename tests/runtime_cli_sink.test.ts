@@ -53,6 +53,38 @@ test('CliRuntimeSink forwards runtime events to the driver', () => {
   })
   sink.onPhaseUpdate('phase')
   sink.onMapUpdated('map')
+  sink.onSandboxEvent({
+    type: 'sandbox.warning',
+    backend: 'no-sandbox',
+    sandboxMode: 'danger-full-access',
+    approvalPolicy: 'never',
+    toolName: 'bash',
+    summary: 'ctx.sandbox missing; running unsandboxed: printf test',
+  })
+  sink.onSandboxEvent({
+    type: 'sandbox.violation',
+    backend: 'macos-sandbox-exec',
+    sandboxMode: 'read-only',
+    approvalPolicy: 'on-failure',
+    toolName: 'bash',
+    violationKind: 'fs-write',
+  })
+  sink.onSandboxEvent({
+    type: 'sandbox.escalation.requested',
+    backend: 'macos-sandbox-exec',
+    sandboxMode: 'read-only',
+    approvalPolicy: 'on-failure',
+    toolName: 'bash',
+    violationKind: 'fs-write',
+  })
+  sink.onSandboxEvent({
+    type: 'sandbox.escalation.denied',
+    backend: 'macos-sandbox-exec',
+    sandboxMode: 'read-only',
+    approvalPolicy: 'on-failure',
+    toolName: 'bash',
+    violationKind: 'fs-write',
+  })
   sink.setToolDetailMode('compact')
 
   assert.deepEqual(log, [
@@ -69,6 +101,10 @@ test('CliRuntimeSink forwards runtime events to the driver', () => {
     'onUsage:10:0.12:openai',
     'onPhaseUpdate:phase',
     'onMapUpdated:map',
+    'onPhaseUpdate:[sandbox] warning: ctx.sandbox missing; running unsandboxed: printf test',
+    'onPhaseUpdate:[sandbox] bash blocked by fs-write on macos-sandbox-exec',
+    'onPhaseUpdate:[sandbox] requesting broader access for bash (fs-write)',
+    'onPhaseUpdate:[sandbox] broader access denied for bash (fs-write)',
     'setToolDetailMode:compact',
   ])
 })

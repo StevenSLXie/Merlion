@@ -1,6 +1,7 @@
-import type { PermissionDecision, PermissionStore } from '../tools/types.js'
+import type { PermissionDecision, PermissionRequest, PermissionStore } from '../tools/types.js'
 import { createInterface } from 'node:readline/promises'
 import { stdin, stdout } from 'node:process'
+import type { ApprovalPolicy } from '../sandbox/policy.ts'
 
 export interface PermissionPromptIo {
   write: (text: string) => void
@@ -23,32 +24,42 @@ function createDefaultPromptIo(): PermissionPromptIo {
   }
 }
 
+function permissionScope(tool: string, request?: PermissionRequest): string {
+  const scope = request?.sessionScope?.trim()
+  return scope && scope !== '' ? scope : tool
+}
+
 export function createPermissionStore(
-  mode: 'interactive' | 'auto_allow' | 'auto_deny',
+  mode: 'interactive' | 'auto_allow' | 'auto_deny' | ApprovalPolicy,
   io: PermissionPromptIo = createDefaultPromptIo()
 ): PermissionStore {
-  if (mode === 'auto_allow') {
+  if (mode === 'auto_allow' || mode === 'never') {
     return { ask: async () => 'allow_session' }
   }
-  if (mode === 'auto_deny') {
+  if (mode === 'auto_deny' || mode === 'untrusted') {
     return { ask: async () => 'deny' }
   }
 
-  const sessionAllowByTool = new Set<string>()
+  const sessionAllowScopes = new Set<string>()
 
   return {
-    async ask(tool: string, description: string): Promise<PermissionDecision> {
-      if (sessionAllowByTool.has(tool)) return 'allow_session'
+    async ask(tool: string, description: string, request?: PermissionRequest): Promise<PermissionDecision> {
+      const scope = permissionScope(tool, request)
+      if (sessionAllowScopes.has(scope)) return 'allow_session'
 
       io.write(`Permission required for ${tool}: ${description}\n`)
       io.write('1) yes\n')
       io.write('2) no\n')
-      io.write('3) yes and do not ask again for this tool in this session\n')
+      io.write(
+        scope === tool
+          ? '3) yes and do not ask again for this tool in this session\n'
+          : '3) yes and do not ask again for this permission type in this session\n'
+      )
       io.write('Choose [y/n/a] (default: n): ')
 
       const answer = (await io.readLine()).trim().toLowerCase()
       if (answer === 'a' || answer === 'always' || answer === '3') {
-        sessionAllowByTool.add(tool)
+        sessionAllowScopes.add(scope)
         return 'allow_session'
       }
       if (answer === 'y' || answer === 'yes' || answer === '1') {

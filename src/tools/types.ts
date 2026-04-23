@@ -1,4 +1,8 @@
 import type { SubagentToolRuntime } from '../runtime/subagent_types.ts'
+import type { RuntimeSandboxEvent } from '../runtime/events.ts'
+import type { SandboxViolation } from '../sandbox/backend.ts'
+import type { SandboxBackend } from '../sandbox/backend.ts'
+import type { ResolvedSandboxPolicy } from '../sandbox/policy.ts'
 
 export interface EditDiffLine {
   type: 'context' | 'add' | 'remove'
@@ -46,8 +50,14 @@ export interface ToolResult {
 
 export type PermissionDecision = 'allow' | 'deny' | 'allow_session'
 
+export interface PermissionRequest {
+  phase?: 'preflight' | 'escalation'
+  violationKind?: SandboxViolation['kind']
+  sessionScope?: string
+}
+
 export interface PermissionStore {
-  ask: (tool: string, description: string) => Promise<PermissionDecision>
+  ask: (tool: string, description: string, request?: PermissionRequest) => Promise<PermissionDecision>
 }
 
 export interface ToolSummary {
@@ -69,6 +79,11 @@ export interface ToolContext {
   cwd: string
   sessionId?: string
   permissions?: PermissionStore
+  sandbox?: {
+    policy: ResolvedSandboxPolicy
+    backend: SandboxBackend
+  }
+  onSandboxEvent?: (event: RuntimeSandboxEvent) => void
   listTools?: () => ToolSummary[]
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
   subagents?: SubagentToolRuntime

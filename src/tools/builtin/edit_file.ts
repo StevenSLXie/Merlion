@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 
 import type { EditDiffHunk, ToolDefinition } from '../types.js'
-import { validateAndResolveWorkspacePath } from './fs_common.ts'
+import { authorizeMutation, resolveMutationTargetPath } from './fs_common.ts'
 
 function countOccurrences(text: string, needle: string): number {
   if (needle.length === 0) return 0
@@ -82,16 +82,13 @@ export const editFileTool: ToolDefinition = {
     const newString = input.new_string
     const replaceAll = input.replace_all === true
 
-    const validated = validateAndResolveWorkspacePath(ctx.cwd, pathInput)
+    const validated = await resolveMutationTargetPath(ctx.cwd, pathInput)
     if (!validated.ok) return { content: validated.error, isError: true }
     if (typeof oldString !== 'string' || typeof newString !== 'string') {
       return { content: 'Invalid edit payload: old_string/new_string must be strings.', isError: true }
     }
-
-    const decision = await ctx.permissions?.ask('edit_file', `Edit: ${pathInput}`)
-    if (decision === 'deny' || decision === undefined) {
-      return { content: '[Permission denied]', isError: true }
-    }
+    const authorization = await authorizeMutation(ctx, 'edit_file', validated.path, `Edit: ${pathInput}`)
+    if (!authorization.ok) return { content: authorization.error, isError: true }
 
     let content: string
     try {

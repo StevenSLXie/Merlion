@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
@@ -186,6 +186,28 @@ test('todo_write appends markdown checklist item', async () => {
   assert.match(text, /\- \[ \] do thing/)
 })
 
+test('todo_write rejects symlinked output paths', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('symlink test is not reliable on Windows CI')
+    return
+  }
+
+  const cwd = await makeTempDir()
+  const outsideDir = await makeTempDir()
+  const outsideFile = join(outsideDir, 'todo.md')
+  await writeFile(outsideFile, 'outside\n', 'utf8')
+  await symlink(outsideFile, join(cwd, 'todo.md'))
+
+  const result = await todoWriteTool.execute(
+    { item: 'do thing', path: 'todo.md' },
+    { cwd, permissions: permission('allow') }
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /symlink/i)
+  assert.equal(await readFile(outsideFile, 'utf8'), 'outside\n')
+})
+
 test('sleep waits with bounded duration', async () => {
   const start = Date.now()
   const result = await sleepTool.execute({ duration_ms: 20 }, { cwd: process.cwd() })
@@ -224,6 +246,24 @@ test('config_set/config_get roundtrip in temp XDG dir', async () => {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME
     else process.env.XDG_CONFIG_HOME = previous
   }
+})
+
+test('config tools reject apiKey and baseURL mutation', async () => {
+  const cwd = await makeTempDir()
+
+  const configSetApiKey = await configSetTool.execute(
+    { key: 'apiKey', value: 'secret' },
+    { cwd, permissions: permission('allow') },
+  )
+  assert.equal(configSetApiKey.isError, true)
+  assert.match(configSetApiKey.content, /provider, model/i)
+
+  const configBaseUrl = await configTool.execute(
+    { setting: 'baseURL', value: 'https://evil.invalid' },
+    { cwd, permissions: permission('allow') },
+  )
+  assert.equal(configBaseUrl.isError, true)
+  assert.match(configBaseUrl.content, /provider, model/i)
 })
 
 test('config tool supports get, set and reset', async () => {

@@ -13,6 +13,7 @@ Merlion 要解决的是两件事。第一，它虽然精简，但核心链路并
 - 一个完整的主循环，planning、tool execution、retry、guardrails、verification 都在里面
 - 一套面向代码仓库的 context 系统：orientation、compact summary、path guidance，以及分层的 `AGENTS.md` 和 `MERLION.md`
 - 一组够用的 builtin tools：文件、搜索、shell、git、config，还有基于 LSP 的编辑
+- 一整套真实 sandbox 机制：子进程走 OS 级 sandbox backend，文件 / fetch / approval 走应用层 policy enforcement
 - 两个入口：终端 REPL 是主入口，微信是额外接上的 transport
 - 一些 bench 和回归测试，用来检查这个 runtime 现在还能不能正常工作
 
@@ -53,7 +54,74 @@ merlion
 
 # 接上次没聊完的
 merlion --resume <session-id>
+
+# 回滚到某个 session 启动前的 git checkpoint
+merlion undo <session-id>
 ```
+
+CLI 默认是：
+
+- `--sandbox workspace-write`
+- `--approval on-failure`
+- `--network off`
+
+也就是：
+
+- 默认允许改当前工作区
+- 默认不允许外网访问
+- 只有当命令因为 sandbox / policy 被挡住时，才请求放宽边界
+
+常见覆盖方式：
+
+```bash
+# 严格只读
+merlion --sandbox read-only --approval never
+
+# 允许联网
+merlion --network full
+
+# 本地完全放开
+merlion --sandbox danger-full-access --approval never
+```
+
+老参数还兼容：
+
+- `--auto-allow` 等价于 `--approval never`
+- `--auto-deny` 等价于 `--approval untrusted`
+
+`bash` 和 `run_script` 这类会起子进程的工具，会真正跑进 sandbox backend。`read_file`、`write_file`、`edit_file`、`create_file` 这些文件工具虽然不是走 shell，但会在应用层执行同一套 policy，所以 `read-only`、`deny-read`、`deny-write` 仍然有效。`fetch` 也受 `--network` 约束。
+
+## Sandbox 与审批
+
+sandbox 是 Merlion 的核心 feature，不是后来补上的安全装饰。
+
+Merlion 把两件事拆开：
+
+- `sandbox`：执行边界
+- `approval`：什么时候允许放宽边界
+
+主要 sandbox mode：
+
+- `read-only`：不允许文件修改
+- `workspace-write`：只能改工作区或显式允许的可写目录
+- `danger-full-access`：不做文件系统沙箱
+
+approval policy：
+
+- `untrusted`：拒绝升级
+- `on-failure`：只有在 sandbox / policy 失败后才请求升级
+- `on-request`：允许交互式升级
+- `never`：不询问，始终停留在当前边界内
+
+这套模型会贯穿整个 runtime：
+
+- `bash` / `run_script` 走 sandbox backend
+- 文件工具走同一套应用层 policy
+- `fetch` 受 network policy 约束
+- subagent 继承 parent 的 sandbox，但只能收窄，不能放宽
+- WeChat 不支持运行中交互提权
+
+另外，Merlion 会在可写 session 启动时创建 git checkpoint，并提供 `merlion undo <session-id>` 和 `/undo` 作为回滚路径。
 
 ## 从哪里开始读
 
@@ -91,7 +159,15 @@ merlion wechat
 
 默认只回最终结果和简短错误，不会推内部工具日志。想看进度，可以设 `MERLION_WECHAT_PROGRESS=1`；想看更细一点的进度，可以设 `MERLION_WECHAT_PROGRESS_VERBOSE=1`。
 
-微信里没法做交互式审批，所以默认走 `--auto-allow`。如果你不想放开高风险工具，可以改成 `--auto-deny`。
+微信里没法做交互式审批，所以 WeChat session 固定走 `approval=never`。默认 sandbox 是 `workspace-write`，也就是默认允许改当前工作区，但不能在运行中临时提权。如果你想换边界，可以在启动时显式指定：
+
+```bash
+# 更保守
+merlion wechat --sandbox read-only
+
+# 完全放开
+merlion wechat --sandbox danger-full-access
+```
 
 ## 它不是什么
 

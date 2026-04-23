@@ -4,12 +4,16 @@ import path from 'node:path'
 import ts from 'typescript'
 
 import type { ToolDefinition } from '../types.js'
+import { enforceReadPolicy } from './fs_common.ts'
+import type { ResolvedSandboxPolicy } from '../../sandbox/policy.ts'
+import { isPathReadDenied } from '../../sandbox/policy.ts'
 
 const SUPPORTED_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs'])
 const SKIP_DIRS = new Set(['.git', '.merlion', 'node_modules', 'dist', 'build', 'coverage', 'bench'])
 const MAX_INFERRED_FILES = 2000
 
 interface CachedProject {
+  cacheKey: string
   cwd: string
   rootFiles: string[]
   options: ts.CompilerOptions
@@ -50,7 +54,20 @@ async function collectSourceFiles(root: string): Promise<string[]> {
   return out.sort()
 }
 
-async function loadProjectFiles(cwd: string): Promise<{ rootFiles: string[]; options: ts.CompilerOptions }> {
+function readPolicyCacheKey(cwd: string, policy: ResolvedSandboxPolicy | undefined): string {
+  const denyRead = policy?.denyRead ?? []
+  return JSON.stringify([normalizePath(cwd), denyRead])
+}
+
+function canReadPath(policy: ResolvedSandboxPolicy | undefined, filePath: string): boolean {
+  if (!policy) return true
+  return !isPathReadDenied(policy, filePath)
+}
+
+async function loadProjectFiles(
+  cwd: string,
+  policy: ResolvedSandboxPolicy | undefined,
+): Promise<{ rootFiles: string[]; options: ts.CompilerOptions }> {
   const configPath = ts.findConfigFile(cwd, ts.sys.fileExists, 'tsconfig.json')
     ?? ts.findConfigFile(cwd, ts.sys.fileExists, 'jsconfig.json')
 
@@ -60,12 +77,13 @@ async function loadProjectFiles(cwd: string): Promise<{ rootFiles: string[]; opt
     const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, path.dirname(configPath))
     const rootFiles = parsed.fileNames
       .filter(isSupportedFile)
+      .filter((file) => canReadPath(policy, file))
       .map((file) => normalizePath(file))
       .sort()
     return { rootFiles, options: parsed.options }
   }
 
-  const rootFiles = await collectSourceFiles(cwd)
+  const rootFiles = (await collectSourceFiles(cwd)).filter((file) => canReadPath(policy, file))
   return {
     rootFiles,
     options: {
@@ -87,14 +105,18 @@ async function getFileMtimeMs(filePath: string): Promise<number> {
   }
 }
 
-async function getOrCreateProject(cwd: string): Promise<CachedProject> {
+async function getOrCreateProject(
+  cwd: string,
+  policy: ResolvedSandboxPolicy | undefined,
+): Promise<CachedProject> {
   const resolvedCwd = normalizePath(cwd)
-  const loaded = await loadProjectFiles(resolvedCwd)
+  const cacheKey = readPolicyCacheKey(resolvedCwd, policy)
+  const loaded = await loadProjectFiles(resolvedCwd, policy)
   if (loaded.rootFiles.length === 0) {
     throw new Error('No supported JS/TS source files found for LSP operations.')
   }
 
-  const existing = PROJECT_CACHE.get(resolvedCwd)
+  const existing = PROJECT_CACHE.get(cacheKey)
   const desiredKey = JSON.stringify(loaded.rootFiles)
   const existingKey = existing ? JSON.stringify(existing.rootFiles) : null
   if (existing && existingKey === desiredKey) {
@@ -118,6 +140,7 @@ async function getOrCreateProject(cwd: string): Promise<CachedProject> {
   }
 
   const project: CachedProject = {
+    cacheKey,
     cwd: resolvedCwd,
     rootFiles: loaded.rootFiles,
     options: loaded.options,
@@ -135,6 +158,7 @@ async function getOrCreateProject(cwd: string): Promise<CachedProject> {
     getScriptFileNames: () => project.rootFiles,
     getScriptVersion: (fileName) => project.fileVersions.get(normalizePath(fileName)) ?? '0',
     getScriptSnapshot: (fileName) => {
+      if (!canReadPath(policy, fileName)) return undefined
       try {
         const text = ts.sys.readFile(fileName)
         return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text)
@@ -142,15 +166,17 @@ async function getOrCreateProject(cwd: string): Promise<CachedProject> {
         return undefined
       }
     },
-    fileExists: ts.sys.fileExists,
-    readFile: ts.sys.readFile,
-    readDirectory: ts.sys.readDirectory,
-    directoryExists: ts.sys.directoryExists,
+    fileExists: (fileName) => canReadPath(policy, fileName) && ts.sys.fileExists(fileName),
+    readFile: (fileName, encoding) => canReadPath(policy, fileName) ? ts.sys.readFile(fileName, encoding) : undefined,
+    readDirectory: (rootDir, extensions, excludes, includes, depth) =>
+      ts.sys.readDirectory(rootDir, extensions, excludes, includes, depth).filter((fileName) => canReadPath(policy, fileName)),
+    directoryExists: (dirName) =>
+      canReadPath(policy, dirName) && ts.sys.directoryExists(dirName),
     getDirectories: ts.sys.getDirectories,
   }
 
   project.languageService = ts.createLanguageService(host, ts.createDocumentRegistry())
-  PROJECT_CACHE.set(resolvedCwd, project)
+  PROJECT_CACHE.set(cacheKey, project)
   return project
 }
 
@@ -241,7 +267,7 @@ export const lspTool: ToolDefinition = {
       return { content: 'Invalid action: expected string.', isError: true }
     }
     try {
-      const project = await getOrCreateProject(ctx.cwd)
+      const project = await getOrCreateProject(ctx.cwd, ctx.sandbox?.policy)
       const service = project.languageService
       const workspacePath = typeof input.path === 'string' && input.path.trim() !== ''
         ? normalizePath(path.resolve(ctx.cwd, input.path))
@@ -249,6 +275,10 @@ export const lspTool: ToolDefinition = {
 
       if (workspacePath && !isSupportedFile(workspacePath)) {
         return { content: `Unsupported file for lsp: ${input.path}`, isError: true }
+      }
+      if (workspacePath) {
+        const readPolicy = enforceReadPolicy(ctx, workspacePath)
+        if (!readPolicy.ok) return { content: readPolicy.error, isError: true }
       }
 
       if (action === 'workspace_symbols') {

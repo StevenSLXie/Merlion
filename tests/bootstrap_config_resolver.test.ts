@@ -57,6 +57,9 @@ test('resolveCliConfig merges env overrides above file config', async () => {
     assert.equal(result.config.model, 'env/model')
     assert.equal(result.config.baseURL, 'https://env.example/v1')
     assert.equal(result.config.apiKey, 'sk-file')
+    assert.equal(result.config.sandboxMode, 'workspace-write')
+    assert.equal(result.config.approvalPolicy, 'on-failure')
+    assert.equal(result.config.networkMode, 'off')
   } finally {
     restoreEnv(saved)
   }
@@ -130,6 +133,54 @@ test('resolveCliConfig propagates wizard abort as exit code 1', async () => {
     assert.equal(result.ok, false)
     if (result.ok) return
     assert.equal(result.exitCode, 1)
+  } finally {
+    restoreEnv(saved)
+  }
+})
+
+test('resolveCliConfig merges sandbox env and flag overrides', async () => {
+  const saved = saveEnv([
+    'MERLION_SANDBOX_MODE',
+    'MERLION_APPROVAL_POLICY',
+    'MERLION_NETWORK_MODE',
+  ])
+  process.env.MERLION_SANDBOX_MODE = 'read-only'
+  process.env.MERLION_APPROVAL_POLICY = 'never'
+  process.env.MERLION_NETWORK_MODE = 'full'
+
+  try {
+    const result = await resolveCliConfig(
+      {
+        modelFlag: undefined,
+        baseURLFlag: undefined,
+        sandboxMode: 'workspace-write',
+        approvalPolicy: 'on-request',
+        networkMode: 'off',
+        writableRoots: ['tmp'],
+        denyRead: ['.env'],
+        denyWrite: ['.merlion'],
+        configMode: false,
+        task: 'inspect',
+        repl: false,
+      },
+      {
+        readConfigFn: async () => ({
+          provider: 'openrouter',
+          apiKey: 'sk-file',
+          model: 'file/model',
+          baseURL: 'https://file.example/v1',
+        }),
+      }
+    )
+
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.config.sandboxMode, 'workspace-write')
+    assert.equal(result.config.approvalPolicy, 'on-request')
+    assert.equal(result.config.networkMode, 'off')
+    assert.deepEqual(result.config.writableRoots, ['tmp'])
+    assert.deepEqual(result.config.denyRead, ['.env'])
+    assert.deepEqual(result.config.denyWrite, ['.merlion'])
   } finally {
     restoreEnv(saved)
   }

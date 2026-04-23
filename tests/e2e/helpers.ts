@@ -12,9 +12,14 @@ import { fileURLToPath } from 'node:url'
 import { evaluateCostGate, parseCostGateMode, readCostBaseline } from '../../src/runtime/cost_gate.ts'
 import { OpenAICompatProvider } from '../../src/providers/openai.ts'
 import { buildDefaultRegistry } from '../../src/tools/builtin/index.ts'
+import type { RuntimeSandboxEvent } from '../../src/runtime/events.ts'
 import { runLoop } from '../../src/runtime/loop.ts'
 import type { RunLoopResult } from '../../src/runtime/loop.ts'
 import { createUsageTracker } from '../../src/runtime/usage.ts'
+import type { MerlionSandboxConfig } from '../../src/sandbox/policy.ts'
+import { resolveSandboxPolicy } from '../../src/sandbox/policy.ts'
+import { deriveSandboxProtectedPaths } from '../../src/sandbox/protected_paths.ts'
+import { resolveSandboxBackend } from '../../src/sandbox/resolve.ts'
 
 export const FIXTURES_DIR = join(fileURLToPath(import.meta.url), '../fixtures')
 
@@ -133,6 +138,18 @@ export async function runAgent(
   cwd: string,
   options?: { scenario?: string },
 ): Promise<RunLoopResult> {
+  const { result } = await runSandboxedAgent(task, cwd, options)
+  return result
+}
+
+export async function runSandboxedAgent(
+  task: string,
+  cwd: string,
+  options?: {
+    scenario?: string
+    sandbox?: MerlionSandboxConfig
+  },
+): Promise<{ result: RunLoopResult; sandboxEvents: RuntimeSandboxEvent[] }> {
   const provider = new OpenAICompatProvider({
     apiKey: API_KEY,
     baseURL: E2E_BASE_URL,
@@ -141,6 +158,20 @@ export async function runAgent(
   const registry = buildDefaultRegistry({ mode: 'default' })
   const usageTracker = createUsageTracker()
   const usageSamples: Array<{ prompt_tokens: number; completion_tokens: number; cached_tokens: number | null }> = []
+  const sandboxEvents: RuntimeSandboxEvent[] = []
+  const protectedPaths = await deriveSandboxProtectedPaths(cwd)
+  const sandboxPolicy = resolveSandboxPolicy({
+    cwd,
+    sandboxMode: 'workspace-write',
+    approvalPolicy: 'on-failure',
+    networkMode: 'off',
+    ...options?.sandbox,
+    fixedDenyRead: protectedPaths.denyRead,
+    fixedDenyWrite: protectedPaths.denyWrite,
+  })
+  const sandboxBackend = sandboxPolicy
+    ? await resolveSandboxBackend(sandboxPolicy)
+    : undefined
 
   const result = await runLoop({
     provider,
@@ -150,10 +181,15 @@ export async function runAgent(
     cwd,
     maxTurns: 30,
     permissions: { ask: async () => 'allow_session' },
+    sandboxPolicy,
+    sandboxBackend,
     askQuestions: async (questions) =>
       Object.fromEntries(
         questions.map((question) => [question.id, question.options[0]?.label ?? ''])
       ),
+    onSandboxEvent: (event) => {
+      sandboxEvents.push(event)
+    },
     onUsage: (usage) => {
       usageTracker.record(usage)
       usageSamples.push({
@@ -176,5 +212,5 @@ export async function runAgent(
   })
   await enforceCostGate(options?.scenario ?? 'e2e', usageTracker.getTotals().total_tokens)
 
-  return result
+  return { result, sandboxEvents }
 }

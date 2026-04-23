@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os'
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../src/types.ts'
 import { createRuntimeState } from '../src/runtime/state/types.ts'
 import { createSessionFiles } from '../src/runtime/session.ts'
-import { createSubagentRuntime } from '../src/runtime/subagents.ts'
+import { createSubagentRuntime, deriveChildSandboxPolicy } from '../src/runtime/subagents.ts'
+import { resolveSandboxPolicy } from '../src/sandbox/policy.ts'
 import { buildDefaultRegistry } from '../src/tools/builtin/index.ts'
 
 class StubProvider implements ModelProvider {
@@ -216,4 +217,43 @@ test('background worker can be waited to completion', async () => {
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }
+})
+
+test('worker writeScope narrows child writable roots', () => {
+  const parent = resolveSandboxPolicy({
+    cwd: '/repo',
+    sandboxMode: 'workspace-write',
+    writableRoots: ['src', 'docs'],
+    denyWrite: ['.merlion/checkpoints'],
+  })
+
+  const child = deriveChildSandboxPolicy(parent, 'worker', 'foreground', ['src/runtime'])
+
+  assert.deepEqual(child.writableRoots, ['/repo/src/runtime'])
+  assert.deepEqual(child.denyWrite, ['/repo/.merlion/checkpoints'])
+})
+
+test('worker writeScope narrows even when parent is danger-full-access', () => {
+  const parent = resolveSandboxPolicy({
+    cwd: '/repo',
+    sandboxMode: 'danger-full-access',
+    networkMode: 'full',
+  })
+
+  const child = deriveChildSandboxPolicy(parent, 'worker', 'foreground', ['src/runtime'])
+
+  assert.equal(child.mode, 'workspace-write')
+  assert.deepEqual(child.writableRoots, ['/repo/src/runtime'])
+})
+
+test('worker writeScope does not widen a read-only parent', () => {
+  const parent = resolveSandboxPolicy({
+    cwd: '/repo',
+    sandboxMode: 'read-only',
+  })
+
+  const child = deriveChildSandboxPolicy(parent, 'worker', 'foreground', ['src/runtime'])
+
+  assert.equal(child.mode, 'read-only')
+  assert.deepEqual(child.writableRoots, [])
 })

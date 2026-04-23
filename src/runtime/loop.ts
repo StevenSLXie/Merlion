@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { LoopState, LoopTerminal, ModelProvider } from '../types.js'
 import type { AskUserQuestionItem, PermissionStore, ToolContext } from '../tools/types.js'
 import type { SubagentToolRuntime } from './subagent_types.ts'
+import type { RuntimeSandboxEvent } from './events.ts'
 import { executeToolCalls, type ToolCallResultEvent, type ToolCallStartEvent } from './executor.ts'
 import { withRetry } from './retry.ts'
 import { ToolRegistry } from '../tools/registry.ts'
@@ -73,6 +74,8 @@ import {
   type VerificationStrength,
   extractRelevantPaths,
 } from './loop_guardrails.ts'
+import type { SandboxBackend } from '../sandbox/backend.ts'
+import type { ResolvedSandboxPolicy } from '../sandbox/policy.ts'
 
 export { shouldNudge } from './loop_guardrails.ts'
 
@@ -83,7 +86,10 @@ export interface RunLoopOptions {
   userPrompt: string
   intentContract?: string
   cwd: string
+  sessionId?: string
   permissions?: PermissionStore
+  sandboxPolicy?: ResolvedSandboxPolicy
+  sandboxBackend?: SandboxBackend
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
   subagents?: SubagentToolRuntime
   maxTurns?: number
@@ -113,6 +119,7 @@ export interface RunLoopOptions {
   }) => Promise<void> | void
   onToolCallStart?: (event: ToolCallStartEvent) => Promise<void> | void
   onToolCallResult?: (event: ToolCallResultEvent) => Promise<void> | void
+  onSandboxEvent?: (event: RuntimeSandboxEvent) => Promise<void> | void
   onToolBatchComplete?: (event: {
     turn: number
     results: ToolCallResultEvent[]
@@ -381,7 +388,17 @@ function buildToolContext(options: RunLoopOptions): ToolContext {
   const defaultPermissions: PermissionStore = { ask: async () => 'allow' }
   return {
     cwd: options.cwd,
+    sessionId: options.sessionId,
     permissions: options.permissions ?? defaultPermissions,
+    sandbox: options.sandboxPolicy && options.sandboxBackend
+      ? {
+          policy: options.sandboxPolicy,
+          backend: options.sandboxBackend,
+        }
+      : undefined,
+    onSandboxEvent: (event) => {
+      void options.onSandboxEvent?.(event)
+    },
     askQuestions: options.askQuestions,
     subagents: options.subagents,
     listTools: () =>

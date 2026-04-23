@@ -5,6 +5,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { lspTool } from '../src/tools/builtin/lsp.ts'
+import { resolveSandboxPolicy } from '../src/sandbox/policy.ts'
 
 async function makeTsProject(): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), 'merlion-lsp-'))
@@ -83,4 +84,32 @@ test('lsp rejects unsupported files', async () => {
   const result = await lspTool.execute({ action: 'document_symbols', path: 'README.md' }, { cwd: process.cwd() })
   assert.equal(result.isError, true)
   assert.match(result.content, /Unsupported file for lsp/)
+})
+
+test('lsp respects deny-read policy for blocked files', async () => {
+  const cwd = await makeTsProject()
+  await setupProjectFiles(cwd)
+
+  const result = await lspTool.execute(
+    { action: 'document_symbols', path: 'src/lib.ts' },
+    {
+      cwd,
+      sandbox: {
+        policy: resolveSandboxPolicy({
+          cwd,
+          sandboxMode: 'workspace-write',
+          approvalPolicy: 'never',
+          denyRead: ['src/lib.ts'],
+        }),
+        backend: {
+          name: () => 'test',
+          isAvailableForPolicy: async () => true,
+          run: async () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+        },
+      },
+    },
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /deny-read/i)
 })

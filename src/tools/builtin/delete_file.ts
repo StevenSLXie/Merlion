@@ -1,7 +1,7 @@
 import { rm, stat } from 'node:fs/promises'
 
 import type { ToolDefinition } from '../types.js'
-import { validateAndResolveWorkspacePath } from './fs_common.ts'
+import { authorizeMutation, resolveMutationTargetPath } from './fs_common.ts'
 
 export const deleteFileTool: ToolDefinition = {
   name: 'delete_file',
@@ -16,14 +16,11 @@ export const deleteFileTool: ToolDefinition = {
   },
   concurrencySafe: false,
   async execute(input, ctx) {
-    const validated = validateAndResolveWorkspacePath(ctx.cwd, input.path)
+    const validated = await resolveMutationTargetPath(ctx.cwd, input.path)
     if (!validated.ok) return { content: validated.error, isError: true }
     const recursive = input.recursive === true
-
-    const decision = await ctx.permissions?.ask('delete_file', `Delete: ${input.path}`)
-    if (decision === 'deny' || decision === undefined) {
-      return { content: '[Permission denied]', isError: true }
-    }
+    const authorization = await authorizeMutation(ctx, 'delete_file', validated.path, `Delete: ${input.path}`)
+    if (!authorization.ok) return { content: authorization.error, isError: true }
 
     let fileStat
     try {

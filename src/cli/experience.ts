@@ -395,7 +395,7 @@ export class CliExperience {
     this.printRawLine(this.c('magenta', '║') + ` ${subtitle}  ${this.c('dim', `mode=${mode}`)}`)
     this.printRawLine(this.c('magenta', `╚${edge}╝`))
     if (this.options.isRepl) {
-      this.printRawLine(this.c('dim', 'Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen)'))
+      this.printRawLine(this.c('dim', 'Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen), :undo (/undo, restore session checkpoint)'))
     }
   }
 

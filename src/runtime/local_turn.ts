@@ -25,7 +25,7 @@ export async function executeLocalTurn(
   if (envelope.kind === 'local_action') {
     if (envelope.action === 'help') {
       return {
-        output: 'Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen)',
+        output: 'Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen), :undo (/undo, restore session checkpoint)',
         terminal: 'completed',
       }
     }

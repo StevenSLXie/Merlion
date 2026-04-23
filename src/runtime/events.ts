@@ -1,6 +1,7 @@
 import type { PromptObservabilitySnapshot } from './prompt_observability.ts'
 import type { UsageSnapshot } from './usage.ts'
 import type { ToolUiPayload } from '../tools/types.ts'
+import type { ApprovalPolicy, SandboxMode } from '../sandbox/policy.ts'
 
 export interface RuntimeTurnStartEvent {
   turn: number
@@ -38,6 +39,25 @@ export interface RuntimeUsageEvent {
   providerFinishReason?: string
 }
 
+export interface RuntimeSandboxEvent {
+  type:
+    | 'sandbox.backend.selected'
+    | 'sandbox.warning'
+    | 'sandbox.command.started'
+    | 'sandbox.command.completed'
+    | 'sandbox.violation'
+    | 'sandbox.escalation.requested'
+    | 'sandbox.escalation.denied'
+    | 'sandbox.escalation.allowed'
+  backend: string
+  sessionId?: string
+  sandboxMode: SandboxMode
+  approvalPolicy: ApprovalPolicy
+  toolName: string
+  summary?: string
+  violationKind?: 'fs-read' | 'fs-write' | 'network' | 'policy' | 'backend'
+}
+
 export interface RuntimeSink {
   renderBanner(): void
   renderUserPrompt(prompt: string): void
@@ -52,5 +72,6 @@ export interface RuntimeSink {
   onUsage(event: RuntimeUsageEvent): void
   onPhaseUpdate(text: string): void
   onMapUpdated(text: string): void
+  onSandboxEvent?(event: RuntimeSandboxEvent): void
   setToolDetailMode(mode: 'full' | 'compact'): void
 }

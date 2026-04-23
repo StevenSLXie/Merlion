@@ -1,10 +1,11 @@
-import { mkdtemp, mkdir, writeFile, truncate } from 'node:fs/promises'
+import { mkdtemp, mkdir, symlink, writeFile, truncate } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { readFileTool } from '../src/tools/builtin/read_file.ts'
+import { resolveSandboxPolicy } from '../src/sandbox/policy.ts'
 
 async function makeTempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'merlion-read-file-'))
@@ -90,4 +91,74 @@ test('returns error for >1 GiB file', async () => {
 
   assert.equal(result.isError, true)
   assert.match(result.content, /> 1 GiB/i)
+})
+
+test('deny-read policy blocks reading matching paths', async () => {
+  const cwd = await makeTempDir()
+  const file = join(cwd, '.env')
+  await writeFile(file, 'API_KEY=test\n', 'utf8')
+
+  const result = await readFileTool.execute(
+    { path: '.env' },
+    {
+      cwd,
+      sandbox: {
+        policy: resolveSandboxPolicy({ cwd, sandboxMode: 'workspace-write', denyRead: ['.env'] }),
+        backend: {
+          name: () => 'test',
+          isAvailableForPolicy: async () => true,
+          run: async () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+        },
+      },
+    }
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /deny-read/i)
+})
+
+test('read_file rejects symlink targets even when lexical path is inside workspace', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('symlink test is not reliable on Windows CI')
+    return
+  }
+
+  const cwd = await makeTempDir()
+  const outside = join(await makeTempDir(), 'outside.txt')
+  await writeFile(outside, 'outside-secret\n', 'utf8')
+  await symlink(outside, join(cwd, 'alias.txt'))
+
+  const result = await readFileTool.execute({ path: 'alias.txt' }, { cwd })
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /symlink/i)
+})
+
+test('read_file rejects symlink aliases to deny-read files', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('symlink test is not reliable on Windows CI')
+    return
+  }
+
+  const cwd = await makeTempDir()
+  await writeFile(join(cwd, '.env'), 'SECRET=1\n', 'utf8')
+  await symlink('.env', join(cwd, 'readme.txt'))
+
+  const result = await readFileTool.execute(
+    { path: 'readme.txt' },
+    {
+      cwd,
+      sandbox: {
+        policy: resolveSandboxPolicy({ cwd, sandboxMode: 'workspace-write', denyRead: ['.env'] }),
+        backend: {
+          name: () => 'test',
+          isAvailableForPolicy: async () => true,
+          run: async () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+        },
+      },
+    },
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /symlink/i)
 })

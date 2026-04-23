@@ -21,6 +21,10 @@ import type { RuntimeSink } from './events.ts'
 import type { RuntimeState } from './state/types.ts'
 import { buildRegistryFromPool } from '../tools/builtin/index.ts'
 import { extractChangedPathsFromToolCall } from './workspace_changes.ts'
+import type { ResolvedSandboxPolicy } from '../sandbox/policy.ts'
+import { resolveSandboxPolicy } from '../sandbox/policy.ts'
+import { resolveSandboxBackend } from '../sandbox/resolve.ts'
+import type { SandboxBackend } from '../sandbox/backend.ts'
 import {
   type AgentRunResult,
   type AgentVerdict,
@@ -61,6 +65,8 @@ interface CreateSubagentRuntimeOptions {
   model?: string
   parentRegistry: ToolRegistry
   permissions: PermissionStore
+  sandboxPolicy?: ResolvedSandboxPolicy
+  sandboxBackend?: SandboxBackend
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
   buildIntentContract?: (prompt: string) => string | undefined
   sink?: RuntimeSink
@@ -176,6 +182,10 @@ const READ_ONLY_SHELL_BLOCKLIST: RegExp[] = [
 
 function roleAllowsBackground(role: SubagentRole): boolean {
   return role === 'worker'
+}
+
+function resolveParentSandboxPolicy(options: CreateSubagentRuntimeOptions): ResolvedSandboxPolicy {
+  return options.sandboxPolicy ?? resolveSandboxPolicy({ cwd: options.cwd })
 }
 
 function defaultTimeoutMs(role: SubagentRole): number {
@@ -463,6 +473,31 @@ function createChildContextService(
   }
 }
 
+export function deriveChildSandboxPolicy(
+  parent: ResolvedSandboxPolicy,
+  role: SubagentRole,
+  execution: ChildExecutionMode,
+  writeScope?: string[],
+): ResolvedSandboxPolicy {
+  const canWrite = role === 'worker' && parent.mode !== 'read-only'
+  const hasWriteScope = canWrite && !!writeScope && writeScope.length > 0
+  const sandboxMode = role === 'worker'
+    ? (hasWriteScope ? 'workspace-write' : parent.mode)
+    : 'read-only'
+  const writableRoots = hasWriteScope
+    ? writeScope
+    : parent.writableRoots
+  return resolveSandboxPolicy({
+    cwd: parent.cwd,
+    sandboxMode,
+    approvalPolicy: execution === 'background' || role !== 'worker' ? 'never' : parent.approvalPolicy,
+    networkMode: parent.networkMode,
+    writableRoots,
+    denyRead: parent.denyRead,
+    denyWrite: parent.denyWrite,
+  })
+}
+
 function findRootExternalUserRequest(history: ConversationItem[], currentPrompt: string): string {
   for (const item of history) {
     if (item.kind === 'message' && item.role === 'user' && item.source === 'external') {
@@ -612,6 +647,13 @@ async function runChildAgent(
   const registry = buildRoleRegistry(options.parentRegistry, input.role)
   const childContext = createChildContextService(options.createContextService(), input.role, briefingText)
   const childProvider = options.createProvider(input.model ?? options.model)
+  const childSandboxPolicy = deriveChildSandboxPolicy(
+    resolveParentSandboxPolicy(options),
+    input.role,
+    execution,
+    input.writeScope,
+  )
+  const childSandboxBackend = await resolveSandboxBackend(childSandboxPolicy)
   const childUsageTotals: ChildUsageTotals = {
     promptTokens: 0,
     completionTokens: 0,
@@ -625,6 +667,8 @@ async function runChildAgent(
     provider: childProvider,
     registry,
     permissions: createChildPermissionStore(options.permissions, execution),
+    sandboxPolicy: childSandboxPolicy,
+    sandboxBackend: childSandboxBackend,
     contextService: childContext,
     model: input.model ?? options.model,
     sessionId: childSession.sessionId,
@@ -885,6 +929,18 @@ export function createSubagentRuntime(options: CreateSubagentRuntimeOptions): Su
     if (active) {
       if (active.settled && active.result) {
         return active.result
+      }
+      const settled = await Promise.race<
+        | { done: true; result: AgentRunResult }
+        | { done: false }
+      >([
+        active.promise.then((result) => ({ done: true as const, result })),
+        Promise.resolve({ done: false as const }),
+      ])
+      if (settled.done) {
+        active.settled = true
+        active.result = settled.result
+        return settled.result
       }
       const records = await currentRecords()
       const record = records.get(agentId)

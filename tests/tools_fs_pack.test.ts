@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { accessSync, constants } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -15,6 +15,7 @@ import { mkdirTool } from '../src/tools/builtin/mkdir.ts'
 import { moveFileTool } from '../src/tools/builtin/move_file.ts'
 import { statPathTool } from '../src/tools/builtin/stat_path.ts'
 import { writeFileTool } from '../src/tools/builtin/write_file.ts'
+import { resolveSandboxPolicy } from '../src/sandbox/policy.ts'
 import type { PermissionStore } from '../src/tools/types.ts'
 
 async function makeTempDir(): Promise<string> {
@@ -23,6 +24,17 @@ async function makeTempDir(): Promise<string> {
 
 function permission(value: 'allow' | 'deny' | 'allow_session'): PermissionStore {
   return { ask: async () => value }
+}
+
+function countingPermission(value: 'allow' | 'deny' | 'allow_session') {
+  let calls = 0
+  const store: PermissionStore = {
+    async ask() {
+      calls += 1
+      return value
+    },
+  }
+  return { store, getCalls: () => calls }
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -147,6 +159,98 @@ test('mutation tools honor permission deny', async () => {
   await assert.rejects(() => stat(join(cwd, 'nope.txt')))
 })
 
+test('sandbox-allowed mutation skips approval prompt', async () => {
+  const cwd = await makeTempDir()
+  const permissions = countingPermission('allow')
+
+  const result = await writeFileTool.execute(
+    { path: 'allowed.txt', content: 'ok' },
+    {
+      cwd,
+      permissions: permissions.store,
+      sandbox: {
+        policy: resolveSandboxPolicy({ cwd, sandboxMode: 'workspace-write', approvalPolicy: 'on-failure' }),
+        backend: {
+          name: () => 'test',
+          isAvailableForPolicy: async () => true,
+          run: async () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+        },
+      },
+    },
+  )
+
+  assert.equal(result.isError, false)
+  assert.equal(permissions.getCalls(), 0)
+  assert.equal(await readFile(join(cwd, 'allowed.txt'), 'utf8'), 'ok')
+})
+
+test('deny-write protected path stays blocked after approved mutation escalation', async () => {
+  const cwd = await makeTempDir()
+  const permissions = countingPermission('allow_session')
+
+  const result = await writeFileTool.execute(
+    { path: '.merlion/checkpoints/locked.txt', content: 'nope' },
+    {
+      cwd,
+      permissions: permissions.store,
+      sandbox: {
+        policy: resolveSandboxPolicy({
+          cwd,
+          sandboxMode: 'read-only',
+          approvalPolicy: 'on-request',
+          denyWrite: ['.merlion/checkpoints'],
+        }),
+        backend: {
+          name: () => 'test',
+          isAvailableForPolicy: async () => true,
+          run: async () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+        },
+      },
+    },
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /deny-write/i)
+  assert.equal(permissions.getCalls(), 0)
+  assert.throws(() => accessSync(join(cwd, '.merlion', 'checkpoints', 'locked.txt'), constants.F_OK))
+})
+
+test('read-oriented tools filter list_dir/glob but block grep when deny-read descendants exist', async () => {
+  const cwd = await makeTempDir()
+  const p = permission('allow')
+  await writeFile(join(cwd, '.env'), 'SECRET=1\n', 'utf8')
+  await mkdirTool.execute({ path: 'src' }, { cwd, permissions: p })
+  await writeFile(join(cwd, 'src', 'app.ts'), 'console.log("ok")\n', 'utf8')
+
+  const sandbox = {
+    policy: resolveSandboxPolicy({
+      cwd,
+      sandboxMode: 'workspace-write',
+      approvalPolicy: 'never',
+      denyRead: ['.env'],
+    }),
+    backend: {
+      name: () => 'test',
+      isAvailableForPolicy: async () => true,
+      run: async () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+    },
+  }
+
+  const listed = await listDirTool.execute({ path: '.', recursive: false }, { cwd, sandbox })
+  assert.equal(listed.isError, false)
+  assert.doesNotMatch(listed.content, /\.env/)
+  assert.match(listed.content, /src/)
+
+  const globbed = await globTool.execute({ path: '.', pattern: '*.ts' }, { cwd, sandbox })
+  assert.equal(globbed.isError, false)
+  assert.match(globbed.content, /src\/app\.ts/)
+  assert.doesNotMatch(globbed.content, /\.env/)
+
+  const grepped = await grepTool.execute({ path: '.', pattern: 'SECRET' }, { cwd, sandbox })
+  assert.equal(grepped.isError, true)
+  assert.match(grepped.content, /sandbox-protected descendants/i)
+})
+
 test('mutation tools reject malformed path-like tokens', async () => {
   const cwd = await makeTempDir()
   const p = permission('allow')
@@ -158,4 +262,43 @@ test('mutation tools reject malformed path-like tokens', async () => {
   const deleteTemplate = await deleteFileTool.execute({ path: '{{x}}' }, { cwd, permissions: p })
   assert.equal(deleteTemplate.isError, true)
   assert.match(deleteTemplate.content, /unresolved template/i)
+})
+
+test('write_file rejects symlink targets that escape the workspace', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('symlink test is not reliable on Windows CI')
+    return
+  }
+
+  const cwd = await makeTempDir()
+  const outsideDir = await makeTempDir()
+  const outsideFile = join(outsideDir, 'hosts')
+  await writeFile(outsideFile, 'original\n', 'utf8')
+  await symlink(outsideFile, join(cwd, 'out.log'))
+
+  const result = await writeFileTool.execute(
+    { path: 'out.log', content: 'pwned\n' },
+    { cwd, permissions: permission('allow') },
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /symlink/i)
+  assert.equal(await readFile(outsideFile, 'utf8'), 'original\n')
+})
+
+test('list_dir rejects symlinked directory roots', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('symlink test is not reliable on Windows CI')
+    return
+  }
+
+  const cwd = await makeTempDir()
+  const outsideDir = await makeTempDir()
+  await writeFile(join(outsideDir, 'secret.txt'), 'x\n', 'utf8')
+  await symlink(outsideDir, join(cwd, 'linked'))
+
+  const result = await listDirTool.execute({ path: 'linked' }, { cwd })
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /symlink/i)
 })

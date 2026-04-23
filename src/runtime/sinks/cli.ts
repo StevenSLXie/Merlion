@@ -1,6 +1,7 @@
 import { CliExperience } from '../../cli/experience.ts'
 import type {
   RuntimeAssistantResponseEvent,
+  RuntimeSandboxEvent,
   RuntimeSink,
   RuntimeToolResultEvent,
   RuntimeToolStartEvent,
@@ -88,6 +89,37 @@ export class CliRuntimeSink implements RuntimeSink {
 
   onMapUpdated(text: string): void {
     this.driver.onMapUpdated(text)
+  }
+
+  onSandboxEvent(event: RuntimeSandboxEvent): void {
+    if (event.type === 'sandbox.warning') {
+      this.driver.onPhaseUpdate(`[sandbox] warning: ${event.summary ?? 'sandbox runtime warning'}`)
+      return
+    }
+    if (event.type === 'sandbox.violation') {
+      this.driver.onPhaseUpdate(
+        `[sandbox] ${event.toolName} blocked by ${event.violationKind ?? 'policy'} on ${event.backend}`
+      )
+      return
+    }
+    if (event.type === 'sandbox.escalation.requested') {
+      this.driver.onPhaseUpdate(
+        `[sandbox] requesting broader access for ${event.toolName} (${event.violationKind ?? 'policy'})`
+      )
+      return
+    }
+    if (event.type === 'sandbox.escalation.allowed') {
+      this.driver.onPhaseUpdate(
+        `[sandbox] broader access allowed for ${event.toolName} (${event.violationKind ?? 'policy'})`
+      )
+      return
+    }
+    if (event.type === 'sandbox.escalation.denied') {
+      this.driver.onPhaseUpdate(
+        `[sandbox] broader access denied for ${event.toolName} (${event.violationKind ?? 'policy'})`
+      )
+      return
+    }
   }
 
   setToolDetailMode(mode: 'full' | 'compact'): void {

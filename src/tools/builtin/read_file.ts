@@ -1,6 +1,6 @@
 import type { ToolDefinition } from '../types.js'
 import { readFile, stat } from 'node:fs/promises'
-import { isAbsolute, resolve } from 'node:path'
+import { enforceReadPolicy, resolveReadTargetPath } from './fs_common.ts'
 
 const ONE_GIB = 1024 * 1024 * 1024
 
@@ -45,11 +45,11 @@ export const readFileTool: ToolDefinition = {
   concurrencySafe: true,
   async execute(input, ctx) {
     const rawPath = typeof input.path === 'string' ? input.path : input.file_path
-    if (typeof rawPath !== 'string' || rawPath.trim() === '') {
-      return { content: 'Invalid path: expected non-empty string.', isError: true }
-    }
-
-    const resolvedPath = isAbsolute(rawPath) ? rawPath : resolve(ctx.cwd, rawPath)
+    const resolvedTarget = await resolveReadTargetPath(ctx.cwd, rawPath)
+    if (!resolvedTarget.ok) return { content: resolvedTarget.error, isError: true }
+    const resolvedPath = resolvedTarget.path
+    const readPolicy = enforceReadPolicy(ctx, resolvedPath)
+    if (!readPolicy.ok) return { content: readPolicy.error, isError: true }
 
     let fileStat
     try {

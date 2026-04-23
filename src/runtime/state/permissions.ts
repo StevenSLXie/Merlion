@@ -1,8 +1,13 @@
-import type { PermissionDecision, PermissionStore } from '../../tools/types.js'
+import type { PermissionDecision, PermissionRequest, PermissionStore } from '../../tools/types.js'
 import type { PermissionState } from './types.ts'
 
-function signatureForDecision(tool: string, description: string): string {
-  return `${tool}:${description.trim()}`
+function permissionScope(tool: string, request?: PermissionRequest): string {
+  const scope = request?.sessionScope?.trim()
+  return scope && scope !== '' ? scope : tool
+}
+
+function signatureForDecision(tool: string, description: string, request?: PermissionRequest): string {
+  return `${permissionScope(tool, request)}:${description.trim()}`
 }
 
 export function createTrackingPermissionStore(
@@ -10,20 +15,22 @@ export function createTrackingPermissionStore(
   state: PermissionState,
 ): PermissionStore {
   return {
-    async ask(tool: string, description: string): Promise<PermissionDecision> {
-      const decision = await base.ask(tool, description)
+    async ask(tool: string, description: string, request?: PermissionRequest): Promise<PermissionDecision> {
+      const scope = permissionScope(tool, request)
+      const decision = await base.ask(tool, description, request)
       state.lastDecision = {
         tool,
         description,
+        scope,
         decision,
         at: new Date().toISOString(),
       }
       if (decision === 'deny') {
         state.deniedToolNames.add(tool)
-        state.deniedToolSignatures.add(signatureForDecision(tool, description))
+        state.deniedToolSignatures.add(signatureForDecision(tool, description, request))
       }
       if (decision === 'allow_session') {
-        state.sessionAllowedToolNames.add(tool)
+        state.sessionAllowedScopes.add(scope)
       }
       return decision
     },

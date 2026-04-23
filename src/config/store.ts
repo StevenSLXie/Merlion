@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import type { ApprovalPolicy, NetworkMode, SandboxMode } from '../sandbox/policy.ts'
 
 export type MerlionProvider = 'openrouter' | 'openai' | 'custom'
 
@@ -9,6 +10,12 @@ export interface MerlionConfig {
   apiKey?: string
   model?: string
   baseURL?: string
+  sandboxMode?: SandboxMode
+  approvalPolicy?: ApprovalPolicy
+  networkMode?: NetworkMode
+  writableRoots?: string[]
+  denyRead?: string[]
+  denyWrite?: string[]
 }
 
 /** Returns the directory that holds the config file, honoring XDG_CONFIG_HOME. */
@@ -66,13 +73,30 @@ export async function writeConfig(config: MerlionConfig): Promise<void> {
 export function mergeConfig(
   overrides: Partial<MerlionConfig>,
   fileConfig: MerlionConfig,
-  defaults: { provider: MerlionProvider; apiKey: string; model: string; baseURL: string }
+  defaults: {
+    provider: MerlionProvider
+    apiKey: string
+    model: string
+    baseURL: string
+    sandboxMode?: SandboxMode
+    approvalPolicy?: ApprovalPolicy
+    networkMode?: NetworkMode
+    writableRoots?: string[]
+    denyRead?: string[]
+    denyWrite?: string[]
+  }
 ): Required<MerlionConfig> {
   return {
     provider: firstNonEmpty(overrides.provider, fileConfig.provider, defaults.provider) as MerlionProvider,
     apiKey: firstNonEmpty(overrides.apiKey, fileConfig.apiKey, defaults.apiKey),
     model: firstNonEmpty(overrides.model, fileConfig.model, defaults.model),
-    baseURL: firstNonEmpty(overrides.baseURL, fileConfig.baseURL, defaults.baseURL)
+    baseURL: firstNonEmpty(overrides.baseURL, fileConfig.baseURL, defaults.baseURL),
+    sandboxMode: firstNonEmpty(overrides.sandboxMode, fileConfig.sandboxMode, defaults.sandboxMode ?? 'workspace-write') as SandboxMode,
+    approvalPolicy: firstNonEmpty(overrides.approvalPolicy, fileConfig.approvalPolicy, defaults.approvalPolicy ?? 'on-failure') as ApprovalPolicy,
+    networkMode: firstNonEmpty(overrides.networkMode, fileConfig.networkMode, defaults.networkMode ?? 'off') as NetworkMode,
+    writableRoots: firstList(overrides.writableRoots, fileConfig.writableRoots, defaults.writableRoots),
+    denyRead: firstList(overrides.denyRead, fileConfig.denyRead, defaults.denyRead),
+    denyWrite: firstList(overrides.denyWrite, fileConfig.denyWrite, defaults.denyWrite),
   }
 }
 
@@ -81,6 +105,13 @@ function firstNonEmpty(...values: (string | undefined)[]): string {
     if (typeof v === 'string' && v.trim() !== '') return v
   }
   return ''
+}
+
+function firstList(...values: (string[] | undefined)[]): string[] {
+  for (const value of values) {
+    if (Array.isArray(value) && value.length > 0) return [...value]
+  }
+  return []
 }
 
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {

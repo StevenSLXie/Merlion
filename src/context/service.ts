@@ -15,6 +15,7 @@ import { buildMerlionSystemPrompt } from '../prompt/system_prompt.ts'
 import { createPromptSectionCache, type PromptSectionCache } from '../prompt/sections.ts'
 import { resolveContextTrustLevel, shouldPrefetchExpensiveContext, type ContextTrustLevel } from './policies.ts'
 import { createSystemItem, type ConversationItem } from '../runtime/items.ts'
+import type { ApprovalPolicy, NetworkMode, SandboxMode } from '../sandbox/policy.ts'
 
 export interface RuntimeContextBootstrapResult {
   initialItems: ConversationItem[]
@@ -25,6 +26,9 @@ export interface RuntimeContextBootstrapResult {
 export interface ContextServiceOptions {
   cwd: string
   permissionMode?: 'interactive' | 'auto_allow' | 'auto_deny'
+  sandboxMode?: SandboxMode
+  approvalPolicy?: ApprovalPolicy
+  networkMode?: NetworkMode
   orientationBudgets?: Partial<OrientationBudgets>
   pathGuidanceBudgets?: Partial<PathGuidanceOptions>
   promptSectionCache?: PromptSectionCache
@@ -46,7 +50,11 @@ export interface ContextService {
 export function createContextService(options: ContextServiceOptions): ContextService {
   const promptSectionCache = options.promptSectionCache ?? createPromptSectionCache()
   const pathGuidanceState = createPathGuidanceState()
-  const trustLevel = resolveContextTrustLevel({ permissionMode: options.permissionMode })
+  const trustLevel = resolveContextTrustLevel({
+    permissionMode: options.permissionMode,
+    sandboxMode: options.sandboxMode,
+    approvalPolicy: options.approvalPolicy,
+  })
   let startupMapSummary: string | null = null
   let generatedMapMode = false
   let systemPromptPromise: Promise<string> | null = null

@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -6,6 +6,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { createFileTool } from '../src/tools/builtin/create_file.ts'
+import { resolveSandboxPolicy } from '../src/sandbox/policy.ts'
 import type { PermissionStore } from '../src/tools/types.ts'
 
 async function makeTempDir(): Promise<string> {
@@ -63,6 +64,29 @@ test('denied permission blocks write', async () => {
   await assert.rejects(() => access(join(cwd, 'nope.ts'), constants.F_OK))
 })
 
+test('read-only sandbox blocks create_file before mutation', async () => {
+  const cwd = await makeTempDir()
+  const result = await createFileTool.execute(
+    { path: 'nope.ts', content: 'x' },
+    {
+      cwd,
+      permissions: permission('allow'),
+      sandbox: {
+        policy: resolveSandboxPolicy({ cwd, sandboxMode: 'read-only', approvalPolicy: 'untrusted' }),
+        backend: {
+          name: () => 'test',
+          isAvailableForPolicy: async () => true,
+          run: async () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+        },
+      },
+    }
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /read-only/i)
+  await assert.rejects(() => access(join(cwd, 'nope.ts'), constants.F_OK))
+})
+
 test('outside-workspace path is rejected', async () => {
   const cwd = await makeTempDir()
   const outsideBase = await makeTempDir()
@@ -106,4 +130,24 @@ test('rejects malformed placeholder-like path tokens', async () => {
 
   assert.equal(result.isError, true)
   assert.match(result.content, /placeholder|malformed/i)
+})
+
+test('rejects creating files through symlinked parent directories', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('symlink test is not reliable on Windows CI')
+    return
+  }
+
+  const cwd = await makeTempDir()
+  const outside = await makeTempDir()
+  await symlink(outside, join(cwd, 'linked'))
+
+  const result = await createFileTool.execute(
+    { path: 'linked/escape.txt', content: 'x' },
+    { cwd, permissions: permission('allow') }
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /outside the workspace|symlink/i)
+  await assert.rejects(() => access(join(outside, 'escape.txt'), constants.F_OK))
 })

@@ -21,6 +21,11 @@ test('processUserInput classifies REPL commands and prompt envelopes', () => {
     name: 'wechat',
     raw: ':wechat',
   })
+  assert.deepEqual(processUserInput(':undo'), {
+    kind: 'slash_command',
+    name: 'undo',
+    raw: ':undo',
+  })
   assert.deepEqual(processUserInput('! echo ok'), {
     kind: 'shell_shortcut',
     command: 'echo ok',

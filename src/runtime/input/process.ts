@@ -33,6 +33,9 @@ export function processUserInput(input: string): UserInputEnvelope {
   if (trimmed === ':wechat' || /^:wechat\s+login$/i.test(trimmed)) {
     return { kind: 'slash_command', name: 'wechat', raw: trimmed }
   }
+  if (trimmed === ':undo') {
+    return { kind: 'slash_command', name: 'undo', raw: trimmed }
+  }
 
   return { kind: 'prompt', text: trimmed }
 }

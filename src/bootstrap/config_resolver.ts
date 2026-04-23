@@ -4,6 +4,7 @@ import {
   type MerlionConfig,
   type MerlionProvider,
 } from '../config/store.ts'
+import { DEFAULT_APPROVAL_POLICY, DEFAULT_NETWORK_MODE, DEFAULT_SANDBOX_MODE } from '../sandbox/policy.ts'
 import {
   runConfigWizard,
   DEFAULT_PROVIDER,
@@ -15,6 +16,12 @@ import {
 export interface ConfigResolutionInput {
   modelFlag: string | undefined
   baseURLFlag: string | undefined
+  sandboxMode?: MerlionConfig['sandboxMode']
+  approvalPolicy?: MerlionConfig['approvalPolicy']
+  networkMode?: MerlionConfig['networkMode']
+  writableRoots?: string[]
+  denyRead?: string[]
+  denyWrite?: string[]
   configMode: boolean
   task: string
   resumeSessionId?: string
@@ -26,6 +33,12 @@ export interface ResolvedCliConfig {
   apiKey: string
   model: string
   baseURL: string
+  sandboxMode: NonNullable<MerlionConfig['sandboxMode']>
+  approvalPolicy: NonNullable<MerlionConfig['approvalPolicy']>
+  networkMode: NonNullable<MerlionConfig['networkMode']>
+  writableRoots: string[]
+  denyRead: string[]
+  denyWrite: string[]
 }
 
 export type ResolveCliConfigResult =
@@ -54,7 +67,16 @@ function inferProviderFromEnv(): MerlionProvider | undefined {
   return undefined
 }
 
-function envConfigOverrides(flags: { modelFlag?: string; baseURLFlag?: string }): Partial<MerlionConfig> {
+function envConfigOverrides(flags: {
+  modelFlag?: string
+  baseURLFlag?: string
+  sandboxMode?: MerlionConfig['sandboxMode']
+  approvalPolicy?: MerlionConfig['approvalPolicy']
+  networkMode?: MerlionConfig['networkMode']
+  writableRoots: string[]
+  denyRead: string[]
+  denyWrite: string[]
+}): Partial<MerlionConfig> {
   const provider = inferProviderFromEnv()
   const apiKey =
     process.env.MERLION_API_KEY ??
@@ -65,7 +87,30 @@ function envConfigOverrides(flags: { modelFlag?: string; baseURLFlag?: string })
     provider,
     apiKey,
     model: flags.modelFlag ?? process.env.MERLION_MODEL,
-    baseURL: flags.baseURLFlag ?? process.env.MERLION_BASE_URL
+    baseURL: flags.baseURLFlag ?? process.env.MERLION_BASE_URL,
+    sandboxMode:
+      flags.sandboxMode ??
+      (process.env.MERLION_SANDBOX_MODE === 'read-only' ||
+      process.env.MERLION_SANDBOX_MODE === 'workspace-write' ||
+      process.env.MERLION_SANDBOX_MODE === 'danger-full-access'
+        ? process.env.MERLION_SANDBOX_MODE
+        : undefined),
+    approvalPolicy:
+      flags.approvalPolicy ??
+      (process.env.MERLION_APPROVAL_POLICY === 'untrusted' ||
+      process.env.MERLION_APPROVAL_POLICY === 'on-failure' ||
+      process.env.MERLION_APPROVAL_POLICY === 'on-request' ||
+      process.env.MERLION_APPROVAL_POLICY === 'never'
+        ? process.env.MERLION_APPROVAL_POLICY
+        : undefined),
+    networkMode:
+      flags.networkMode ??
+      (process.env.MERLION_NETWORK_MODE === 'off' || process.env.MERLION_NETWORK_MODE === 'full'
+        ? process.env.MERLION_NETWORK_MODE
+        : undefined),
+    writableRoots: flags.writableRoots.length > 0 ? flags.writableRoots : undefined,
+    denyRead: flags.denyRead.length > 0 ? flags.denyRead : undefined,
+    denyWrite: flags.denyWrite.length > 0 ? flags.denyWrite : undefined,
   }
 }
 
@@ -94,6 +139,12 @@ export async function resolveCliConfig(
           apiKey: result.config.apiKey ?? '',
           model: result.config.model ?? defaultModelForProvider(result.config.provider ?? DEFAULT_PROVIDER),
           baseURL: result.config.baseURL ?? defaultBaseURLForProvider(result.config.provider ?? DEFAULT_PROVIDER),
+          sandboxMode: result.config.sandboxMode ?? DEFAULT_SANDBOX_MODE,
+          approvalPolicy: result.config.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
+          networkMode: result.config.networkMode ?? DEFAULT_NETWORK_MODE,
+          writableRoots: result.config.writableRoots ?? [],
+          denyRead: result.config.denyRead ?? [],
+          denyWrite: result.config.denyWrite ?? [],
         },
         shouldExitAfterConfig: true,
       }
@@ -107,13 +158,28 @@ export async function resolveCliConfig(
     DEFAULT_PROVIDER
 
   const merged = mergeConfig(
-    envConfigOverrides({ modelFlag: input.modelFlag, baseURLFlag: input.baseURLFlag }),
+    envConfigOverrides({
+      modelFlag: input.modelFlag,
+      baseURLFlag: input.baseURLFlag,
+      sandboxMode: input.sandboxMode,
+      approvalPolicy: input.approvalPolicy,
+      networkMode: input.networkMode,
+      writableRoots: input.writableRoots ?? [],
+      denyRead: input.denyRead ?? [],
+      denyWrite: input.denyWrite ?? [],
+    }),
     fileConfig,
     {
       provider: mergedProviderSeed,
       apiKey: '',
       model: defaultModelForProvider(mergedProviderSeed),
-      baseURL: defaultBaseURLForProvider(mergedProviderSeed)
+      baseURL: defaultBaseURLForProvider(mergedProviderSeed),
+      sandboxMode: DEFAULT_SANDBOX_MODE,
+      approvalPolicy: DEFAULT_APPROVAL_POLICY,
+      networkMode: DEFAULT_NETWORK_MODE,
+      writableRoots: [],
+      denyRead: [],
+      denyWrite: [],
     }
   )
 
@@ -145,6 +211,12 @@ export async function resolveCliConfig(
       apiKey: merged.apiKey,
       model: merged.model,
       baseURL: merged.baseURL,
+      sandboxMode: merged.sandboxMode,
+      approvalPolicy: merged.approvalPolicy,
+      networkMode: merged.networkMode,
+      writableRoots: merged.writableRoots,
+      denyRead: merged.denyRead,
+      denyWrite: merged.denyWrite,
     },
     shouldExitAfterConfig: false,
   }

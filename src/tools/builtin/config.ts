@@ -2,15 +2,13 @@ import type { ToolDefinition } from '../types.js'
 import type { MerlionProvider } from '../../config/store.ts'
 import { readConfig, writeConfig } from '../../config/store.ts'
 
-type SupportedSetting = 'provider' | 'apiKey' | 'model' | 'baseURL'
+type SupportedSetting = 'provider' | 'model'
 
 function normalizeSetting(value: unknown): SupportedSetting | null {
   if (typeof value !== 'string') return null
   const key = value.trim().toLowerCase()
   if (key === 'provider') return 'provider'
-  if (key === 'apikey' || key === 'api_key') return 'apiKey'
   if (key === 'model') return 'model'
-  if (key === 'baseurl' || key === 'base_url') return 'baseURL'
   return null
 }
 
@@ -29,7 +27,7 @@ export const configTool: ToolDefinition = {
   async execute(input, ctx) {
     const setting = normalizeSetting(input.setting)
     if (!setting) {
-      return { content: 'Unknown setting. Allowed: provider, apiKey, model, baseURL.', isError: true }
+      return { content: 'Unknown setting. Allowed: provider, model.', isError: true }
     }
 
     const config = await readConfig()

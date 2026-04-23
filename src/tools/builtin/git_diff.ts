@@ -1,5 +1,7 @@
+import { relative } from 'node:path'
+
 import type { ToolDefinition } from '../types.js'
-import { parsePositiveInt } from './fs_common.ts'
+import { enforceReadDiscoveryPolicy, parsePositiveInt, resolveReadTargetPath } from './fs_common.ts'
 import { runProcess } from './process_common.ts'
 
 function truncateLines(text: string, maxLines: number): string {
@@ -24,7 +26,16 @@ export const gitDiffTool: ToolDefinition = {
     const args = ['diff']
     if (input.staged === true) args.push('--staged')
     if (typeof input.path === 'string' && input.path.trim() !== '') {
-      args.push('--', input.path.trim())
+      const validated = await resolveReadTargetPath(ctx.cwd, input.path.trim())
+      if (!validated.ok) return { content: validated.error, isError: true }
+      const readPolicy = enforceReadDiscoveryPolicy(ctx, validated.path)
+      if (!readPolicy.ok) return { content: readPolicy.error, isError: true }
+      args.push('--', relative(ctx.cwd, validated.path) || '.')
+    } else if ((ctx.sandbox?.policy?.denyRead.length ?? 0) > 0) {
+      return {
+        content: 'git_diff requires an explicit allowed path when sandbox deny-read policy is active.',
+        isError: true,
+      }
     }
     const maxLines = parsePositiveInt(input.max_lines, 400, 20, 4000)
     const result = await runProcess('git', args, ctx.cwd, { timeoutMs: 20_000 })

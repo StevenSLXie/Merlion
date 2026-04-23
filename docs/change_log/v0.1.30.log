@@ -1,0 +1,18 @@
+Version: 0.1.30
+Date: 2026-04-23
+
+Changes:
+- Sandbox hardening and consistency:
+  - enforce sandbox policy across bash, run_script, fetch, file, search, git, and LSP paths with clearer approval and escalation semantics.
+  - close application-layer filesystem gaps around deny-read/deny-write handling, child policy narrowing, session approval scope, and symlink traversal.
+  - add checkpoint timeout fixes, restore backup stash behavior, and checkpoint artifact pruning.
+- Observability and UX:
+  - surface sandbox violation, escalation, and warning events in the CLI sink.
+  - clarify sandbox behavior in help text and README positioning.
+- Docs:
+  - refine README sandbox wording in both English and Chinese.
+  - add `docs/explained/03-sandboxing.md` on sandboxing, policy control, Claude Code, Codex, and Merlion's implementation.
+
+Related docs:
+- docs/features/100-local-sandbox-modes-and-approval-policy.md
+- docs/explained/03-sandboxing.md

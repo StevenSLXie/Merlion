@@ -2,7 +2,7 @@ import { readdir } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 
 import type { ToolDefinition } from '../types.js'
-import { parsePositiveInt, validateAndResolveWorkspacePath } from './fs_common.ts'
+import { enforceReadPolicy, isReadDeniedPath, parsePositiveInt, resolveReadTargetPath } from './fs_common.ts'
 
 interface QueueItem {
   abs: string
@@ -22,12 +22,14 @@ export const listDirTool: ToolDefinition = {
   },
   concurrencySafe: true,
   async execute(input, ctx) {
-    const validated = validateAndResolveWorkspacePath(ctx.cwd, input.path ?? '.')
+    const validated = await resolveReadTargetPath(ctx.cwd, input.path ?? '.')
     if (!validated.ok) return { content: validated.error, isError: true }
     const recursive = input.recursive === true
     const maxEntries = parsePositiveInt(input.max_entries, 200, 1, 2000)
     const root = resolve(ctx.cwd)
     const baseAbs = validated.path
+    const readPolicy = enforceReadPolicy(ctx, baseAbs)
+    if (!readPolicy.ok) return { content: readPolicy.error, isError: true }
     const baseRel = relative(root, baseAbs) || '.'
     const queue: QueueItem[] = [{ abs: baseAbs, rel: baseRel }]
     const lines: string[] = []
@@ -44,10 +46,12 @@ export const listDirTool: ToolDefinition = {
       for (const entry of entries) {
         if (lines.length >= maxEntries) break
         const childRel = next.rel === '.' ? entry.name : `${next.rel}/${entry.name}`
+        const childAbs = join(next.abs, entry.name)
+        if (isReadDeniedPath(ctx, childAbs)) continue
         const type = entry.isDirectory() ? 'dir' : entry.isSymbolicLink() ? 'symlink' : 'file'
         lines.push(`${type}\t${childRel}`)
         if (recursive && entry.isDirectory()) {
-          queue.push({ abs: join(next.abs, entry.name), rel: childRel })
+          queue.push({ abs: childAbs, rel: childRel })
         }
       }
     }

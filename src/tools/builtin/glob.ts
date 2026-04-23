@@ -2,7 +2,7 @@ import { readdir, stat } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 
 import type { ToolDefinition } from '../types.js'
-import { parsePositiveInt, validateAndResolveWorkspacePath } from './fs_common.ts'
+import { enforceReadPolicy, isReadDeniedPath, parsePositiveInt, resolveReadTargetPath } from './fs_common.ts'
 import { runRipgrep } from './rg_runner.ts'
 
 function globToRegExp(pattern: string): RegExp {
@@ -76,11 +76,13 @@ export const globTool: ToolDefinition = {
       return { content: 'Invalid pattern: expected non-empty string.', isError: true }
     }
 
-    const validated = validateAndResolveWorkspacePath(ctx.cwd, input.path ?? '.')
+    const validated = await resolveReadTargetPath(ctx.cwd, input.path ?? '.')
     if (!validated.ok) return { content: validated.error, isError: true }
     const baseStat = await stat(validated.path).catch(() => null)
     if (!baseStat) return { content: `Path does not exist: ${String(input.path ?? '.')}`, isError: true }
     if (!baseStat.isDirectory()) return { content: `Path is not a directory: ${String(input.path ?? '.')}`, isError: true }
+    const readPolicy = enforceReadPolicy(ctx, validated.path)
+    if (!readPolicy.ok) return { content: readPolicy.error, isError: true }
 
     const maxResults = parsePositiveInt(input.max_results, 100, 1, 2000)
     const baseAbs = validated.path
@@ -100,6 +102,7 @@ export const globTool: ToolDefinition = {
         .filter((line) => line !== '')
         .map((line) => line.startsWith('./') ? line.slice(2) : line)
         .map((line) => baseRel === '.' ? line : `${baseRel}/${line}`)
+        .filter((line) => !isReadDeniedPath(ctx, resolve(ctx.cwd, line)))
       files = sortBy === 'none' ? files : await sortByMtimeDesc(ctx.cwd, files)
       const truncated = files.length > maxResults
       files = files.slice(0, maxResults)
@@ -118,6 +121,7 @@ export const globTool: ToolDefinition = {
 
     let files = await fallbackGlob(baseAbs, pattern, maxResults + 1)
     files = files.map((line) => baseRel === '.' ? line : `${baseRel}/${line}`)
+    files = files.filter((line) => !isReadDeniedPath(ctx, resolve(ctx.cwd, line)))
     files = sortBy === 'none' ? files : await sortByMtimeDesc(ctx.cwd, files)
     const truncated = files.length > maxResults
     files = files.slice(0, maxResults)

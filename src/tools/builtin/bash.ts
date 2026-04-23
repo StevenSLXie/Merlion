@@ -1,6 +1,8 @@
-import { spawn } from 'node:child_process'
-
 import type { ToolDefinition } from '../types.js'
+import { NoSandboxBackend } from '../../sandbox/no_sandbox.ts'
+import { createUnsandboxedPolicy, widenSandboxPolicy } from '../../sandbox/policy.ts'
+import { resolveSandboxBackend } from '../../sandbox/resolve.ts'
+import type { SandboxViolation } from '../../sandbox/backend.ts'
 
 const WARN_PATTERNS: RegExp[] = [
   /\brm\s+-[rf]{1,2}\b/,
@@ -52,49 +54,30 @@ function assessCommandRisk(command: string): RiskLevel {
   return 'safe'
 }
 
-function runBash(command: string, cwd: string, timeoutMs: number): Promise<{ content: string; exit: number; timedOut: boolean }> {
-  return new Promise((resolve) => {
-    const child = spawn('bash', ['-o', 'pipefail', '-c', command], { cwd })
-    let combined = ''
-    let timedOut = false
-    let done = false
-    let exitCode: number | null = null
+function permissionScope(kind: SandboxViolation['kind'] | 'preflight'): string {
+  return `bash:${kind}`
+}
 
-    const settle = (code: number): void => {
-      if (done) return
-      done = true
-      clearTimeout(killTimer)
-      resolve({ content: combined, exit: code, timedOut })
+function formatBashContent(
+  stdout: string,
+  stderr: string,
+  exitCode: number,
+  timedOut: boolean,
+  timeout: number,
+  notes: string[],
+): { content: string; isError: boolean } {
+  const combined = [stdout.trim(), stderr.trim()].filter((value) => value !== '').join('\n')
+  if (timedOut) {
+    return {
+      content: `${notes.map((note) => `[autocorrect] ${note}\n`).join('')}${combined}\n[Command timed out after ${timeout} ms]`,
+      isError: true,
     }
-
-    const killTimer = setTimeout(() => {
-      timedOut = true
-      child.kill('SIGTERM')
-      setTimeout(() => child.kill('SIGKILL'), 2000).unref()
-    }, timeoutMs)
-
-    const append = (chunk: unknown) => {
-      combined += String(chunk)
-      if (combined.length > 100_000) {
-        combined = `${combined.slice(0, 100_000)}\n[output truncated]`
-      }
-    }
-
-    child.stdout.on('data', append)
-    child.stderr.on('data', append)
-    child.on('exit', (code) => {
-      exitCode = code
-      settle(code ?? -1)
-    })
-    // Fallback for environments where only `close` arrives.
-    child.on('close', (code) => {
-      settle(code ?? exitCode ?? -1)
-    })
-    child.on('error', (error) => {
-      combined += String(error)
-      settle(-1)
-    })
-  })
+  }
+  const text = combined !== '' ? `${combined}\n[exit: ${exitCode}]` : `[exit: ${exitCode}]`
+  return {
+    content: `${notes.map((note) => `[autocorrect] ${note}\n`).join('')}${text}`,
+    isError: exitCode !== 0,
+  }
 }
 
 export const bashTool: ToolDefinition = {
@@ -137,27 +120,144 @@ export const bashTool: ToolDefinition = {
     if (risk === 'block') {
       return { content: `[Blocked: command matched high-risk policy] ${effectiveCommand}`, isError: true }
     }
-    if (risk === 'warn') {
-      const decision = await ctx.permissions?.ask('bash', effectiveCommand)
+
+    let policy = ctx.sandbox?.policy ?? createUnsandboxedPolicy(ctx.cwd)
+    let backend = ctx.sandbox?.backend ?? new NoSandboxBackend()
+    if (!ctx.sandbox) {
+      ctx.onSandboxEvent?.({
+        type: 'sandbox.warning',
+        backend: backend.name(),
+        sessionId: ctx.sessionId,
+        sandboxMode: policy.mode,
+        approvalPolicy: policy.approvalPolicy,
+        toolName: 'bash',
+        summary: `ctx.sandbox missing; running unsandboxed: ${effectiveCommand}`,
+      })
+    }
+    const preapproved = policy.approvalPolicy === 'on-request'
+      ? await ctx.permissions?.ask('bash', `Run command: ${effectiveCommand}`, {
+        phase: 'preflight',
+        sessionScope: permissionScope('preflight'),
+      })
+      : undefined
+    if (preapproved === 'deny') {
+      return { content: '[Permission denied]', isError: true }
+    }
+    if (preapproved === undefined && policy.approvalPolicy === 'on-request') {
+      return { content: '[Permission denied]', isError: true }
+    }
+    if (risk === 'warn' && policy.approvalPolicy !== 'on-request') {
+      const decision = await ctx.permissions?.ask('bash', effectiveCommand, {
+        phase: 'preflight',
+        sessionScope: permissionScope('preflight'),
+      })
       if (decision === 'deny' || decision === undefined) {
         return { content: '[Permission denied]', isError: true }
       }
     }
 
-    const result = await runBash(effectiveCommand, ctx.cwd, timeout)
-    if (result.timedOut) {
-      return {
-        content: `${normalized.notes.map((note) => `[autocorrect] ${note}\n`).join('')}${result.content}\n[Command timed out after ${timeout} ms]`,
-        isError: true
+    ctx.onSandboxEvent?.({
+      type: 'sandbox.backend.selected',
+      backend: backend.name(),
+      sessionId: ctx.sessionId,
+      sandboxMode: policy.mode,
+      approvalPolicy: policy.approvalPolicy,
+      toolName: 'bash',
+      summary: effectiveCommand,
+    })
+    ctx.onSandboxEvent?.({
+      type: 'sandbox.command.started',
+      backend: backend.name(),
+      sessionId: ctx.sessionId,
+      sandboxMode: policy.mode,
+      approvalPolicy: policy.approvalPolicy,
+      toolName: 'bash',
+      summary: effectiveCommand,
+    })
+    let result = await backend.run(
+      { command: effectiveCommand, cwd: ctx.cwd, timeoutMs: timeout, maxOutputChars: 100_000 },
+      policy,
+    )
+    if (result.violation) {
+      ctx.onSandboxEvent?.({
+        type: 'sandbox.violation',
+        backend: backend.name(),
+        sessionId: ctx.sessionId,
+        sandboxMode: policy.mode,
+        approvalPolicy: policy.approvalPolicy,
+        toolName: 'bash',
+        summary: effectiveCommand,
+        violationKind: result.violation.kind,
+      })
+    }
+    if (
+      result.violation &&
+      (
+        policy.approvalPolicy === 'on-failure' ||
+        (policy.approvalPolicy === 'on-request' && (preapproved === 'allow' || preapproved === 'allow_session'))
+      )
+    ) {
+      ctx.onSandboxEvent?.({
+        type: 'sandbox.escalation.requested',
+        backend: backend.name(),
+        sessionId: ctx.sessionId,
+        sandboxMode: policy.mode,
+        approvalPolicy: policy.approvalPolicy,
+        toolName: 'bash',
+        summary: effectiveCommand,
+        violationKind: result.violation.kind,
+      })
+      const decision = await ctx.permissions?.ask('bash', `Run outside current sandbox: ${effectiveCommand}`, {
+        phase: 'escalation',
+        violationKind: result.violation.kind,
+        sessionScope: permissionScope(result.violation.kind),
+      })
+      if (decision === 'allow' || decision === 'allow_session') {
+        policy = widenSandboxPolicy(policy, result.violation.kind)
+        backend = await resolveSandboxBackend(policy)
+        ctx.onSandboxEvent?.({
+          type: 'sandbox.escalation.allowed',
+          backend: backend.name(),
+          sessionId: ctx.sessionId,
+          sandboxMode: policy.mode,
+          approvalPolicy: policy.approvalPolicy,
+          toolName: 'bash',
+          summary: effectiveCommand,
+          violationKind: result.violation.kind,
+        })
+        result = await backend.run(
+          { command: effectiveCommand, cwd: ctx.cwd, timeoutMs: timeout, maxOutputChars: 100_000 },
+          policy,
+        )
+      } else {
+        ctx.onSandboxEvent?.({
+          type: 'sandbox.escalation.denied',
+          backend: backend.name(),
+          sessionId: ctx.sessionId,
+          sandboxMode: policy.mode,
+          approvalPolicy: policy.approvalPolicy,
+          toolName: 'bash',
+          summary: effectiveCommand,
+        })
       }
     }
-
-    const text = result.content.trim().length > 0
-      ? `${result.content}\n[exit: ${result.exit}]`
-      : `[exit: ${result.exit}]`
-    return {
-      content: `${normalized.notes.map((note) => `[autocorrect] ${note}\n`).join('')}${text}`,
-      isError: result.exit !== 0
-    }
+    ctx.onSandboxEvent?.({
+      type: 'sandbox.command.completed',
+      backend: backend.name(),
+      sessionId: ctx.sessionId,
+      sandboxMode: policy.mode,
+      approvalPolicy: policy.approvalPolicy,
+      toolName: 'bash',
+      summary: effectiveCommand,
+      violationKind: result.violation?.kind,
+    })
+    return formatBashContent(
+      result.stdout,
+      result.stderr,
+      result.exitCode,
+      result.timedOut,
+      timeout,
+      normalized.notes,
+    )
   }
 }

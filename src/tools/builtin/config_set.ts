@@ -2,7 +2,7 @@ import type { ToolDefinition } from '../types.js'
 import type { MerlionProvider } from '../../config/store.ts'
 import { readConfig, writeConfig } from '../../config/store.ts'
 
-const ALLOWED_KEYS = new Set(['provider', 'apiKey', 'model', 'baseURL'])
+const ALLOWED_KEYS = new Set(['provider', 'model'])
 
 export const configSetTool: ToolDefinition = {
   name: 'config_set',
@@ -20,7 +20,7 @@ export const configSetTool: ToolDefinition = {
     const key = input.key
     const value = input.value
     if (typeof key !== 'string' || !ALLOWED_KEYS.has(key)) {
-      return { content: 'Invalid key. Allowed: provider, apiKey, model, baseURL.', isError: true }
+      return { content: 'Invalid key. Allowed: provider, model.', isError: true }
     }
     if (typeof value !== 'string') {
       return { content: 'Invalid value: expected string.', isError: true }
@@ -44,7 +44,7 @@ export const configSetTool: ToolDefinition = {
     }
 
     const config = await readConfig()
-    await writeConfig({ ...config, [key]: value })
+    await writeConfig({ ...config, model: value })
     return { content: `Set ${key} in config`, isError: false }
   }
 }

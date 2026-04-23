@@ -1,6 +1,7 @@
 export interface PermissionDecisionRecord {
   tool: string
   description: string
+  scope: string
   decision: 'allow' | 'deny' | 'allow_session'
   at: string
 }
@@ -8,7 +9,7 @@ export interface PermissionDecisionRecord {
 export interface PermissionState {
   deniedToolNames: Set<string>
   deniedToolSignatures: Set<string>
-  sessionAllowedToolNames: Set<string>
+  sessionAllowedScopes: Set<string>
   lastDecision: PermissionDecisionRecord | null
 }
 
@@ -27,7 +28,7 @@ export interface RuntimeStateSnapshot {
   permissions: {
     deniedToolNames: string[]
     deniedToolSignatures: string[]
-    sessionAllowedToolNames: string[]
+    sessionAllowedScopes: string[]
     lastDecision: PermissionDecisionRecord | null
   }
   compact: {
@@ -42,7 +43,7 @@ export function createRuntimeState(): RuntimeState {
     permissions: {
       deniedToolNames: new Set<string>(),
       deniedToolSignatures: new Set<string>(),
-      sessionAllowedToolNames: new Set<string>(),
+      sessionAllowedScopes: new Set<string>(),
       lastDecision: null,
     },
     compact: {
@@ -58,7 +59,7 @@ export function snapshotRuntimeState(state: RuntimeState): RuntimeStateSnapshot 
     permissions: {
       deniedToolNames: [...state.permissions.deniedToolNames].sort(),
       deniedToolSignatures: [...state.permissions.deniedToolSignatures].sort(),
-      sessionAllowedToolNames: [...state.permissions.sessionAllowedToolNames].sort(),
+      sessionAllowedScopes: [...state.permissions.sessionAllowedScopes].sort(),
       lastDecision: state.permissions.lastDecision,
     },
     compact: {

@@ -19,6 +19,10 @@ import { createContextService } from '../../context/service.ts'
 import type { RuntimeSink } from '../../runtime/events.ts'
 import type { ConversationItem } from '../../runtime/items.ts'
 import { QueryEngine } from '../../runtime/query_engine.ts'
+import type { ApprovalPolicy, NetworkMode, SandboxMode } from '../../sandbox/policy.ts'
+import { resolveSandboxPolicy } from '../../sandbox/policy.ts'
+import { deriveSandboxProtectedPaths } from '../../sandbox/protected_paths.ts'
+import { resolveSandboxBackend } from '../../sandbox/resolve.ts'
 
 const MAX_CONSECUTIVE_FAILURES = 3
 const BACKOFF_DELAY_MS = 30_000
@@ -38,22 +42,29 @@ export interface WeixinRunOptions {
   cwd: string
   forceLogin?: boolean
   permissionMode?: 'interactive' | 'auto_allow' | 'auto_deny'
+  sandboxMode?: SandboxMode
+  approvalPolicy?: ApprovalPolicy
+  networkMode?: NetworkMode
+  writableRoots?: string[]
+  denyRead?: string[]
+  denyWrite?: string[]
 }
 
 export interface WeixinPermissionResolution {
-  mode: 'auto_allow' | 'auto_deny'
+  mode: 'never'
   notice?: string
 }
 
 export function resolveWeixinPermissionMode(
-  mode: 'interactive' | 'auto_allow' | 'auto_deny' | undefined,
+  mode: ApprovalPolicy | 'interactive' | 'auto_allow' | 'auto_deny' | undefined,
 ): WeixinPermissionResolution {
-  if (mode === 'auto_deny') return { mode: 'auto_deny' }
-  if (mode === 'auto_allow') return { mode: 'auto_allow' }
+  if (mode === 'never' || mode === 'auto_allow' || mode === 'auto_deny' || mode === 'untrusted') {
+    return { mode: 'never' }
+  }
   return {
-    mode: 'auto_allow',
+    mode: 'never',
     notice:
-      'interactive approval is not supported in WeChat mode; defaulting to --auto-allow. Use --auto-deny to block risky tools.',
+      'interactive approval is not supported in WeChat mode; defaulting to approval=never.',
   }
 }
 
@@ -151,9 +162,6 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
   if (permissionResolution.notice) {
     process.stdout.write(`  [WeChat] ${permissionResolution.notice}\n`)
   }
-  if (permissionResolution.mode === 'auto_deny') {
-    process.stdout.write('  [WeChat] risky tools requiring approval will be denied.\n')
-  }
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   let creds: WeixinCredentials
@@ -179,6 +187,19 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
     model: opts.model,
   })
   const registry = buildDefaultRegistry({ mode: 'wechat' })
+  const protectedPaths = await deriveSandboxProtectedPaths(opts.cwd)
+  const sandboxPolicy = resolveSandboxPolicy({
+    cwd: opts.cwd,
+    sandboxMode: opts.sandboxMode ?? 'workspace-write',
+    approvalPolicy: 'never',
+    networkMode: opts.networkMode ?? 'off',
+    writableRoots: opts.writableRoots,
+    denyRead: opts.denyRead,
+    denyWrite: opts.denyWrite,
+    fixedDenyRead: protectedPaths.denyRead,
+    fixedDenyWrite: protectedPaths.denyWrite,
+  })
+  const sandboxBackend = await resolveSandboxBackend(sandboxPolicy)
   const permissions = createPermissionStore(permissionResolution.mode)
   const maxTurns = parsePositiveInt(process.env.MERLION_WECHAT_MAX_TURNS, DEFAULT_WECHAT_MAX_TURNS)
   const maxProgressUpdates = parsePositiveInt(
@@ -298,13 +319,18 @@ export async function runWeixinMode(opts: WeixinRunOptions): Promise<void> {
       }
       const contextService = createContextService({
         cwd: opts.cwd,
-        permissionMode: permissionResolution.mode,
+        permissionMode: 'auto_allow',
+        sandboxMode: sandboxPolicy.mode,
+        approvalPolicy: sandboxPolicy.approvalPolicy,
+        networkMode: sandboxPolicy.networkMode,
       })
       const engine = new QueryEngine({
         cwd: opts.cwd,
         provider,
         registry,
         permissions,
+        sandboxPolicy,
+        sandboxBackend,
         contextService,
         model: opts.model,
         initialItems: [],

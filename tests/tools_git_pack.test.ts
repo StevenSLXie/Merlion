@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import { gitDiffTool } from '../src/tools/builtin/git_diff.ts'
 import { gitLogTool } from '../src/tools/builtin/git_log.ts'
 import { gitStatusTool } from '../src/tools/builtin/git_status.ts'
+import { resolveSandboxPolicy } from '../src/sandbox/policy.ts'
 
 async function makeTempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'merlion-tools-git-'))
@@ -42,4 +43,51 @@ test('git_status/git_diff/git_log basic flow', async () => {
   const log = await gitLogTool.execute({ limit: 1 }, { cwd })
   assert.equal(log.isError, false)
   assert.match(log.content, /init/)
+})
+
+test('git tools respect deny-read constraints', async () => {
+  const cwd = await makeTempDir()
+  run('git', ['init'], cwd)
+  run('git', ['config', 'user.email', 'test@example.com'], cwd)
+  run('git', ['config', 'user.name', 'Test'], cwd)
+
+  await writeFile(join(cwd, '.env'), 'SECRET=1\n', 'utf8')
+  await writeFile(join(cwd, 'safe.txt'), 'ok\n', 'utf8')
+  run('git', ['add', '.env', 'safe.txt'], cwd)
+  run('git', ['commit', '-m', 'init'], cwd)
+  await writeFile(join(cwd, '.env'), 'SECRET=2\n', 'utf8')
+
+  const sandbox = {
+    policy: resolveSandboxPolicy({
+      cwd,
+      sandboxMode: 'workspace-write',
+      approvalPolicy: 'never',
+      denyRead: ['.env'],
+    }),
+    backend: {
+      name: () => 'test',
+      isAvailableForPolicy: async () => true,
+      run: async () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+    },
+  }
+
+  const diffAll = await gitDiffTool.execute({}, { cwd, sandbox })
+  assert.equal(diffAll.isError, true)
+  assert.match(diffAll.content, /explicit allowed path/i)
+
+  const diffBlocked = await gitDiffTool.execute({ path: '.env' }, { cwd, sandbox })
+  assert.equal(diffBlocked.isError, true)
+  assert.match(diffBlocked.content, /deny-read|sandbox-protected/i)
+
+  const status = await gitStatusTool.execute({}, { cwd, sandbox })
+  assert.equal(status.isError, false)
+  assert.doesNotMatch(status.content, /\.env/)
+
+  const logAll = await gitLogTool.execute({ limit: 1 }, { cwd, sandbox })
+  assert.equal(logAll.isError, true)
+  assert.match(logAll.content, /explicit allowed path/i)
+
+  const logBlocked = await gitLogTool.execute({ limit: 1, path: '.env' }, { cwd, sandbox })
+  assert.equal(logBlocked.isError, true)
+  assert.match(logBlocked.content, /deny-read|sandbox-protected/i)
 })

@@ -3,6 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { fetchTool } from '../src/tools/builtin/fetch.ts'
+import { resolveSandboxPolicy } from '../src/sandbox/policy.ts'
 
 async function withServer(
   handler: (req: any, res: any) => void,
@@ -77,3 +78,65 @@ test('truncates long response', async () => {
   })
 })
 
+test('network-off sandbox blocks fetch', async () => {
+  const result = await fetchTool.execute(
+    { url: 'https://example.com' },
+    {
+        cwd: process.cwd(),
+        sandbox: {
+        policy: resolveSandboxPolicy({
+          cwd: process.cwd(),
+          sandboxMode: 'workspace-write',
+          approvalPolicy: 'untrusted',
+          networkMode: 'off',
+        }),
+        backend: {
+          name: () => 'test',
+          isAvailableForPolicy: async () => true,
+          run: async () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+        },
+      },
+    },
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content, /blocks outbound network/i)
+})
+
+test('network-off fetch can escalate with approval', async () => {
+  await withServer((_, res) => {
+    res.setHeader('Content-Type', 'text/plain')
+    res.end('allowed after approval')
+  }, async (baseUrl) => {
+    let prompts = 0
+    const result = await fetchTool.execute(
+      { url: `${baseUrl}/approved` },
+      {
+        cwd: process.cwd(),
+        permissions: {
+          ask: async () => {
+            prompts += 1
+            return 'allow'
+          },
+        },
+        sandbox: {
+          policy: resolveSandboxPolicy({
+            cwd: process.cwd(),
+            sandboxMode: 'workspace-write',
+            approvalPolicy: 'on-failure',
+            networkMode: 'off',
+          }),
+          backend: {
+            name: () => 'test',
+            isAvailableForPolicy: async () => true,
+            run: async () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+          },
+        },
+      },
+    )
+
+    assert.equal(result.isError, false)
+    assert.equal(prompts, 1)
+    assert.match(result.content, /allowed after approval/)
+  })
+})

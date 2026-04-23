@@ -1,4 +1,5 @@
 import type { ToolDefinition } from '../types.js'
+import { authorizeNetworkAccess } from './fs_common.ts'
 
 function stripHtml(html: string): string {
   return html
@@ -26,7 +27,7 @@ export const fetchTool: ToolDefinition = {
     required: ['url']
   },
   concurrencySafe: true,
-  async execute(input) {
+  async execute(input, ctx) {
     const rawUrl = input.url
     const maxLengthRaw = input.max_length
     const maxLength = typeof maxLengthRaw === 'number' && Number.isFinite(maxLengthRaw)
@@ -46,6 +47,11 @@ export const fetchTool: ToolDefinition = {
 
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return { content: 'Only http/https URLs are allowed.', isError: true }
+    }
+
+    const authorization = await authorizeNetworkAccess(ctx, 'fetch', `Fetch URL: ${parsed.toString()}`)
+    if (!authorization.ok) {
+      return { content: authorization.error, isError: true }
     }
 
     const controller = new AbortController()
@@ -82,4 +88,3 @@ export const fetchTool: ToolDefinition = {
     }
   }
 }
-

@@ -31,27 +31,27 @@ function makeLoopResult(params: {
   }
 }
 
-test('resolveWeixinPermissionMode: interactive defaults to auto_allow with notice', () => {
+test('resolveWeixinPermissionMode: interactive defaults to never with notice', () => {
   const resolved = resolveWeixinPermissionMode('interactive')
-  assert.equal(resolved.mode, 'auto_allow')
+  assert.equal(resolved.mode, 'never')
   assert.match(resolved.notice ?? '', /interactive approval is not supported/i)
 })
 
-test('resolveWeixinPermissionMode: undefined defaults to auto_allow with notice', () => {
+test('resolveWeixinPermissionMode: undefined defaults to never with notice', () => {
   const resolved = resolveWeixinPermissionMode(undefined)
-  assert.equal(resolved.mode, 'auto_allow')
-  assert.match(resolved.notice ?? '', /defaulting to --auto-allow/i)
+  assert.equal(resolved.mode, 'never')
+  assert.match(resolved.notice ?? '', /approval=never/i)
 })
 
-test('resolveWeixinPermissionMode: auto_allow is preserved without notice', () => {
+test('resolveWeixinPermissionMode: auto_allow is normalized to never without notice', () => {
   const resolved = resolveWeixinPermissionMode('auto_allow')
-  assert.equal(resolved.mode, 'auto_allow')
+  assert.equal(resolved.mode, 'never')
   assert.equal(resolved.notice, undefined)
 })
 
-test('resolveWeixinPermissionMode: auto_deny is preserved without notice', () => {
+test('resolveWeixinPermissionMode: auto_deny is normalized to never without notice', () => {
   const resolved = resolveWeixinPermissionMode('auto_deny')
-  assert.equal(resolved.mode, 'auto_deny')
+  assert.equal(resolved.mode, 'never')
   assert.equal(resolved.notice, undefined)
 })
 

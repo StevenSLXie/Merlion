@@ -2,7 +2,7 @@ import { mkdir, stat, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { ToolDefinition } from '../types.js'
-import { validateAndResolveWorkspacePath } from './fs_common.ts'
+import { authorizeMutation, resolveMutationTargetPath } from './fs_common.ts'
 
 function countLines(content: string): number {
   if (content.length === 0) return 0
@@ -27,16 +27,13 @@ export const createFileTool: ToolDefinition = {
     const pathInput = input.path
     const contentInput = input.content
 
-    const validated = validateAndResolveWorkspacePath(ctx.cwd, pathInput)
+    const validated = await resolveMutationTargetPath(ctx.cwd, pathInput)
     if (!validated.ok) return { content: validated.error, isError: true }
     if (typeof contentInput !== 'string') {
       return { content: 'Invalid content: expected string.', isError: true }
     }
-
-    const decision = await ctx.permissions?.ask('create_file', `Create: ${pathInput}`)
-    if (decision === 'deny' || decision === undefined) {
-      return { content: '[Permission denied]', isError: true }
-    }
+    const authorization = await authorizeMutation(ctx, 'create_file', validated.path, `Create: ${pathInput}`)
+    if (!authorization.ok) return { content: authorization.error, isError: true }
 
     try {
       await stat(validated.path)

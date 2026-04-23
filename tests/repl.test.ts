@@ -8,6 +8,7 @@ test('parseReplInput handles commands and prompt', () => {
   assert.deepEqual(parseReplInput(':quit'), { kind: 'local_action', action: 'exit' })
   assert.deepEqual(parseReplInput(':help'), { kind: 'local_action', action: 'help' })
   assert.deepEqual(parseReplInput(':wechat'), { kind: 'slash_command', name: 'wechat', raw: ':wechat' })
+  assert.deepEqual(parseReplInput(':undo'), { kind: 'slash_command', name: 'undo', raw: ':undo' })
   assert.deepEqual(parseReplInput('/wechat'), { kind: 'slash_command', name: 'wechat', raw: '/wechat' })
   assert.deepEqual(parseReplInput('! echo ok'), { kind: 'shell_shortcut', command: 'echo ok' })
   assert.deepEqual(parseReplInput(':detail compact'), { kind: 'local_action', action: 'set_detail', payload: 'compact' })
@@ -53,7 +54,7 @@ test('runReplSession loops prompts and exits', async () => {
   assert.equal(outputs.some((t) => t.includes('shell:echo ok')), true)
   assert.equal(outputs.some((t) => t.includes('done:first task')), true)
   assert.equal(outputs.some((t) => t.includes('done:second task')), true)
-  assert.equal(outputs.some((t) => t.includes('Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen)')), true)
+  assert.equal(outputs.some((t) => t.includes('Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen), :undo (/undo, restore session checkpoint)')), true)
   assert.equal(outputs.some((t) => t.includes('[ui] tool detail mode = compact')), true)
 })
 

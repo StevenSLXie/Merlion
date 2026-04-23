@@ -18,6 +18,8 @@ import type { ContextService } from '../context/service.ts'
 import { createTrackingPermissionStore } from './state/permissions.ts'
 import { recordFinalSummary, syncCompactStateFromLoopState } from './state/compact.ts'
 import { createRuntimeState, snapshotRuntimeState, type RuntimeState, type RuntimeStateSnapshot } from './state/types.ts'
+import type { SandboxBackend } from '../sandbox/backend.ts'
+import type { ResolvedSandboxPolicy } from '../sandbox/policy.ts'
 import {
   collectGitWorkingTreePaths,
   collectLatestCommitPaths,
@@ -37,6 +39,8 @@ export interface QueryEngineOptions {
   provider: ModelProvider
   registry: ToolRegistry
   permissions: PermissionStore
+  sandboxPolicy?: ResolvedSandboxPolicy
+  sandboxBackend?: SandboxBackend
   contextService: ContextService
   model?: string
   sessionId?: string
@@ -236,8 +240,11 @@ export class QueryEngine {
       userPrompt: prompt,
       intentContract: this.options.buildIntentContract?.(prompt),
       cwd: this.options.cwd,
+      sessionId: this.options.sessionId,
       maxTurns: this.options.maxTurns ?? 100,
       permissions: this.trackedPermissions,
+      sandboxPolicy: this.options.sandboxPolicy,
+      sandboxBackend: this.options.sandboxBackend,
       askQuestions: this.options.askQuestions,
       initialItems: seededItems,
       persistInitialMessages: false,
@@ -286,6 +293,9 @@ export class QueryEngine {
       },
       onAssistantResponse: ({ turn, finish_reason, tool_calls_count }) => {
         this.options.sink?.onAssistantResponse({ turn, finish_reason, tool_calls_count })
+      },
+      onSandboxEvent: (event) => {
+        this.options.sink?.onSandboxEvent?.(event)
       },
       onToolCallStart: ({ call, index, total }) => {
         this.options.sink?.onToolStart({

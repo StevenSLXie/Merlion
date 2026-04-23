@@ -2,7 +2,7 @@ import { cp, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { ToolDefinition } from '../types.js'
-import { validateAndResolveWorkspacePath } from './fs_common.ts'
+import { authorizeMutation, enforceReadPolicy, resolveMutationTargetPath, resolveReadTargetPath } from './fs_common.ts'
 
 export const copyFileTool: ToolDefinition = {
   name: 'copy_file',
@@ -18,16 +18,20 @@ export const copyFileTool: ToolDefinition = {
   },
   concurrencySafe: false,
   async execute(input, ctx) {
-    const from = validateAndResolveWorkspacePath(ctx.cwd, input.from_path)
+    const from = await resolveReadTargetPath(ctx.cwd, input.from_path)
     if (!from.ok) return { content: from.error, isError: true }
-    const to = validateAndResolveWorkspacePath(ctx.cwd, input.to_path)
+    const fromReadPolicy = enforceReadPolicy(ctx, from.path)
+    if (!fromReadPolicy.ok) return { content: fromReadPolicy.error, isError: true }
+    const to = await resolveMutationTargetPath(ctx.cwd, input.to_path)
     if (!to.ok) return { content: to.error, isError: true }
     const recursive = input.recursive === true
-
-    const decision = await ctx.permissions?.ask('copy_file', `Copy: ${input.from_path} -> ${input.to_path}`)
-    if (decision === 'deny' || decision === undefined) {
-      return { content: '[Permission denied]', isError: true }
-    }
+    const authorization = await authorizeMutation(
+      ctx,
+      'copy_file',
+      to.path,
+      `Copy: ${input.from_path} -> ${input.to_path}`,
+    )
+    if (!authorization.ok) return { content: authorization.error, isError: true }
 
     await mkdir(dirname(to.path), { recursive: true })
     try {

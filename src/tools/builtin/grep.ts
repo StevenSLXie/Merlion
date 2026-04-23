@@ -2,7 +2,7 @@ import { stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import type { ToolDefinition } from '../types.js'
-import { validateAndResolveWorkspacePath } from './fs_common.ts'
+import { enforceReadDiscoveryPolicy, enforceReadPolicy, resolveReadTargetPath } from './fs_common.ts'
 import { runProcess } from './process_common.ts'
 import { runRipgrep } from './rg_runner.ts'
 
@@ -91,12 +91,16 @@ export const grepTool: ToolDefinition = {
       return { content: 'Invalid pattern: expected non-empty string.', isError: true }
     }
 
-    const validated = validateAndResolveWorkspacePath(ctx.cwd, input.path ?? '.')
+    const validated = await resolveReadTargetPath(ctx.cwd, input.path ?? '.')
     if (!validated.ok) return { content: validated.error, isError: true }
     const targetPath = validated.path
     const pathInput = input.path ?? '.'
     const pathStat = await stat(validated.path).catch(() => null)
     if (!pathStat) return { content: `Path does not exist: ${String(pathInput)}`, isError: true }
+    const readPolicy = pathStat.isDirectory()
+      ? enforceReadDiscoveryPolicy(ctx, targetPath)
+      : enforceReadPolicy(ctx, targetPath)
+    if (!readPolicy.ok) return { content: readPolicy.error, isError: true }
 
     const outputMode = parseOutputMode(input.output_mode)
     const glob = typeof input.glob === 'string' && input.glob.trim() !== '' ? input.glob.trim() : undefined

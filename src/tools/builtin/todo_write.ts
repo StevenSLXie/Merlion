@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { ToolDefinition } from '../types.js'
-import { validateAndResolveWorkspacePath } from './fs_common.ts'
+import { resolveMutationTargetPath } from './fs_common.ts'
 
 type TodoStatus = 'pending' | 'in_progress' | 'completed'
 type TodoItem = { content: string; status: TodoStatus; activeForm?: string }
@@ -71,7 +71,7 @@ export const todoWriteTool: ToolDefinition = {
     }
 
     if (parsedTodos !== null) {
-      const validated = validateAndResolveWorkspacePath(ctx.cwd, input.path ?? '.merlion/todos.json')
+      const validated = await resolveMutationTargetPath(ctx.cwd, input.path ?? '.merlion/todos.json')
       if (!validated.ok) return { content: validated.error, isError: true }
 
       const decision = await ctx.permissions?.ask('todo_write', `Update todo list: ${validated.path}`)
@@ -115,7 +115,7 @@ export const todoWriteTool: ToolDefinition = {
       return { content: 'Invalid input: provide todos[] or item.', isError: true }
     }
 
-    const validated = validateAndResolveWorkspacePath(ctx.cwd, input.path ?? '.merlion/todo.md')
+    const validated = await resolveMutationTargetPath(ctx.cwd, input.path ?? '.merlion/todo.md')
     if (!validated.ok) return { content: validated.error, isError: true }
     const checked = input.checked === true
     const line = `- [${checked ? 'x' : ' '}] ${item.trim()}`

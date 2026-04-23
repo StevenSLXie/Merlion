@@ -3,7 +3,7 @@ import type { UserInputEnvelope } from '../runtime/input/types.ts'
 
 export type ReplInput = UserInputEnvelope
 
-const REPL_HELP_TEXT = 'Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen)\n'
+const REPL_HELP_TEXT = 'Commands: :help, :q, :detail full|compact, :wechat (/wechat, login+listen), :undo (/undo, restore session checkpoint)\n'
 
 export function parseReplInput(input: string): ReplInput {
   return processUserInput(input)

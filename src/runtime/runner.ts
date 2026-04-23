@@ -31,6 +31,11 @@ import { QueryEngine } from './query_engine.ts'
 import { executeLocalTurn } from './local_turn.ts'
 import { executeVerificationRound } from './verify_round.ts'
 import { createSubagentRuntime as createChildSubagentRuntime } from './subagents.ts'
+import { createGitCheckpoint, restoreGitCheckpoint } from './checkpoints.ts'
+import type { ApprovalPolicy, NetworkMode, SandboxMode } from '../sandbox/policy.ts'
+import { approvalPolicyFromLegacyPermissionMode, resolveSandboxPolicy } from '../sandbox/policy.ts'
+import { deriveSandboxProtectedPaths } from '../sandbox/protected_paths.ts'
+import { resolveSandboxBackend } from '../sandbox/resolve.ts'
 
 export interface CliRuntimeOptions {
   task: string
@@ -40,6 +45,12 @@ export interface CliRuntimeOptions {
   apiKey: string
   cwd: string
   permissionMode: 'interactive' | 'auto_allow' | 'auto_deny'
+  sandboxMode: SandboxMode
+  approvalPolicy: ApprovalPolicy
+  networkMode: NetworkMode
+  writableRoots: string[]
+  denyRead: string[]
+  denyWrite: string[]
   resumeSessionId?: string
   repl: boolean
   verify: boolean
@@ -134,10 +145,24 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
   let provider = createProvider()
   const registry = buildDefaultRegistry({ mode: 'default' })
   const toolSchemaSerialized = serializeToolSchema(registry)
-  const permissions = createPermissionStore(options.permissionMode)
+  const approvalPolicy = options.approvalPolicy ?? approvalPolicyFromLegacyPermissionMode(options.permissionMode)
   const session = options.resumeSessionId
     ? await getSessionFilesForResume(options.cwd, options.resumeSessionId)
     : await createSessionFiles(options.cwd)
+  const protectedPaths = await deriveSandboxProtectedPaths(options.cwd, session)
+  const sandboxPolicy = resolveSandboxPolicy({
+    cwd: options.cwd,
+    sandboxMode: options.sandboxMode,
+    approvalPolicy,
+    networkMode: options.networkMode,
+    writableRoots: options.writableRoots,
+    denyRead: options.denyRead,
+    denyWrite: options.denyWrite,
+    fixedDenyRead: protectedPaths.denyRead,
+    fixedDenyWrite: protectedPaths.denyWrite,
+  })
+  const sandboxBackend = await resolveSandboxBackend(sandboxPolicy)
+  const permissions = createPermissionStore(approvalPolicy)
   if (!options.resumeSessionId) {
     await appendSessionMeta(session.transcriptPath, session.sessionId, options.model, options.cwd)
   }
@@ -153,9 +178,22 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     sessionId: session.sessionId,
     isRepl: options.repl
   })
+  if (!options.resumeSessionId && sandboxPolicy.mode !== 'read-only') {
+    try {
+      const checkpoint = await createGitCheckpoint({ cwd: options.cwd, sessionId: session.sessionId })
+      if (checkpoint) {
+        sink.onPhaseUpdate(`[checkpoint] Created ${checkpoint.checkpointId}. Use /undo to restore this session checkpoint.`)
+      }
+    } catch (error) {
+      sink.onPhaseUpdate(`[checkpoint] Skipped: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
   const createContextServiceForRuntime = () => createContextService({
     cwd: options.cwd,
     permissionMode: options.permissionMode,
+    sandboxMode: sandboxPolicy.mode,
+    approvalPolicy: sandboxPolicy.approvalPolicy,
+    networkMode: sandboxPolicy.networkMode,
     orientationBudgets: loadOrientationBudgetsFromEnv(),
     pathGuidanceBudgets: loadPathGuidanceBudgetsFromEnv(),
   })
@@ -166,6 +204,8 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     provider,
     registry,
     permissions,
+    sandboxPolicy,
+    sandboxBackend,
     contextService,
     model: options.model,
     sessionId: session.sessionId,
@@ -206,6 +246,8 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
       model: options.model,
       parentRegistry: registry,
       permissions,
+      sandboxPolicy,
+      sandboxBackend,
       askQuestions: (questions) => askStructuredQuestions(questions, { readLine: askLine }),
       buildIntentContract: (subPrompt) => buildIntentContract(subPrompt) ?? undefined,
       sink,
@@ -269,13 +311,40 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
               cwd: options.cwd,
               forceLogin: true,
               permissionMode: options.permissionMode,
+              sandboxMode: sandboxPolicy.mode,
+              approvalPolicy: 'never',
+              networkMode: sandboxPolicy.networkMode,
+              writableRoots: sandboxPolicy.writableRoots,
+              denyRead: sandboxPolicy.denyRead,
+              denyWrite: sandboxPolicy.denyWrite,
             })
             return { output: '[wechat] Listener stopped. Back to runtime.', terminal: 'completed' }
+          }
+          if (name === 'undo') {
+            const restored = await restoreGitCheckpoint({ cwd: options.cwd, sessionId: session.sessionId })
+            if (!restored) {
+              return { output: '[undo] No active checkpoint found for this session.', terminal: 'model_error' }
+            }
+            const backupHint = restored.preRestoreBackupStashCommit
+              ? ` Current dirty state was stashed as ${restored.preRestoreBackupStashCommit} (${restored.preRestoreBackupStashMessage}).`
+              : ''
+            return {
+              output: `[undo] Restored checkpoint ${restored.checkpointId} for session ${restored.sessionId}.${backupHint}`,
+              terminal: 'completed',
+            }
           }
           return { output: `[command] unknown slash command: /${name}`, terminal: 'model_error' }
         },
         executeShellShortcut: async (command: string) => {
-          const result = await bashTool.execute({ command }, { cwd: options.cwd, permissions })
+          const result = await bashTool.execute(
+            { command },
+            {
+              cwd: options.cwd,
+              permissions,
+              sandbox: { policy: sandboxPolicy, backend: sandboxBackend },
+              onSandboxEvent: (event) => sink.onSandboxEvent?.(event),
+            },
+          )
           return {
             output: result.content,
             terminal: result.isError ? 'model_error' : 'completed',
@@ -309,7 +378,12 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
       runShellCommand: async (command) => {
         const result = await bashTool.execute(
           { command },
-          { cwd: options.cwd, permissions }
+          {
+            cwd: options.cwd,
+            permissions,
+            sandbox: { policy: sandboxPolicy, backend: sandboxBackend },
+            onSandboxEvent: (event) => sink.onSandboxEvent?.(event),
+          }
         )
         return {
           output: result.content,
@@ -354,6 +428,12 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
           cwd: options.cwd,
           forceLogin: true,
           permissionMode: options.permissionMode,
+          sandboxMode: sandboxPolicy.mode,
+          approvalPolicy: 'never',
+          networkMode: sandboxPolicy.networkMode,
+          writableRoots: sandboxPolicy.writableRoots,
+          denyRead: sandboxPolicy.denyRead,
+          denyWrite: sandboxPolicy.denyWrite,
         })
         process.stdout.write('[wechat] Listener stopped. Back to REPL.\n')
       },
