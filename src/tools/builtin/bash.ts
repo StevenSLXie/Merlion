@@ -3,6 +3,7 @@ import { NoSandboxBackend } from '../../sandbox/no_sandbox.ts'
 import { createUnsandboxedPolicy, widenSandboxPolicy } from '../../sandbox/policy.ts'
 import { resolveSandboxBackend } from '../../sandbox/resolve.ts'
 import type { SandboxViolation } from '../../sandbox/backend.ts'
+import { commandLooksDestructiveForReadonly } from '../../runtime/task_state.ts'
 
 const WARN_PATTERNS: RegExp[] = [
   /\brm\s+-[rf]{1,2}\b/,
@@ -119,6 +120,16 @@ export const bashTool: ToolDefinition = {
     const risk = assessCommandRisk(effectiveCommand)
     if (risk === 'block') {
       return { content: `[Blocked: command matched high-risk policy] ${effectiveCommand}`, isError: true }
+    }
+    if (
+      ctx.taskControl &&
+      !ctx.taskControl.mutationPolicy.mayRunDestructiveShell &&
+      commandLooksDestructiveForReadonly(effectiveCommand)
+    ) {
+      return {
+        content: `[Denied by task policy] Current ${ctx.taskControl.kind} task only allows read-only shell commands: ${effectiveCommand}`,
+        isError: true,
+      }
     }
 
     let policy = ctx.sandbox?.policy ?? createUnsandboxedPolicy(ctx.cwd)

@@ -4,6 +4,7 @@ import { NoSandboxBackend } from '../../sandbox/no_sandbox.ts'
 import { createUnsandboxedPolicy, widenSandboxPolicy } from '../../sandbox/policy.ts'
 import { resolveSandboxBackend } from '../../sandbox/resolve.ts'
 import type { SandboxViolation } from '../../sandbox/backend.ts'
+import { scriptAllowedForReadonlyVerification } from '../../runtime/task_state.ts'
 
 function isSafeScriptName(name: string): boolean {
   return /^[A-Za-z0-9:_-]+$/.test(name)
@@ -32,6 +33,16 @@ export const runScriptTool: ToolDefinition = {
     }
     if (!isSafeScriptName(script)) {
       return { content: 'Invalid script name: only [A-Za-z0-9:_-] is allowed.', isError: true }
+    }
+    if (
+      ctx.taskControl &&
+      !ctx.taskControl.mutationPolicy.mayMutateFiles &&
+      !scriptAllowedForReadonlyVerification(script)
+    ) {
+      return {
+        content: `[Denied by task policy] Current ${ctx.taskControl.kind} task only allows verification-style scripts: ${script}`,
+        isError: true,
+      }
     }
     const timeoutMs = parsePositiveInt(input.timeout_ms, 120_000, 1_000, 600_000)
     const commandSummary = `npm run ${script}`

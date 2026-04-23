@@ -239,7 +239,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     usageTracker,
     usageRates,
     toolSchemaTokensEstimate,
-    buildIntentContract: (prompt) => buildIntentContract(prompt) ?? undefined,
+    buildIntentContract: (prompt, contractOptions) => buildIntentContract(prompt, contractOptions) ?? undefined,
     createSubagentRuntime: ({ prompt, history, runtimeState, depth }) => createChildSubagentRuntime({
       cwd: options.cwd,
       session,
@@ -249,7 +249,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
       sandboxPolicy,
       sandboxBackend,
       askQuestions: (questions) => askStructuredQuestions(questions, { readLine: askLine }),
-      buildIntentContract: (subPrompt) => buildIntentContract(subPrompt) ?? undefined,
+      buildIntentContract: (subPrompt, contractOptions) => buildIntentContract(subPrompt, contractOptions) ?? undefined,
       sink,
       runtimeState,
       history,

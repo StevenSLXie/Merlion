@@ -1,0 +1,19 @@
+# Ralph Codex Progress Log
+Started: Thu Apr 23 23:13:04 +08 2026
+---
+## Codebase Patterns
+- Task-control changes need the runtime triangle to stay aligned: `QueryEngine` turn derivation, execution-charter injection, and capability-profile tool filtering.
+- Readonly mutation enforcement is split by surface: file mutations go through `authorizeMutation()`, while `bash`, `run_script`, and `spawn_agent` must also honor `ToolContext.taskControl`.
+
+## [2026-04-23 23:26:43 +0800] - SPEC-101
+- Implemented a runtime task control plane with task-kind derivation, correction-aware objective rewrites, execution charters, capability profiles, and role-bound child-agent overrides.
+- Files changed: `src/runtime/{task_state.ts,correction.ts,execution_charter.ts,query_engine.ts,loop.ts,runner.ts,subagents.ts,state/types.ts,AGENTS.md,intent_contract.ts}`, `src/tools/{pool.ts,types.ts}`, `src/tools/builtin/{bash.ts,fs_common.ts,run_script.ts,spawn_agent.ts,todo_write.ts,AGENTS.md}`, `src/prompt/system_prompt.ts`, `tests/{task_state.test.ts,execution_charter.test.ts,tool_pool.test.ts,query_engine.test.ts,runtime_loop.test.ts}`.
+- Verification run: `npm run typecheck`; `node --experimental-strip-types --test tests/subagents.test.ts tests/query_engine.test.ts tests/task_state.test.ts tests/runtime_loop.test.ts tests/tool_pool.test.ts tests/execution_charter.test.ts`; `npm test`.
+- Learnings for future iterations:
+  - Reusable patterns
+  - Keep worker subagents on implementation semantics even when their task text is vague; role semantics should override prompt-only classification.
+  - Gotchas
+  - Capability filtering must not strip custom registry tools from implementation turns.
+  - Useful context
+  - Correction prompts like “I mean …” need runtime objective rewrites, not just prompt-level restatement.
+---

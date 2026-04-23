@@ -1,5 +1,6 @@
 import type { ToolDefinition } from '../types.js'
 import type { SpawnAgentInput, SubagentRole } from '../../runtime/subagent_types.ts'
+import { profileAllowsSubagentRole } from '../../runtime/task_state.ts'
 
 function isRole(value: unknown): value is SubagentRole {
   return value === 'explorer' || value === 'worker' || value === 'verifier'
@@ -44,6 +45,15 @@ export const spawnAgentTool: ToolDefinition = {
     if (typeof input.task !== 'string' || input.task.trim() === '') {
       return { content: 'Invalid task: expected non-empty string.', isError: true }
     }
+    if (
+      ctx.taskControl &&
+      !profileAllowsSubagentRole(ctx.taskControl.capabilityProfile, input.role)
+    ) {
+      return {
+        content: `[Denied by task policy] Current ${ctx.taskControl.kind} task cannot spawn ${input.role} agents.`,
+        isError: true,
+      }
+    }
 
     const writeScope = parseWriteScope(input.writeScope)
     if (Array.isArray(input.writeScope) && writeScope?.length !== input.writeScope.length) {
@@ -78,4 +88,3 @@ export const spawnAgentTool: ToolDefinition = {
     }
   },
 }
-

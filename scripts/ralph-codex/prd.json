@@ -1,0 +1,39 @@
+{
+  "project": "Merlion",
+  "branchName": "ralph/spec-101",
+  "description": "Generated from spec docs/features/101-task-control-plane-and-capability-profiles.md",
+  "generatedFromSpecs": [
+    "docs/features/101-task-control-plane-and-capability-profiles.md"
+  ],
+  "userStories": [
+    {
+      "id": "SPEC-101",
+      "title": "101 Task Control Plane And Capability Profiles",
+      "description": "把 Merlion 从“单轮 prompt 驱动的 tool-using agent”升级为“有任务控制面的 coding runtime”。 Source spec: docs/features/101-task-control-plane-and-capability-profiles.md",
+      "acceptanceCriteria": [
+        "analysis / question / review / verification 四类任务默认零 mutation",
+        "用户纠偏后，Merlion 的后续回答目标与修正后的任务一致",
+        "即使模型误判任务，也不能在 readonly 任务里落地 destructive changes",
+        "review 与 implementation 在 runtime 上终于是两种不同模式，而不是同一个 loop 的不同措辞",
+        "Verification: correction detector 能识别常见纠偏表达",
+        "Verification: TaskKind 分类在代表性 prompt 上稳定",
+        "Verification: capability profile 选择正确",
+        "Verification: readonly mutation gate 对所有 destructive tools 生效",
+        "Verification: readonly bash policy 能拒绝写命令",
+        "Verification: analysis prompt 下，模型尝试调用 edit_file",
+        "Verification: 预期：被 runtime 拒绝",
+        "Verification: 用户先问“项目缺点”，随后纠偏“我问的是整个项目维度”",
+        "Verification: 预期：runtime 重写上一 objective，而不是回答“是的”",
+        "Verification: review prompt 下默认只暴露只读工具",
+        "Verification: analysis prompt 下无法 spawn worker",
+        "Verification: analysis / question / review / verification 四类任务默认零 mutation",
+        "Verification: 用户纠偏后，Merlion 的后续回答目标与修正后的任务一致",
+        "Verification: 即使模型误判任务，也不能在 readonly 任务里落地 destructive changes",
+        "Verification: review 与 implementation 在 runtime 上终于是两种不同模式，而不是同一个 loop 的不同措辞"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Source spec: docs/features/101-task-control-plane-and-capability-profiles.md\nStatus: proposed\nType: P0 Runtime Architecture + Safety\nFiles:\n- src/runtime/task_state.ts\n- src/runtime/correction.ts\n- src/runtime/execution_charter.ts\n- src/runtime/query_engine.ts\n- src/runtime/runner.ts\n- src/runtime/intent_contract.ts\n- src/runtime/local_turn.ts\n- src/tools/pool.ts\n- src/tools/types.ts\n- src/tools/catalog.ts\n- src/tools/builtin/fs_common.ts\n- src/tools/builtin/bash.ts\n- src/runtime/subagents.ts\n- src/context/service.ts\n- src/prompt/system_prompt.ts\n- tests/intent_contract.test.ts\n- tests/runtime_loop.test.ts\n- tests/tool_pool.test.ts\n- new:\n- tests/task_state.test.ts\nVerification:\n- correction detector 能识别常见纠偏表达\n- TaskKind 分类在代表性 prompt 上稳定\n- capability profile 选择正确\n- readonly mutation gate 对所有 destructive tools 生效\n- readonly bash policy 能拒绝写命令\n- analysis prompt 下，模型尝试调用 edit_file\n- 预期：被 runtime 拒绝\n- 用户先问“项目缺点”，随后纠偏“我问的是整个项目维度”\n- 预期：runtime 重写上一 objective，而不是回答“是的”\n- review prompt 下默认只暴露只读工具\n- analysis prompt 下无法 spawn worker\n- analysis / question / review / verification 四类任务默认零 mutation\n- 用户纠偏后，Merlion 的后续回答目标与修正后的任务一致\n- 即使模型误判任务，也不能在 readonly 任务里落地 destructive changes\n- review 与 implementation 在 runtime 上终于是两种不同模式，而不是同一个 loop 的不同措辞"
+    }
+  ]
+}

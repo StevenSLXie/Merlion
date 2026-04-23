@@ -102,3 +102,50 @@ test('buildDefaultRegistry consumes pooled tools', () => {
   assert.equal(registry.get('config_get'), undefined)
   assert.equal(registry.get('read_file')?.name, 'read_file')
 })
+
+test('readonly analysis profile hides mutation tools but keeps read-only delegation', async () => {
+  const pooled = assembleToolPool({ profile: 'readonly_analysis' })
+  const names = pooled.map((tool) => tool.name)
+  assert.equal(names.includes('edit_file'), false)
+  assert.equal(names.includes('write_file'), false)
+  assert.equal(names.includes('spawn_agent'), true)
+  assert.equal(pooled.find((tool) => tool.name === 'spawn_agent')?.isReadOnly, true)
+
+  const spawn = pooled.find((tool) => tool.name === 'spawn_agent')
+  assert.ok(spawn)
+  const denied = await spawn.execute(
+    { role: 'worker', task: 'implement a fix' },
+    {
+      cwd: process.cwd(),
+      subagents: {
+        async spawnAgent() {
+          throw new Error('worker should be rejected before reaching subagent runtime')
+        },
+        async waitAgent() {
+          throw new Error('not used')
+        },
+      },
+      taskControl: {
+        kind: 'analysis',
+        capabilityProfile: 'readonly_analysis',
+        mutationPolicy: {
+          mayMutateFiles: false,
+          mayRunDestructiveShell: false,
+          reason: 'analysis is read-only',
+        },
+      },
+    },
+  )
+  assert.equal(denied.isError, true)
+  assert.match(denied.content, /Denied/)
+})
+
+test('verification readonly profile exposes read-only verification tools only', () => {
+  const pooled = assembleToolPool({ profile: 'verification_readonly' })
+  const names = pooled.map((tool) => tool.name)
+  assert.equal(names.includes('bash'), true)
+  assert.equal(names.includes('run_script'), true)
+  assert.equal(names.includes('edit_file'), false)
+  assert.equal(pooled.find((tool) => tool.name === 'bash')?.isReadOnly, true)
+  assert.equal(pooled.find((tool) => tool.name === 'run_script')?.isReadOnly, true)
+})

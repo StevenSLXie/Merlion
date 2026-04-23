@@ -245,6 +245,13 @@ export async function authorizeMutation(
   targetPath: string,
   description: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (ctx.taskControl && !ctx.taskControl.mutationPolicy.mayMutateFiles) {
+    return {
+      ok: false,
+      error: `[Denied by task policy] Current ${ctx.taskControl.kind} task does not allow file mutations.`,
+    }
+  }
+
   const policy = ctx.sandbox?.policy
   if (!policy) {
     return await requestPermission(ctx, toolName, description, {

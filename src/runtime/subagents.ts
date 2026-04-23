@@ -38,6 +38,8 @@ import {
   type SubagentToolRuntime,
   type WaitAgentResult,
 } from './subagent_types.ts'
+import type { TaskControlDecision, TaskState } from './task_state.ts'
+import { deriveTaskControl } from './task_state.ts'
 
 type ChildExecutionMode = 'foreground' | 'background'
 
@@ -68,7 +70,7 @@ interface CreateSubagentRuntimeOptions {
   sandboxPolicy?: ResolvedSandboxPolicy
   sandboxBackend?: SandboxBackend
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
-  buildIntentContract?: (prompt: string) => string | undefined
+  buildIntentContract?: (prompt: string, options?: { primaryObjective?: string }) => string | undefined
   sink?: RuntimeSink
   runtimeState: RuntimeState
   history: ConversationItem[]
@@ -473,6 +475,65 @@ function createChildContextService(
   }
 }
 
+function deriveRoleBoundTaskControl(
+  role: SubagentRole,
+  prompt: string,
+  previousTask?: TaskState | null,
+  writeScope?: string[],
+): TaskControlDecision {
+  const derived = deriveTaskControl(prompt, previousTask)
+  if (role === 'worker') {
+    return {
+      taskState: {
+        ...derived.taskState,
+        kind: 'implementation',
+        expectedDeliverable: 'Implement the assigned change, report changed files, and summarize verification.',
+        mayMutateFiles: true,
+        requiredEvidence: 'codebacked',
+      },
+      capabilityProfile: 'implementation_scoped',
+      mutationPolicy: {
+        mayMutateFiles: true,
+        mayRunDestructiveShell: true,
+        writableScopes: writeScope && writeScope.length > 0 ? [...writeScope] : derived.mutationPolicy.writableScopes,
+        reason: 'Worker subagents always run in implementation mode.',
+      },
+    }
+  }
+  if (role === 'verifier') {
+    return {
+      taskState: {
+        ...derived.taskState,
+        kind: 'verification',
+        expectedDeliverable: 'Run verification and report whether the parent claim holds. Do not implement fixes.',
+        mayMutateFiles: false,
+        requiredEvidence: 'verified',
+      },
+      capabilityProfile: 'verification_readonly',
+      mutationPolicy: {
+        mayMutateFiles: false,
+        mayRunDestructiveShell: false,
+        reason: 'Verifier subagents are always read-only.',
+      },
+    }
+  }
+  return {
+    taskState: {
+      ...derived.taskState,
+      kind: 'analysis',
+      expectedDeliverable: 'Gather evidence, cite concrete files and symbols, and stay read-only.',
+      mayMutateFiles: false,
+      requiredEvidence: derived.taskState.requiredEvidence === 'light' ? 'codebacked' : derived.taskState.requiredEvidence,
+    },
+    capabilityProfile: 'readonly_analysis',
+    mutationPolicy: {
+      mayMutateFiles: false,
+      mayRunDestructiveShell: false,
+      reason: 'Explorer subagents are always read-only.',
+    },
+  }
+}
+
 export function deriveChildSandboxPolicy(
   parent: ResolvedSandboxPolicy,
   role: SubagentRole,
@@ -675,6 +736,12 @@ async function runChildAgent(
     maxTurns: 100,
     askQuestions: execution === 'background' ? undefined : options.askQuestions,
     buildIntentContract: options.buildIntentContract,
+    deriveTaskControl: (childPrompt, previousTask) => deriveRoleBoundTaskControl(
+      input.role,
+      childPrompt,
+      previousTask,
+      input.writeScope,
+    ),
     sink: execution === 'foreground'
       ? {
           renderBanner() {},

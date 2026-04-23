@@ -1,3 +1,6 @@
+import type { ExecutionCharter } from '../execution_charter.ts'
+import type { CapabilityProfileName, MutationPolicy, TaskState } from '../task_state.ts'
+
 export interface PermissionDecisionRecord {
   tool: string
   description: string
@@ -22,6 +25,12 @@ export interface CompactState {
 export interface RuntimeState {
   permissions: PermissionState
   compact: CompactState
+  task: {
+    currentTask: TaskState | null
+    capabilityProfile: CapabilityProfileName | null
+    mutationPolicy: MutationPolicy | null
+    charter: ExecutionCharter | null
+  }
 }
 
 export interface RuntimeStateSnapshot {
@@ -35,6 +44,12 @@ export interface RuntimeStateSnapshot {
     hasAttemptedReactiveCompact: boolean
     lastCompactBoundaryCount: number | null
     lastSummaryText: string | null
+  }
+  task: {
+    currentTask: TaskState | null
+    capabilityProfile: CapabilityProfileName | null
+    mutationPolicy: MutationPolicy | null
+    charter: ExecutionCharter | null
   }
 }
 
@@ -51,6 +66,12 @@ export function createRuntimeState(): RuntimeState {
       lastCompactBoundaryCount: null,
       lastSummaryText: null,
     },
+    task: {
+      currentTask: null,
+      capabilityProfile: null,
+      mutationPolicy: null,
+      charter: null,
+    },
   }
 }
 
@@ -66,6 +87,32 @@ export function snapshotRuntimeState(state: RuntimeState): RuntimeStateSnapshot 
       hasAttemptedReactiveCompact: state.compact.hasAttemptedReactiveCompact,
       lastCompactBoundaryCount: state.compact.lastCompactBoundaryCount,
       lastSummaryText: state.compact.lastSummaryText,
+    },
+    task: {
+      currentTask: state.task.currentTask
+        ? {
+            ...state.task.currentTask,
+            explicitPaths: [...state.task.currentTask.explicitPaths],
+            openQuestions: [...state.task.currentTask.openQuestions],
+            correctionNotes: state.task.currentTask.correctionNotes ? [...state.task.currentTask.correctionNotes] : undefined,
+          }
+        : null,
+      capabilityProfile: state.task.capabilityProfile,
+      mutationPolicy: state.task.mutationPolicy
+        ? {
+            ...state.task.mutationPolicy,
+            writableScopes: state.task.mutationPolicy.writableScopes
+              ? [...state.task.mutationPolicy.writableScopes]
+              : undefined,
+          }
+        : null,
+      charter: state.task.charter
+        ? {
+            ...state.task.charter,
+            nonGoals: [...state.task.charter.nonGoals],
+            correctionNotes: state.task.charter.correctionNotes ? [...state.task.charter.correctionNotes] : undefined,
+          }
+        : null,
     },
   }
 }

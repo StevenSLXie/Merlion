@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../src/types.ts'
 import type { ConversationItem, ProviderCapabilities, ProviderResult } from '../src/runtime/items.ts'
@@ -7,6 +10,8 @@ import { itemsToMessages, messagesToItems } from '../src/runtime/items.ts'
 import { ToolRegistry } from '../src/tools/registry.ts'
 import type { ToolDefinition } from '../src/tools/types.ts'
 import { runLoop, shouldNudge } from '../src/runtime/loop.ts'
+import { bashTool } from '../src/tools/builtin/bash.ts'
+import { buildDefaultRegistry } from '../src/tools/builtin/index.ts'
 
 function renderedMessages(items: ConversationItem[]) {
   return itemsToMessages(items)
@@ -163,6 +168,28 @@ function makeAlwaysSuccessTool(name: string): ToolDefinition {
     async execute(input) {
       return { content: JSON.stringify(input), isError: false }
     }
+  }
+}
+
+function makeReadonlyAnalysisTaskControl() {
+  return {
+    taskState: {
+      kind: 'analysis' as const,
+      activeObjective: 'Analyze the project.',
+      expectedDeliverable: 'Provide a code-backed analysis.',
+      mayMutateFiles: false,
+      requiredEvidence: 'codebacked' as const,
+      correctionOfPreviousTurn: false,
+      replacesPreviousObjective: false,
+      explicitPaths: [],
+      openQuestions: [],
+    },
+    capabilityProfile: 'readonly_analysis' as const,
+    mutationPolicy: {
+      mayMutateFiles: false,
+      mayRunDestructiveShell: false,
+      reason: 'analysis is read-only',
+    },
   }
 }
 
@@ -543,6 +570,88 @@ test('loop accepts initial items', async () => {
   assert.equal(result.terminal, 'completed')
   assert.equal(result.finalText, 'continued')
   assert.equal(result.state.items.length >= 4, true)
+})
+
+test('readonly task control blocks mutation tools even if the model calls them', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'merlion-readonly-mutation-'))
+  try {
+    const provider = new StubProvider([
+      {
+        role: 'assistant',
+        content: null,
+        finish_reason: 'tool_calls',
+        tool_calls: [call('write_file', { path: 'blocked.txt', content: 'nope' })],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+      {
+        role: 'assistant',
+        content: 'stayed read-only',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+
+    const result = await runLoop({
+      provider,
+      registry: buildDefaultRegistry({ mode: 'default' }),
+      systemPrompt: 'system',
+      userPrompt: 'Analyze the repository.',
+      cwd,
+      maxTurns: 5,
+      taskControl: makeReadonlyAnalysisTaskControl(),
+    })
+
+    assert.equal(result.terminal, 'completed')
+    const rendered = renderedMessages(result.state.items)
+    const toolMessage = rendered.find((message) => message.role === 'tool')
+    assert.match(toolMessage?.content ?? '', /Denied by task policy/)
+    await assert.rejects(() => readFile(join(cwd, 'blocked.txt'), 'utf8'))
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test('readonly task control blocks destructive bash commands', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'merlion-readonly-bash-'))
+  try {
+    await writeFile(join(cwd, 'safe.txt'), 'keep', 'utf8')
+    const provider = new StubProvider([
+      {
+        role: 'assistant',
+        content: null,
+        finish_reason: 'tool_calls',
+        tool_calls: [call('bash', { command: 'touch blocked.txt' })],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+      {
+        role: 'assistant',
+        content: 'reported the denial',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+
+    const registry = new ToolRegistry()
+    registry.register(bashTool)
+
+    const result = await runLoop({
+      provider,
+      registry,
+      systemPrompt: 'system',
+      userPrompt: 'Verify the change without editing files.',
+      cwd,
+      maxTurns: 5,
+      taskControl: makeReadonlyAnalysisTaskControl(),
+    })
+
+    assert.equal(result.terminal, 'completed')
+    const toolMessage = renderedMessages(result.state.items).find((message) => message.role === 'tool')
+    assert.match(toolMessage?.content ?? '', /read-only shell commands/)
+    await assert.rejects(() => readFile(join(cwd, 'blocked.txt'), 'utf8'))
+    assert.equal(await readFile(join(cwd, 'safe.txt'), 'utf8'), 'keep')
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
 })
 
 // ── shouldNudge unit tests ─────────────────────────────────────────────────

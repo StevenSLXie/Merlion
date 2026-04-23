@@ -1,4 +1,5 @@
 import type { SubagentToolRuntime } from '../runtime/subagent_types.ts'
+import type { CapabilityProfileName, MutationPolicy, TaskKind } from '../runtime/task_state.ts'
 import type { RuntimeSandboxEvent } from '../runtime/events.ts'
 import type { SandboxViolation } from '../sandbox/backend.ts'
 import type { SandboxBackend } from '../sandbox/backend.ts'
@@ -87,6 +88,11 @@ export interface ToolContext {
   listTools?: () => ToolSummary[]
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
   subagents?: SubagentToolRuntime
+  taskControl?: {
+    kind: TaskKind
+    capabilityProfile: CapabilityProfileName
+    mutationPolicy: MutationPolicy
+  }
 }
 
 export interface ToolDefinition {

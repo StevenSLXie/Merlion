@@ -76,6 +76,7 @@ import {
 } from './loop_guardrails.ts'
 import type { SandboxBackend } from '../sandbox/backend.ts'
 import type { ResolvedSandboxPolicy } from '../sandbox/policy.ts'
+import type { TaskControlDecision } from './task_state.ts'
 
 export { shouldNudge } from './loop_guardrails.ts'
 
@@ -120,6 +121,7 @@ export interface RunLoopOptions {
   onToolCallStart?: (event: ToolCallStartEvent) => Promise<void> | void
   onToolCallResult?: (event: ToolCallResultEvent) => Promise<void> | void
   onSandboxEvent?: (event: RuntimeSandboxEvent) => Promise<void> | void
+  taskControl?: TaskControlDecision
   onToolBatchComplete?: (event: {
     turn: number
     results: ToolCallResultEvent[]
@@ -401,6 +403,13 @@ function buildToolContext(options: RunLoopOptions): ToolContext {
     },
     askQuestions: options.askQuestions,
     subagents: options.subagents,
+    taskControl: options.taskControl
+      ? {
+          kind: options.taskControl.taskState.kind,
+          capabilityProfile: options.taskControl.capabilityProfile,
+          mutationPolicy: options.taskControl.mutationPolicy,
+        }
+      : undefined,
     listTools: () =>
       options.registry.getAll().map((tool) => ({
         name: tool.name,

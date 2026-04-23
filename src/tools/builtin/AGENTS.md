@@ -14,6 +14,8 @@
 - Keep path validation through `fs_common.ts`.
 - Preserve compatibility aliases in file tool APIs.
 - Tool results should stay concise and budget-aware.
+- Destructive file tools should funnel through `authorizeMutation()` so sandbox policy and task-control readonly gates stay consistent.
+- `bash` / `run_script` read-only behavior is task-policy aware; keep shell/script guardrails aligned with runtime capability profiles.
 <!-- END MANUAL -->
 
 <!-- BEGIN AUTO -->

@@ -88,14 +88,19 @@ export function isBugFixPrompt(userPrompt: string): boolean {
   return BUGFIX_PROMPT_PATTERNS.some((pattern) => pattern.test(trimmed))
 }
 
-export function buildIntentContract(userPrompt: string): string | null {
+export function buildIntentContract(
+  userPrompt: string,
+  options?: {
+    primaryObjective?: string
+  },
+): string | null {
   const trimmed = userPrompt.trim()
   if (trimmed === '') return null
 
   const clauses = splitPromptClauses(trimmed).map(normalizeClause)
   if (clauses.length === 0) return null
 
-  const objective = clauses[0]!.slice(0, 240)
+  const objective = options?.primaryObjective?.trim() || clauses[0]!.slice(0, 240)
   const constraints = clauses.filter(looksLikeConstraint).slice(0, 4)
   const explicitPaths = extractExplicitTargetPaths(trimmed).slice(0, 6)
 

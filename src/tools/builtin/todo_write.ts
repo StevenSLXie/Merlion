@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { ToolDefinition } from '../types.js'
-import { resolveMutationTargetPath } from './fs_common.ts'
+import { authorizeMutation, resolveMutationTargetPath } from './fs_common.ts'
 
 type TodoStatus = 'pending' | 'in_progress' | 'completed'
 type TodoItem = { content: string; status: TodoStatus; activeForm?: string }
@@ -73,11 +73,8 @@ export const todoWriteTool: ToolDefinition = {
     if (parsedTodos !== null) {
       const validated = await resolveMutationTargetPath(ctx.cwd, input.path ?? '.merlion/todos.json')
       if (!validated.ok) return { content: validated.error, isError: true }
-
-      const decision = await ctx.permissions?.ask('todo_write', `Update todo list: ${validated.path}`)
-      if (decision === 'deny' || decision === undefined) {
-        return { content: '[Permission denied]', isError: true }
-      }
+      const authorization = await authorizeMutation(ctx, 'todo_write', validated.path, `Update todo list: ${validated.path}`)
+      if (!authorization.ok) return { content: authorization.error, isError: true }
 
       let oldTodos: TodoItem[] = []
       try {
@@ -119,11 +116,8 @@ export const todoWriteTool: ToolDefinition = {
     if (!validated.ok) return { content: validated.error, isError: true }
     const checked = input.checked === true
     const line = `- [${checked ? 'x' : ' '}] ${item.trim()}`
-
-    const decision = await ctx.permissions?.ask('todo_write', `Append todo: ${validated.path}`)
-    if (decision === 'deny' || decision === undefined) {
-      return { content: '[Permission denied]', isError: true }
-    }
+    const authorization = await authorizeMutation(ctx, 'todo_write', validated.path, `Append todo: ${validated.path}`)
+    if (!authorization.ok) return { content: authorization.error, isError: true }
 
     await mkdir(dirname(validated.path), { recursive: true })
     let content = ''

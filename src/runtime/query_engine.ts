@@ -18,8 +18,12 @@ import type { ContextService } from '../context/service.ts'
 import { createTrackingPermissionStore } from './state/permissions.ts'
 import { recordFinalSummary, syncCompactStateFromLoopState } from './state/compact.ts'
 import { createRuntimeState, snapshotRuntimeState, type RuntimeState, type RuntimeStateSnapshot } from './state/types.ts'
+import { buildExecutionCharter, renderExecutionCharter } from './execution_charter.ts'
+import { deriveTaskControl, type TaskControlDecision, type TaskState } from './task_state.ts'
 import type { SandboxBackend } from '../sandbox/backend.ts'
 import type { ResolvedSandboxPolicy } from '../sandbox/policy.ts'
+import { buildRegistryFromPool } from '../tools/builtin/index.ts'
+import { applyCapabilityProfile } from '../tools/pool.ts'
 import {
   collectGitWorkingTreePaths,
   collectLatestCommitPaths,
@@ -47,7 +51,8 @@ export interface QueryEngineOptions {
   maxTurns?: number
   initialItems?: ConversationItem[]
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
-  buildIntentContract?: (prompt: string) => string | undefined
+  buildIntentContract?: (prompt: string, options?: { primaryObjective?: string }) => string | undefined
+  deriveTaskControl?: (prompt: string, previousTask?: TaskState | null) => TaskControlDecision
   sink?: RuntimeSink
   promptObservabilityTracker?: {
     record: (turn: number, items: ConversationItem[]) => PromptObservabilitySnapshot
@@ -139,10 +144,12 @@ export class QueryEngine {
     await this.options.persistItem?.(item, origin, runtimeResponseId)
   }
 
-  private async createPromptSeed(prompt: string): Promise<ConversationItem[]> {
+  private async createPromptSeed(prompt: string, charterText?: string): Promise<ConversationItem[]> {
+    const runtimeItems = charterText ? [createSystemItem(charterText, 'runtime')] : []
     return [
       ...this.history,
       ...await this.options.contextService.buildPromptPrelude(prompt),
+      ...runtimeItems,
     ]
   }
 
@@ -231,14 +238,40 @@ export class QueryEngine {
     let sawSuccessfulGitCommit = false
     let sawWorkspaceMutationSignal = false
     let latestPromptObservability: PromptObservabilitySnapshot | undefined
-    const seededItems = await this.createPromptSeed(prompt)
+    const taskControl = (this.options.deriveTaskControl ?? deriveTaskControl)(prompt, this.runtimeState.task.currentTask)
+    const charter = buildExecutionCharter(
+      taskControl.taskState,
+      taskControl.capabilityProfile,
+      taskControl.mutationPolicy,
+    )
+    const charterText = renderExecutionCharter(taskControl.taskState, charter)
+    this.runtimeState.task.currentTask = {
+      ...taskControl.taskState,
+      explicitPaths: [...taskControl.taskState.explicitPaths],
+      openQuestions: [...taskControl.taskState.openQuestions],
+      correctionNotes: taskControl.taskState.correctionNotes ? [...taskControl.taskState.correctionNotes] : undefined,
+    }
+    this.runtimeState.task.capabilityProfile = taskControl.capabilityProfile
+    this.runtimeState.task.mutationPolicy = {
+      ...taskControl.mutationPolicy,
+      writableScopes: taskControl.mutationPolicy.writableScopes ? [...taskControl.mutationPolicy.writableScopes] : undefined,
+    }
+    this.runtimeState.task.charter = {
+      ...charter,
+      nonGoals: [...charter.nonGoals],
+      correctionNotes: charter.correctionNotes ? [...charter.correctionNotes] : undefined,
+    }
+    const turnRegistry = buildRegistryFromPool(applyCapabilityProfile(this.options.registry.getAll(), taskControl.capabilityProfile))
+    const seededItems = await this.createPromptSeed(prompt, charterText)
 
     const result = await runLoop({
       provider: this.options.provider,
-      registry: this.options.registry,
+      registry: turnRegistry,
       systemPrompt: await this.options.contextService.getSystemPrompt(),
       userPrompt: prompt,
-      intentContract: this.options.buildIntentContract?.(prompt),
+      intentContract: this.options.buildIntentContract?.(prompt, {
+        primaryObjective: taskControl.taskState.activeObjective,
+      }),
       cwd: this.options.cwd,
       sessionId: this.options.sessionId,
       maxTurns: this.options.maxTurns ?? 100,
@@ -248,6 +281,7 @@ export class QueryEngine {
       askQuestions: this.options.askQuestions,
       initialItems: seededItems,
       persistInitialMessages: false,
+      taskControl,
       subagents: this.options.createSubagentRuntime?.({
         prompt,
         history: [...this.history],

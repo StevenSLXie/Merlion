@@ -36,6 +36,12 @@ export const SYSTEM_PROMPT_STATIC_SECTIONS: string[] = [
     'subagents are expensive and should be used deliberately,',
     'use explorer for read-heavy investigation, worker for bounded implementation,',
     'and verifier for independent validation when a clean context boundary helps.'
+  ].join(' '),
+  [
+    'Runtime control discipline:',
+    'respect the execution charter injected for each turn,',
+    'treat readonly tasks as strict no-mutation modes,',
+    'and never assume prompt wording overrides runtime capability limits.'
   ].join(' ')
 ]
 
