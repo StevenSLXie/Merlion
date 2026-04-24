@@ -16,7 +16,8 @@ import {
   type PromptObservabilitySnapshot,
 } from '../../src/runtime/prompt_observability.ts'
 import { OpenAICompatProvider } from '../../src/providers/openai.ts'
-import { buildDefaultRegistry } from '../../src/tools/builtin/index.ts'
+import type { CapabilityProfileName } from '../../src/runtime/task_state.ts'
+import { buildDefaultRegistry, buildRegistryFromPool } from '../../src/tools/builtin/index.ts'
 import type { RuntimeSandboxEvent } from '../../src/runtime/events.ts'
 import { runLoop } from '../../src/runtime/loop.ts'
 import type { RunLoopResult } from '../../src/runtime/loop.ts'
@@ -25,6 +26,7 @@ import type { MerlionSandboxConfig } from '../../src/sandbox/policy.ts'
 import { resolveSandboxPolicy } from '../../src/sandbox/policy.ts'
 import { deriveSandboxProtectedPaths } from '../../src/sandbox/protected_paths.ts'
 import { resolveSandboxBackend } from '../../src/sandbox/resolve.ts'
+import { assembleToolPool } from '../../src/tools/pool.ts'
 
 export const FIXTURES_DIR = join(fileURLToPath(import.meta.url), '../fixtures')
 
@@ -52,9 +54,48 @@ export function makeProvider(): OpenAICompatProvider {
   })
 }
 
-/** Create a fresh tool registry with all built-in tools registered. */
-export function makeRegistry() {
-  return buildDefaultRegistry({ mode: 'default' })
+const READONLY_QUESTION_PROFILE: CapabilityProfileName = 'readonly_question'
+const READONLY_QUESTION_TOOL_NAMES = assembleToolPool({
+  mode: 'default',
+  profile: READONLY_QUESTION_PROFILE,
+}).map((tool) => tool.name)
+
+const BUDGET_TARGETED_E2E_SCENARIOS = new Map<
+  string,
+  { profile?: CapabilityProfileName; extraToolNames?: string[] }
+>([
+  ['e2e-read', { profile: READONLY_QUESTION_PROFILE }],
+  ['e2e-search', { profile: READONLY_QUESTION_PROFILE }],
+  ['e2e-tool-error', { profile: READONLY_QUESTION_PROFILE }],
+  ['e2e-edit', { extraToolNames: ['edit_file'] }],
+  ['e2e-multi-tool', { extraToolNames: ['create_file'] }],
+])
+
+function uniqueNames(names: string[]): string[] {
+  return [...new Set(names)]
+}
+
+/** Create a fresh tool registry, narrowing only the targeted budget-regression scenarios. */
+export function makeRegistry(options?: { scenario?: string }) {
+  const scenario = options?.scenario ? safeScenarioLabel(options.scenario) : null
+  const targetedConfig = scenario ? BUDGET_TARGETED_E2E_SCENARIOS.get(scenario) : undefined
+
+  if (!targetedConfig) {
+    return buildDefaultRegistry({ mode: 'default' })
+  }
+
+  if (targetedConfig.profile && !targetedConfig.extraToolNames) {
+    return buildDefaultRegistry({ mode: 'default', profile: targetedConfig.profile })
+  }
+
+  return buildRegistryFromPool(assembleToolPool({
+    mode: 'default',
+    profile: 'implementation_scoped',
+    includeNames: uniqueNames([
+      ...READONLY_QUESTION_TOOL_NAMES,
+      ...(targetedConfig.extraToolNames ?? []),
+    ]),
+  }))
 }
 
 /**
@@ -171,7 +212,7 @@ export async function runSandboxedAgent(
     baseURL: E2E_BASE_URL,
     model: E2E_MODEL,
   })
-  const registry = buildDefaultRegistry({ mode: 'default' })
+  const registry = makeRegistry({ scenario: options?.scenario })
   const toolSchema = summarizeToolSchema(registry.getAll())
   const promptObservabilityTracker = createPromptObservabilityTrackerWithToolSchema(toolSchema.tool_schema_serialized)
   const usageTracker = createUsageTracker()
