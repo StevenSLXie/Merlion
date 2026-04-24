@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   createPromptObservabilityTracker,
   createPromptObservabilityTrackerWithToolSchema,
+  summarizeToolSchema,
   withResponseBoundaryPromptObservability,
 } from '../src/runtime/prompt_observability.ts'
 import { createExternalUserItem, createFunctionCallOutputItem, createSystemItem, messagesToItems } from '../src/runtime/items.ts'
@@ -40,12 +41,17 @@ test('prompt observability tracks role tokens and stable prefix hash', () => {
 })
 
 test('prompt observability includes stable tool schema tokens across turns', () => {
-  const tracker = createPromptObservabilityTrackerWithToolSchema(JSON.stringify([
-    { name: 'read_file', parameters: { type: 'object' } }
-  ]))
+  const toolSchema = summarizeToolSchema([
+    {
+      name: 'read_file',
+      description: 'Read a file from disk.',
+      parameters: { type: 'object', properties: { path: { type: 'string' } } },
+    },
+  ])
+  const tracker = createPromptObservabilityTrackerWithToolSchema(toolSchema.tool_schema_serialized)
 
   const first = tracker.record(1, messagesToItems([{ role: 'system', content: 'sys' }]))
-  assert.equal(first.tool_schema_tokens_estimate > 0, true)
+  assert.equal(first.tool_schema_tokens_estimate, toolSchema.tool_schema_tokens_estimate)
   assert.equal(first.stable_prefix_tokens, 0)
 
   const second = tracker.record(2, messagesToItems([
@@ -55,6 +61,27 @@ test('prompt observability includes stable tool schema tokens across turns', () 
   assert.equal(second.tool_schema_tokens_estimate, first.tool_schema_tokens_estimate)
   assert.equal(second.stable_prefix_tokens >= second.tool_schema_tokens_estimate, true)
   assert.equal(typeof second.stable_prefix_hash, 'string')
+})
+
+test('tool schema observability summary matches serialized prompt accounting inputs', () => {
+  const summary = summarizeToolSchema([
+    {
+      name: 'read_file',
+      description: 'Read a file from disk.',
+      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+    },
+    {
+      name: 'search',
+      description: 'Search within files.',
+      parameters: { type: 'object', properties: { pattern: { type: 'string' } } },
+    },
+  ])
+
+  assert.equal(summary.tool_count, 2)
+  assert.equal(summary.tool_schema_serialized.length, summary.tool_schema_serialized_chars)
+  assert.equal(summary.tool_schema_tokens_estimate, Math.ceil(summary.tool_schema_serialized_chars / 4))
+  assert.match(summary.tool_schema_serialized, /"name":"read_file"/)
+  assert.match(summary.tool_schema_serialized, /"name":"search"/)
 })
 
 test('prompt observability can track stable prefix over item transcripts', () => {

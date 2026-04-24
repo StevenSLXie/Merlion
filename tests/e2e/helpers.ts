@@ -10,6 +10,11 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 import { evaluateCostGate, parseCostGateMode, readCostBaseline } from '../../src/runtime/cost_gate.ts'
+import {
+  createPromptObservabilityTrackerWithToolSchema,
+  summarizeToolSchema,
+  type PromptObservabilitySnapshot,
+} from '../../src/runtime/prompt_observability.ts'
 import { OpenAICompatProvider } from '../../src/providers/openai.ts'
 import { buildDefaultRegistry } from '../../src/tools/builtin/index.ts'
 import type { RuntimeSandboxEvent } from '../../src/runtime/events.ts'
@@ -88,6 +93,8 @@ async function writeUsageArchive(params: {
   baseURL: string
   usageSamples: Array<{ prompt_tokens: number; completion_tokens: number; cached_tokens: number | null }>
   totals: { prompt_tokens: number; completion_tokens: number; cached_tokens: number; total_tokens: number }
+  toolSchema: ReturnType<typeof summarizeToolSchema>
+  promptObservability: PromptObservabilitySnapshot[]
 }): Promise<void> {
   const dir = getUsageArchiveDir()
   await mkdir(dir, { recursive: true })
@@ -104,8 +111,12 @@ async function writeUsageArchive(params: {
     task: params.task,
     final_text: params.result.finalText,
     turn_count: params.result.state.turnCount,
+    tool_count: params.toolSchema.tool_count,
+    tool_schema_serialized_chars: params.toolSchema.tool_schema_serialized_chars,
+    tool_schema_tokens_estimate: params.toolSchema.tool_schema_tokens_estimate,
     usage_samples: params.usageSamples,
-    totals: params.totals
+    totals: params.totals,
+    prompt_observability: params.promptObservability,
   }
   await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
 }
@@ -156,8 +167,11 @@ export async function runSandboxedAgent(
     model: E2E_MODEL,
   })
   const registry = buildDefaultRegistry({ mode: 'default' })
+  const toolSchema = summarizeToolSchema(registry.getAll())
+  const promptObservabilityTracker = createPromptObservabilityTrackerWithToolSchema(toolSchema.tool_schema_serialized)
   const usageTracker = createUsageTracker()
   const usageSamples: Array<{ prompt_tokens: number; completion_tokens: number; cached_tokens: number | null }> = []
+  const promptObservabilityByTurn = new Map<number, PromptObservabilitySnapshot>()
   const sandboxEvents: RuntimeSandboxEvent[] = []
   const protectedPaths = await deriveSandboxProtectedPaths(cwd)
   const sandboxPolicy = resolveSandboxPolicy({
@@ -187,6 +201,10 @@ export async function runSandboxedAgent(
       Object.fromEntries(
         questions.map((question) => [question.id, question.options[0]?.label ?? ''])
       ),
+    promptObservabilityTracker,
+    onPromptObservability: (snapshot) => {
+      promptObservabilityByTurn.set(snapshot.turn, snapshot)
+    },
     onSandboxEvent: (event) => {
       sandboxEvents.push(event)
     },
@@ -209,6 +227,8 @@ export async function runSandboxedAgent(
     baseURL: E2E_BASE_URL,
     usageSamples,
     totals: usageTracker.getTotals(),
+    toolSchema,
+    promptObservability: Array.from(promptObservabilityByTurn.values()).sort((left, right) => left.turn - right.turn),
   })
   await enforceCostGate(options?.scenario ?? 'e2e', usageTracker.getTotals().total_tokens)
 

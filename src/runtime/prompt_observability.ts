@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import type { ConversationItem } from './items.ts'
+import type { ToolDefinition } from '../tools/types.js'
 
 export interface PromptRoleTokens {
   system: number
@@ -23,14 +24,37 @@ export interface PromptObservabilitySnapshot {
   provider_finish_reason?: string
 }
 
+export interface ToolSchemaObservabilitySummary {
+  tool_count: number
+  tool_schema_serialized: string
+  tool_schema_serialized_chars: number
+  tool_schema_tokens_estimate: number
+}
+
 interface PromptTrackerState {
   signatures: string[]
   roleTokens: PromptRoleTokens
   initialized: boolean
 }
 
-function estimateTokensFromChars(chars: number): number {
+export function estimateTokensFromChars(chars: number): number {
   return Math.max(0, Math.ceil(chars / 4))
+}
+
+export function summarizeToolSchema(
+  tools: Array<Pick<ToolDefinition, 'name' | 'description' | 'parameters'>>
+): ToolSchemaObservabilitySummary {
+  const toolSchemaSerialized = JSON.stringify(tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters
+  })))
+  return {
+    tool_count: tools.length,
+    tool_schema_serialized: toolSchemaSerialized,
+    tool_schema_serialized_chars: toolSchemaSerialized.length,
+    tool_schema_tokens_estimate: estimateTokensFromChars(toolSchemaSerialized.length),
+  }
 }
 
 function emptyRoleTokens(): PromptRoleTokens {
