@@ -54,15 +54,20 @@ async function runScenarioLoop(
 }
 
 test('targeted budget-regression E2E scenarios reuse readonly profile narrowing', () => {
-  for (const scenario of ['e2e-read', 'e2e-search', 'e2e-tool-error']) {
+  for (const scenario of ['e2e-read', 'e2e-tool-error']) {
     const names = makeRegistry({ scenario }).getAll().map((tool) => tool.name)
     assert.deepEqual(names, readonlyQuestionNames, `${scenario} should use readonly_question tools`)
   }
 })
 
-test('edit scenario adds only edit_file to the readonly question tool set', () => {
+test('search scenario keeps only the search tool to avoid alternate read paths', () => {
+  const names = makeRegistry({ scenario: 'e2e-search' }).getAll().map((tool) => tool.name)
+  assert.deepEqual(names, ['search'])
+})
+
+test('edit scenario keeps only read_file and edit_file', () => {
   const names = makeRegistry({ scenario: 'e2e-edit' }).getAll().map((tool) => tool.name)
-  assert.deepEqual(names, expectedScenarioNames('edit_file'))
+  assert.deepEqual(names, ['read_file', 'edit_file'])
   assert.equal(names.includes('create_file'), false)
   assert.equal(names.includes('write_file'), false)
 })

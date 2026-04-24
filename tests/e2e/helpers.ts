@@ -67,12 +67,12 @@ const READONLY_QUESTION_TOOL_NAMES = assembleToolPool({
 
 const BUDGET_TARGETED_E2E_SCENARIOS = new Map<
   string,
-  { profile?: CapabilityProfileName; extraToolNames?: string[] }
+  { profile?: CapabilityProfileName; includeToolNames?: string[]; extraToolNames?: string[] }
 >([
   ['e2e-read', { profile: READONLY_QUESTION_PROFILE }],
-  ['e2e-search', { profile: READONLY_QUESTION_PROFILE }],
+  ['e2e-search', { profile: READONLY_QUESTION_PROFILE, includeToolNames: ['search'] }],
   ['e2e-tool-error', { profile: READONLY_QUESTION_PROFILE }],
-  ['e2e-edit', { extraToolNames: ['edit_file'] }],
+  ['e2e-edit', { includeToolNames: ['read_file', 'edit_file'] }],
   ['e2e-multi-tool', { extraToolNames: ['create_file'] }],
 ])
 
@@ -87,6 +87,14 @@ export function makeRegistry(options?: { scenario?: string }) {
 
   if (!targetedConfig) {
     return buildDefaultRegistry({ mode: 'default' })
+  }
+
+  if (targetedConfig.includeToolNames) {
+    return buildRegistryFromPool(assembleToolPool({
+      mode: 'default',
+      profile: targetedConfig.profile ?? 'implementation_scoped',
+      includeNames: uniqueNames(targetedConfig.includeToolNames),
+    }))
   }
 
   if (targetedConfig.profile && !targetedConfig.extraToolNames) {

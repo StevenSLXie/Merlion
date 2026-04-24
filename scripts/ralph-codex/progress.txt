@@ -1,19 +1,43 @@
 # Ralph Codex Progress Log
-Started: Thu Apr 23 23:13:04 +08 2026
----
+Started: Fri Apr 24 08:18:09 +08 2026
 ## Codebase Patterns
-- Task-control changes need the runtime triangle to stay aligned: `QueryEngine` turn derivation, execution-charter injection, and capability-profile tool filtering.
-- Readonly mutation enforcement is split by surface: file mutations go through `authorizeMutation()`, while `bash`, `run_script`, and `spawn_agent` must also honor `ToolContext.taskControl`.
-
-## [2026-04-23 23:26:43 +0800] - SPEC-101
-- Implemented a runtime task control plane with task-kind derivation, correction-aware objective rewrites, execution charters, capability profiles, and role-bound child-agent overrides.
-- Files changed: `src/runtime/{task_state.ts,correction.ts,execution_charter.ts,query_engine.ts,loop.ts,runner.ts,subagents.ts,state/types.ts,AGENTS.md,intent_contract.ts}`, `src/tools/{pool.ts,types.ts}`, `src/tools/builtin/{bash.ts,fs_common.ts,run_script.ts,spawn_agent.ts,todo_write.ts,AGENTS.md}`, `src/prompt/system_prompt.ts`, `tests/{task_state.test.ts,execution_charter.test.ts,tool_pool.test.ts,query_engine.test.ts,runtime_loop.test.ts}`.
-- Verification run: `npm run typecheck`; `node --experimental-strip-types --test tests/subagents.test.ts tests/query_engine.test.ts tests/task_state.test.ts tests/runtime_loop.test.ts tests/tool_pool.test.ts tests/execution_charter.test.ts`; `npm test`.
+- When budget-observability changes land in `tests/e2e/helpers.ts`, keep the archive payload assembly in a pure helper and cover it with a local test so the contract stays verified even when keyed E2E runs are skipped.
+- When helper-only E2E tool narrowing is driven by scenario names, add a local `runLoop()` regression with a stub provider for each distinct narrowed registry shape so review can verify behavior even if keyed E2Es skip.
+- When a keyed E2E scenario requires a specific tool path for its behavioral assertion, narrow that scenario to the exact tool chain in `tests/e2e/helpers.ts`; broader readonly profiles can leave alternate tools that make provider-backed runs flaky and more expensive.
+---
+## [2026-04-24 08:32:47 +0800] - SPEC-106-e2e-budget-observability-archive
+- What was implemented: reviewed the tool-schema and prompt-floor archive slice, then added a follow-up regression testable archive-payload seam in `tests/e2e/helpers.ts` plus local coverage for the archived cost-triage fields and turn ordering.
+- Files changed: `tests/e2e/helpers.ts`, `tests/e2e/helpers_archive.test.ts`, `scripts/ralph-codex/prd.json`, `scripts/ralph-codex/progress.txt`, `scripts/ralph-codex/current_story.json`.
+- Verification run: `node --experimental-strip-types --test tests/prompt_observability.test.ts tests/e2e/helpers_archive.test.ts`; `MERLION_COST_GATE=warn node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts` (skipped because `OPENROUTER_API_KEY` is not set).
+- Review notes:
+- What was checked: source-spec alignment for `tests/e2e/helpers.ts`, reuse of prompt observability plumbing, archive field names required for budget triage, and whether the slice changed generic CLI or `runLoop()` default registry behavior.
+- P0/P1 issues found and how they were resolved: found a P1 verification gap because the helper/archive seam had no local regression test and the keyed E2E verification can skip without credentials; resolved it by extracting `buildUsageArchivePayload()` and adding `tests/e2e/helpers_archive.test.ts` to assert the archived tool-schema metrics and prompt observability fields.
 - Learnings for future iterations:
-  - Reusable patterns
-  - Keep worker subagents on implementation semantics even when their task text is vague; role semantics should override prompt-only classification.
-  - Gotchas
-  - Capability filtering must not strip custom registry tools from implementation turns.
-  - Useful context
-  - Correction prompts like “I mean …” need runtime objective rewrites, not just prompt-level restatement.
+- Reusable patterns: when a story depends on external-key E2E coverage, add a narrow local contract test for the archive or helper seam so review can still prove the change without network credentials.
+- Gotchas: `runLoop()` emits prompt observability twice per successful turn, so archive code should normalize the final per-turn snapshot rather than assuming the callback fires once.
+- Useful context: the follow-up review fix was committed as `fe80d40` with message `fix: SPEC-106-e2e-budget-observability-archive - review follow-up`.
+---
+## [2026-04-24 08:42:13 +0800] - SPEC-106-profile-targeted-e2e-tool-registry
+- What was implemented: reviewed the targeted E2E registry narrowing against the spec, then added helper-level local `runLoop()` regression coverage for the readonly, readonly-plus-edit, and readonly-plus-create registry shapes used by the five budget-regression scenarios.
+- Files changed: `tests/e2e/helpers_registry.test.ts`, `scripts/ralph-codex/prd.json`, `scripts/ralph-codex/progress.txt`, `scripts/ralph-codex/current_story.json`.
+- Verification run: `node --experimental-strip-types --test tests/tool_pool.test.ts tests/e2e/helpers_registry.test.ts tests/e2e/e2e_query_engine_local.test.ts tests/e2e/e2e_task_runtime_local.test.ts`; `MERLION_COST_GATE=warn node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts` (skipped because `OPENROUTER_API_KEY` is not set).
+- Review notes:
+- What was checked: source-spec alignment for the five targeted scenarios, bounded scenario-to-registry mapping in `tests/e2e/helpers.ts`, reuse of `CapabilityProfileName` and tool-pool assembly, preservation of default behavior for non-targeted scenarios, and local behavioral viability of each narrowed registry shape.
+- P0/P1 issues found and how they were resolved: found a P1 verification gap because the story only asserted registry composition while the keyed scenario tests can all skip without credentials; resolved it by adding deterministic local helper-registry tests that drive `runLoop()` with stubbed tool-call sequences for the readonly, edit, and multi-tool targeted registries. The follow-up review fix was committed as `bad5264` with message `fix: SPEC-106-profile-targeted-e2e-tool-registry - review follow-up`.
+- Learnings for future iterations:
+- Reusable patterns: when direct `runLoop()` helper wiring changes tool exposure, pair the name-level registry assertions with a local loop test that exercises the actual tool calls expected from each narrowed shape.
+- Gotchas: code-mutating local loop tests may trigger the runtime validation nudge, so stubbed providers need one additional terminal response instead of assuming the first post-edit assistant message ends the loop.
+- Useful context: the readonly-question profile path currently produces the same 15-tool registry seen in cost triage, while edit and multi-tool scenarios stay narrow by adding only `edit_file` or `create_file` on top of that base set.
+---
+## [2026-04-24 08:59:04 +0800] - SPEC-106-separate-budget-failures-and-finalize-gates
+- What was implemented: independently reviewed the budget-failure deferral slice, then fixed two follow-up gaps by narrowing `e2e-search` to the `search` tool only and `e2e-edit` to the `read_file` + `edit_file` path so the real fail-mode keyed suite stays behaviorally correct and under the existing gate without changing `docs/cost-baseline.json`.
+- Files changed: `tests/e2e/helpers.ts`, `tests/e2e/helpers_registry.test.ts`, `scripts/ralph-codex/prd.json`, `scripts/ralph-codex/progress.txt`, `scripts/ralph-codex/current_story.json`.
+- Verification run: `node --experimental-strip-types --test tests/cost_gate.test.ts tests/e2e/helpers_archive.test.ts tests/e2e/helpers_registry.test.ts tests/e2e/helpers_cost_gate.test.ts`; `set -a && source .env && set +a && MERLION_COST_GATE=fail node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts`; `npm run test:all`.
+- Review notes:
+- What was checked: source-spec alignment for deferred cost-gate failure ordering, failure-message clarity, keyed fail-mode validation for the five targeted scenarios, and whether any remaining budget miss still required a baseline change.
+- P0/P1 issues found and how they were resolved: found a P1 behavioral regression because `e2e-search` still exposed alternate readonly tools and a real keyed run failed its `search`-tool assertion; resolved it by constraining that scenario to `search` only. Found a second P1 completeness issue because `e2e-edit` still exceeded the fail-mode gate in a real keyed run; resolved it by narrowing the edit scenario to the exact `read_file` + `edit_file` tool chain, which removed the remaining over-budget path and made the keyed five-scenario suite pass without relaxing the baseline.
+- Learnings for future iterations:
+- Reusable patterns: when a scenario’s behavioral assertion names a tool, keep the helper registry aligned to that exact tool path instead of assuming a broader readonly profile will remain behaviorally stable with live providers.
+- Gotchas: provider-backed E2Es can pass or fail on the same prompt depending on which tool path the model sees first, so scenario-specific cost work should treat alternate exposed tools as a correctness risk, not just a token-cost concern.
+- Useful context: after the follow-up narrowing, the keyed `MERLION_COST_GATE=fail` suite passed for `e2e-read`, `e2e-search`, `e2e-edit`, `e2e-multi-tool`, and `e2e-tool-error` without any `docs/cost-baseline.json` change.
 ---

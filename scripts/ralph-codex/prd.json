@@ -1,39 +1,52 @@
 {
   "project": "Merlion",
-  "branchName": "ralph/spec-101",
-  "description": "Generated from spec docs/features/101-task-control-plane-and-capability-profiles.md",
+  "branchName": "ralph/spec-106",
+  "description": "Recover the budget-regression E2E scenarios by making the helper path observable and profile-aware, then finish with explicit budget-regression reporting and only the smallest evidence-backed baseline change if narrowing alone is insufficient.",
   "generatedFromSpecs": [
-    "docs/features/101-task-control-plane-and-capability-profiles.md"
+    "docs/features/106-tool-schema-cost-regression-and-e2e-budget-recovery.md"
   ],
   "userStories": [
     {
-      "id": "SPEC-101",
-      "title": "101 Task Control Plane And Capability Profiles",
-      "description": "把 Merlion 从“单轮 prompt 驱动的 tool-using agent”升级为“有任务控制面的 coding runtime”。 Source spec: docs/features/101-task-control-plane-and-capability-profiles.md",
+      "id": "SPEC-106-e2e-budget-observability-archive",
+      "title": "Archive Tool Schema And Prompt Floor Budget Data",
+      "description": "Extend the budget-regression E2E helper path to persist the cost-triage fields that are currently missing from `.merlion/e2e-usage`. Reuse the existing prompt observability hook and current schema-token estimation approach so each targeted run records registry size and turn-level prompt-floor signals without introducing a separate E2E-only accounting model.",
       "acceptanceCriteria": [
-        "analysis / question / review / verification 四类任务默认零 mutation",
-        "用户纠偏后，Merlion 的后续回答目标与修正后的任务一致",
-        "即使模型误判任务，也不能在 readonly 任务里落地 destructive changes",
-        "review 与 implementation 在 runtime 上终于是两种不同模式，而不是同一个 loop 的不同措辞",
-        "Verification: correction detector 能识别常见纠偏表达",
-        "Verification: TaskKind 分类在代表性 prompt 上稳定",
-        "Verification: capability profile 选择正确",
-        "Verification: readonly mutation gate 对所有 destructive tools 生效",
-        "Verification: readonly bash policy 能拒绝写命令",
-        "Verification: analysis prompt 下，模型尝试调用 edit_file",
-        "Verification: 预期：被 runtime 拒绝",
-        "Verification: 用户先问“项目缺点”，随后纠偏“我问的是整个项目维度”",
-        "Verification: 预期：runtime 重写上一 objective，而不是回答“是的”",
-        "Verification: review prompt 下默认只暴露只读工具",
-        "Verification: analysis prompt 下无法 spawn worker",
-        "Verification: analysis / question / review / verification 四类任务默认零 mutation",
-        "Verification: 用户纠偏后，Merlion 的后续回答目标与修正后的任务一致",
-        "Verification: 即使模型误判任务，也不能在 readonly 任务里落地 destructive changes",
-        "Verification: review 与 implementation 在 runtime 上终于是两种不同模式，而不是同一个 loop 的不同措辞"
+        "Runs launched through `tests/e2e/helpers.ts` for the budget-regression scenarios write usage archives that include at least `tool_count`, serialized tool-schema char size, tool-schema token estimate, and per-turn prompt observability snapshots.",
+        "The archived prompt observability data preserves the existing runtime field names needed for budget triage, including `estimated_input_tokens`, `tool_schema_tokens_estimate`, and `stable_prefix_tokens`.",
+        "The implementation reuses existing prompt observability and tool-schema estimation plumbing instead of inventing a second E2E-only token tracker.",
+        "This slice does not change generic CLI or `runLoop()` default tool exposure semantics."
       ],
       "priority": 1,
       "passes": true,
-      "notes": "Source spec: docs/features/101-task-control-plane-and-capability-profiles.md\nStatus: proposed\nType: P0 Runtime Architecture + Safety\nFiles:\n- src/runtime/task_state.ts\n- src/runtime/correction.ts\n- src/runtime/execution_charter.ts\n- src/runtime/query_engine.ts\n- src/runtime/runner.ts\n- src/runtime/intent_contract.ts\n- src/runtime/local_turn.ts\n- src/tools/pool.ts\n- src/tools/types.ts\n- src/tools/catalog.ts\n- src/tools/builtin/fs_common.ts\n- src/tools/builtin/bash.ts\n- src/runtime/subagents.ts\n- src/context/service.ts\n- src/prompt/system_prompt.ts\n- tests/intent_contract.test.ts\n- tests/runtime_loop.test.ts\n- tests/tool_pool.test.ts\n- new:\n- tests/task_state.test.ts\nVerification:\n- correction detector 能识别常见纠偏表达\n- TaskKind 分类在代表性 prompt 上稳定\n- capability profile 选择正确\n- readonly mutation gate 对所有 destructive tools 生效\n- readonly bash policy 能拒绝写命令\n- analysis prompt 下，模型尝试调用 edit_file\n- 预期：被 runtime 拒绝\n- 用户先问“项目缺点”，随后纠偏“我问的是整个项目维度”\n- 预期：runtime 重写上一 objective，而不是回答“是的”\n- review prompt 下默认只暴露只读工具\n- analysis prompt 下无法 spawn worker\n- analysis / question / review / verification 四类任务默认零 mutation\n- 用户纠偏后，Merlion 的后续回答目标与修正后的任务一致\n- 即使模型误判任务，也不能在 readonly 任务里落地 destructive changes\n- review 与 implementation 在 runtime 上终于是两种不同模式，而不是同一个 loop 的不同措辞"
+      "notes": "Source specs:\n- docs/features/106-tool-schema-cost-regression-and-e2e-budget-recovery.md (106 Tool Schema Cost Regression And E2E Budget Recovery)\nFiles:\n- tests/e2e/helpers.ts\n- src/runtime/prompt_observability.ts\n- src/runtime/runner.ts\nVerification:\n- node --experimental-strip-types --test tests/prompt_observability.test.ts\n- MERLION_COST_GATE=warn node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts\nNotes:\n- A shared helper extraction is acceptable only if it leaves current CLI/runtime behavior unchanged.\n- Keep the scope on the helper/archive seam; this story is observability only, not registry narrowing."
+    },
+    {
+      "id": "SPEC-106-profile-targeted-e2e-tool-registry",
+      "title": "Narrow Budget E2E Tool Exposure With Existing Profiles",
+      "description": "Replace the unconditional full-registry wiring in `tests/e2e/helpers.ts` for the five budget-regression scenarios with profile-aware or same-source tool-pool assembly. Keep the mapping bounded to `e2e-read`, `e2e-search`, `e2e-edit`, `e2e-multi-tool`, and `e2e-tool-error`, and reuse `CapabilityProfileName`, `buildDefaultRegistry({ profile })`, and current pool filters rather than adding a new general runtime policy layer.",
+      "acceptanceCriteria": [
+        "`tests/e2e/helpers.ts` no longer passes `buildDefaultRegistry({ mode: 'default' })` unconditionally for `e2e-read`, `e2e-search`, `e2e-edit`, `e2e-multi-tool`, and `e2e-tool-error`.",
+        "The narrowing logic is explicitly limited to the five regression scenarios and reuses the existing capability-profile or tool-pool mechanism instead of creating a third long-lived exposure ruleset.",
+        "Non-targeted E2E scenarios and normal CLI/direct `runLoop()` defaults keep their current behavior.",
+        "The five targeted scenarios still satisfy their existing behavioral assertions after the narrower registry is applied."
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Source specs:\n- docs/features/106-tool-schema-cost-regression-and-e2e-budget-recovery.md (106 Tool Schema Cost Regression And E2E Budget Recovery)\nFiles:\n- tests/e2e/helpers.ts\n- src/tools/pool.ts\n- src/tools/builtin/index.ts\nVerification:\n- node --experimental-strip-types --test tests/tool_pool.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_query_engine_local.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_task_runtime_local.test.ts\n- MERLION_COST_GATE=warn node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts\nNotes:\n- If `multi-tool` or `edit` need finer-grained exposure than a stock profile provides, keep the customization inside the helper by composing existing pool/profile primitives rather than expanding runtime policy.\n- This story should materially reduce prompt-floor cost before any baseline discussion."
+    },
+    {
+      "id": "SPEC-106-separate-budget-failures-and-finalize-gates",
+      "title": "Separate Behavior Failures From Budget Regressions",
+      "description": "Refactor the targeted E2E flow so functional assertions complete before the cost gate is enforced, and make budget overruns surface as explicit regressions with threshold and archive context. After the archive and registry-narrowing work lands, run the keyed five-scenario gate in fail mode and only update `docs/cost-baseline.json` if the post-narrowing evidence shows a remaining justified gap.",
+      "acceptanceCriteria": [
+        "The five targeted E2E tests can distinguish behavioral failures from budget-regression failures instead of failing the helper before assertions run.",
+        "When a targeted scenario exceeds budget after behavior passes, the failure clearly reports it as a cost regression and includes the threshold comparison needed for triage.",
+        "The keyed validation command for the five regression scenarios passes with `MERLION_COST_GATE=fail`, or any remaining baseline change is limited to the affected scenarios and justified by newly archived post-narrowing evidence.",
+        "If `docs/cost-baseline.json` changes, the repo records why narrowing was insufficient and keeps the adjustment to the minimum necessary scope."
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Source specs:\n- docs/features/106-tool-schema-cost-regression-and-e2e-budget-recovery.md (106 Tool Schema Cost Regression And E2E Budget Recovery)\nFiles:\n- tests/e2e/helpers.ts\n- tests/e2e/e2e_read.test.ts\n- tests/e2e/e2e_search.test.ts\n- tests/e2e/e2e_edit.test.ts\n- tests/e2e/e2e_multi_tool.test.ts\n- tests/e2e/e2e_tool_error.test.ts\n- src/runtime/cost_gate.ts\n- docs/cost-baseline.json\nVerification:\n- MERLION_COST_GATE=fail node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts\n- npm run test:all\nNotes:\n- Keep cost-gate evaluation after archive write so failures always leave inspectable evidence.\n- Do not relax generic cost-gate semantics for unrelated scenarios or non-E2E runtime paths."
     }
   ]
 }
