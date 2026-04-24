@@ -12,7 +12,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { itemsToMessages } from '../../src/runtime/items.ts'
-import { makeSandbox, rmSandbox, runAgent, SKIP } from './helpers.ts'
+import { assertNoCostRegression, makeSandbox, rmSandbox, runSandboxedAgent, SKIP } from './helpers.ts'
 
 if (SKIP) {
   test.skip('E2E edit: skipped (no OPENROUTER_API_KEY)')
@@ -23,12 +23,12 @@ if (SKIP) {
     async () => {
       const sandbox = await makeSandbox()
       try {
-        const result = await runAgent(
+        const { result, costGate } = await runSandboxedAgent(
           'Read math.ts. It has two functions: add and multiply. ' +
             'Append a new exported function called subtract that takes (a, b) and returns a - b. ' +
             'The final file must contain all three functions.',
           sandbox,
-          { scenario: 'e2e-edit' },
+          { scenario: 'e2e-edit', deferCostGateFailure: true },
         )
 
         assert.equal(result.terminal, 'completed', `Loop ended with: ${result.terminal}`)
@@ -46,6 +46,7 @@ if (SKIP) {
         // Verify edit_file was called (not create_file with a totally new file)
         const toolMessages = itemsToMessages(result.state.items).filter((m) => m.role === 'tool')
         assert.ok(toolMessages.length >= 2, 'Expected at least read + edit tool calls')
+        assertNoCostRegression(costGate)
       } finally {
         await rmSandbox(sandbox)
       }

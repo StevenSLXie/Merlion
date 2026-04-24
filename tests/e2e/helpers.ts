@@ -9,7 +9,12 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
-import { evaluateCostGate, parseCostGateMode, readCostBaseline } from '../../src/runtime/cost_gate.ts'
+import {
+  evaluateCostGate,
+  parseCostGateMode,
+  readCostBaseline,
+  type CostGateDecision,
+} from '../../src/runtime/cost_gate.ts'
 import {
   createPromptObservabilityTrackerWithToolSchema,
   summarizeToolSchema,
@@ -138,6 +143,13 @@ interface UsageArchiveParams {
   promptObservability: PromptObservabilitySnapshot[]
 }
 
+export interface E2ECostGateReport {
+  scenario: string
+  totalTokens: number
+  archivePath: string
+  decision: CostGateDecision
+}
+
 export function buildUsageArchivePayload(params: UsageArchiveParams) {
   return {
     timestamp: new Date().toISOString(),
@@ -158,31 +170,57 @@ export function buildUsageArchivePayload(params: UsageArchiveParams) {
   }
 }
 
-async function writeUsageArchive(params: UsageArchiveParams): Promise<void> {
+async function writeUsageArchive(params: UsageArchiveParams): Promise<string> {
   const dir = getUsageArchiveDir()
   await mkdir(dir, { recursive: true })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const payload = buildUsageArchivePayload(params)
   const path = join(dir, `${payload.scenario}-${stamp}.json`)
   await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+  return path
 }
 
-async function enforceCostGate(scenario: string, totalTokens: number): Promise<void> {
+async function evaluateArchivedCostGate(
+  scenario: string,
+  totalTokens: number,
+  archivePath: string,
+): Promise<E2ECostGateReport> {
+  const normalizedScenario = safeScenarioLabel(scenario)
   const mode = parseCostGateMode(process.env.MERLION_COST_GATE)
   const baseline = await readCostBaseline(getCostBaselinePath())
   const decision = evaluateCostGate({
     baseline,
-    scenario: safeScenarioLabel(scenario),
+    scenario: normalizedScenario,
     totalTokens,
-    mode
+    mode,
   })
 
   if (decision.status === 'warn') {
-    process.stderr.write(`${decision.message}\n`)
-    return
+    process.stderr.write(`${decision.message}; usage_archive=${archivePath}\n`)
   }
-  if (decision.status === 'fail') {
-    throw new Error(decision.message)
+
+  return {
+    scenario: normalizedScenario,
+    totalTokens,
+    archivePath,
+    decision,
+  }
+}
+
+export function formatCostGateFailure(report: E2ECostGateReport): string {
+  if (report.decision.status !== 'fail') {
+    return report.decision.message
+  }
+  return (
+    `[cost-gate] regression ${report.scenario} after behavior checks: ` +
+    `total=${report.totalTokens} > threshold=${report.decision.thresholdTokens}; ` +
+    `usage_archive=${report.archivePath}`
+  )
+}
+
+export function assertNoCostRegression(report: E2ECostGateReport): void {
+  if (report.decision.status === 'fail') {
+    throw new Error(formatCostGateFailure(report))
   }
 }
 
@@ -205,8 +243,13 @@ export async function runSandboxedAgent(
   options?: {
     scenario?: string
     sandbox?: MerlionSandboxConfig
+    deferCostGateFailure?: boolean
   },
-): Promise<{ result: RunLoopResult; sandboxEvents: RuntimeSandboxEvent[] }> {
+): Promise<{
+  result: RunLoopResult
+  sandboxEvents: RuntimeSandboxEvent[]
+  costGate: E2ECostGateReport
+}> {
   const provider = new OpenAICompatProvider({
     apiKey: API_KEY,
     baseURL: E2E_BASE_URL,
@@ -264,7 +307,7 @@ export async function runSandboxedAgent(
     },
   })
 
-  await writeUsageArchive({
+  const archivePath = await writeUsageArchive({
     scenario: options?.scenario ?? 'e2e',
     task,
     cwd,
@@ -276,7 +319,14 @@ export async function runSandboxedAgent(
     toolSchema,
     promptObservability: Array.from(promptObservabilityByTurn.values()),
   })
-  await enforceCostGate(options?.scenario ?? 'e2e', usageTracker.getTotals().total_tokens)
+  const costGate = await evaluateArchivedCostGate(
+    options?.scenario ?? 'e2e',
+    usageTracker.getTotals().total_tokens,
+    archivePath,
+  )
+  if (!options?.deferCostGateFailure) {
+    assertNoCostRegression(costGate)
+  }
 
-  return { result, sandboxEvents }
+  return { result, sandboxEvents, costGate }
 }

@@ -12,7 +12,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { itemsToMessages } from '../../src/runtime/items.ts'
-import { makeSandbox, rmSandbox, runAgent, SKIP } from './helpers.ts'
+import { assertNoCostRegression, makeSandbox, rmSandbox, runSandboxedAgent, SKIP } from './helpers.ts'
 
 if (SKIP) {
   test.skip('E2E search: skipped (no OPENROUTER_API_KEY)')
@@ -23,11 +23,11 @@ if (SKIP) {
     async () => {
       const sandbox = await makeSandbox()
       try {
-        const result = await runAgent(
+        const { result, costGate } = await runSandboxedAgent(
           'Use the search tool to find all occurrences of "export function" in math.ts. ' +
             'Report the names of every function you found.',
           sandbox,
-          { scenario: 'e2e-search' },
+          { scenario: 'e2e-search', deferCostGateFailure: true },
         )
 
         assert.equal(result.terminal, 'completed', `Loop ended with: ${result.terminal}`)
@@ -44,6 +44,7 @@ if (SKIP) {
           m.tool_calls?.some((tc) => tc.function.name === 'search'),
         )
         assert.ok(calledSearch, 'Expected the search tool to be called')
+        assertNoCostRegression(costGate)
       } finally {
         await rmSandbox(sandbox)
       }

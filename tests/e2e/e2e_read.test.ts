@@ -10,7 +10,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { itemsToMessages } from '../../src/runtime/items.ts'
-import { makeSandbox, rmSandbox, runAgent, SKIP } from './helpers.ts'
+import { assertNoCostRegression, makeSandbox, rmSandbox, runSandboxedAgent, SKIP } from './helpers.ts'
 
 if (SKIP) {
   test.skip('E2E read: skipped (no OPENROUTER_API_KEY)')
@@ -21,10 +21,10 @@ if (SKIP) {
     async () => {
       const sandbox = await makeSandbox()
       try {
-        const result = await runAgent(
+        const { result, costGate } = await runSandboxedAgent(
           'Read the file hello.txt and tell me exactly how many lines it contains.',
           sandbox,
-          { scenario: 'e2e-read' },
+          { scenario: 'e2e-read', deferCostGateFailure: true },
         )
 
         assert.equal(result.terminal, 'completed', `Loop ended with: ${result.terminal}`)
@@ -42,6 +42,7 @@ if (SKIP) {
           toolMessages.length > 0,
           'Expected at least one tool call (read_file)',
         )
+        assertNoCostRegression(costGate)
       } finally {
         await rmSandbox(sandbox)
       }
