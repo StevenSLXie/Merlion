@@ -84,7 +84,7 @@ function getCostBaselinePath(): string {
   return process.env.MERLION_E2E_COST_BASELINE ?? join(process.cwd(), 'docs', 'cost-baseline.json')
 }
 
-async function writeUsageArchive(params: {
+interface UsageArchiveParams {
   scenario: string
   task: string
   cwd: string
@@ -95,15 +95,12 @@ async function writeUsageArchive(params: {
   totals: { prompt_tokens: number; completion_tokens: number; cached_tokens: number; total_tokens: number }
   toolSchema: ReturnType<typeof summarizeToolSchema>
   promptObservability: PromptObservabilitySnapshot[]
-}): Promise<void> {
-  const dir = getUsageArchiveDir()
-  await mkdir(dir, { recursive: true })
-  const scenario = safeScenarioLabel(params.scenario)
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const path = join(dir, `${scenario}-${stamp}.json`)
-  const payload = {
+}
+
+export function buildUsageArchivePayload(params: UsageArchiveParams) {
+  return {
     timestamp: new Date().toISOString(),
-    scenario,
+    scenario: safeScenarioLabel(params.scenario),
     model: params.model,
     base_url: params.baseURL,
     cwd: params.cwd,
@@ -116,8 +113,16 @@ async function writeUsageArchive(params: {
     tool_schema_tokens_estimate: params.toolSchema.tool_schema_tokens_estimate,
     usage_samples: params.usageSamples,
     totals: params.totals,
-    prompt_observability: params.promptObservability,
+    prompt_observability: [...params.promptObservability].sort((left, right) => left.turn - right.turn),
   }
+}
+
+async function writeUsageArchive(params: UsageArchiveParams): Promise<void> {
+  const dir = getUsageArchiveDir()
+  await mkdir(dir, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const payload = buildUsageArchivePayload(params)
+  const path = join(dir, `${payload.scenario}-${stamp}.json`)
   await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
 }
 
@@ -228,7 +233,7 @@ export async function runSandboxedAgent(
     usageSamples,
     totals: usageTracker.getTotals(),
     toolSchema,
-    promptObservability: Array.from(promptObservabilityByTurn.values()).sort((left, right) => left.turn - right.turn),
+    promptObservability: Array.from(promptObservabilityByTurn.values()),
   })
   await enforceCostGate(options?.scenario ?? 'e2e', usageTracker.getTotals().total_tokens)
 
