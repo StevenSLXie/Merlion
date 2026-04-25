@@ -1,6 +1,6 @@
 import type { ModelProvider } from '../types.js'
 import type { ConversationItem, ProviderResponseBoundary } from './items.ts'
-import { createSystemItem } from './items.ts'
+import { createSystemItem, pruneNonPersistentRuntimeItems, splitStablePrefixItems } from './items.ts'
 import type { AskUserQuestionItem, PermissionStore } from '../tools/types.js'
 import type { SubagentToolRuntime } from './subagent_types.ts'
 import { ToolRegistry } from '../tools/registry.ts'
@@ -95,7 +95,8 @@ export class QueryEngine {
   private readonly options: QueryEngineOptions
   private readonly runtimeState: RuntimeState
   private readonly trackedPermissions: PermissionStore
-  private history: ConversationItem[]
+  private stablePrefixItems: ConversationItem[]
+  private transcriptTailItems: ConversationItem[]
   private initialized = false
   private startupMapSummary: string | null = null
   private lastWorkingTreeFingerprint: string | null = null
@@ -104,7 +105,10 @@ export class QueryEngine {
     this.options = options
     this.runtimeState = createRuntimeState()
     this.trackedPermissions = createTrackingPermissionStore(options.permissions, this.runtimeState.permissions)
-    this.history = options.initialItems ? [...options.initialItems] : []
+    const initialItems = options.initialItems ? pruneNonPersistentRuntimeItems(options.initialItems) : []
+    const initialState = splitStablePrefixItems(initialItems)
+    this.stablePrefixItems = initialState.stablePrefixItems
+    this.transcriptTailItems = initialState.transcriptTailItems
   }
 
   getStartupMapSummary(): string | null {
@@ -116,7 +120,10 @@ export class QueryEngine {
   }
 
   getItems(): ConversationItem[] {
-    return [...this.history]
+    return [
+      ...this.stablePrefixItems,
+      ...this.transcriptTailItems,
+    ]
   }
 
   getRuntimeState(): RuntimeState {
@@ -124,13 +131,16 @@ export class QueryEngine {
   }
 
   async resumeFromTranscript(items: ConversationItem[]): Promise<void> {
-    this.history = [...items]
+    const persistentItems = pruneNonPersistentRuntimeItems(items)
+    const persistentState = splitStablePrefixItems(persistentItems)
+    this.stablePrefixItems = persistentState.stablePrefixItems
+    this.transcriptTailItems = persistentState.transcriptTailItems
     this.initialized = true
   }
 
   getSnapshot(): QueryEngineSnapshot {
     return {
-      items: [...this.history],
+      items: this.getItems(),
       runtimeState: snapshotRuntimeState(this.runtimeState),
       generatedMapMode: this.options.contextService.getGeneratedMapMode(),
     }
@@ -144,10 +154,9 @@ export class QueryEngine {
     await this.options.persistItem?.(item, origin, runtimeResponseId)
   }
 
-  private async createPromptSeed(prompt: string, charterText?: string): Promise<ConversationItem[]> {
+  private async createTurnOverlay(prompt: string, charterText?: string): Promise<ConversationItem[]> {
     const runtimeItems = charterText ? [createSystemItem(charterText, 'runtime')] : []
     return [
-      ...this.history,
       ...await this.options.contextService.buildPromptPrelude(prompt),
       ...runtimeItems,
     ]
@@ -262,7 +271,7 @@ export class QueryEngine {
       correctionNotes: charter.correctionNotes ? [...charter.correctionNotes] : undefined,
     }
     const turnRegistry = buildRegistryFromPool(applyCapabilityProfile(this.options.registry.getAll(), taskControl.capabilityProfile))
-    const seededItems = await this.createPromptSeed(prompt, charterText)
+    const overlayItems = await this.createTurnOverlay(prompt, charterText)
 
     const result = await runLoop({
       provider: this.options.provider,
@@ -279,12 +288,14 @@ export class QueryEngine {
       sandboxPolicy: this.options.sandboxPolicy,
       sandboxBackend: this.options.sandboxBackend,
       askQuestions: this.options.askQuestions,
-      initialItems: seededItems,
+      stablePrefixItems: this.stablePrefixItems,
+      initialItems: this.transcriptTailItems,
+      initialOverlayItems: overlayItems,
       persistInitialMessages: false,
       taskControl,
       subagents: this.options.createSubagentRuntime?.({
         prompt,
-        history: [...this.history],
+        history: this.getItems(),
         runtimeState: this.runtimeState,
         sessionId: this.options.sessionId,
         model: this.options.model,
@@ -391,14 +402,15 @@ export class QueryEngine {
     const bootstrap = await this.options.contextService.prefetchIfSafe()
     this.startupMapSummary = bootstrap.startupMapSummary
     this.options.contextService.setGeneratedMapMode(bootstrap.generatedMapMode)
-    const initialItems = [
-      createSystemItem(systemPrompt, 'static'),
-      ...bootstrap.initialItems,
-      ...this.history,
-    ]
-    this.history = initialItems
-    for (const item of initialItems) {
-      await this.persistItem(item, 'local_runtime')
+
+    if (this.stablePrefixItems.length === 0) {
+      this.stablePrefixItems = [
+        createSystemItem(systemPrompt, 'static'),
+        ...bootstrap.initialItems,
+      ]
+      for (const item of this.stablePrefixItems) {
+        await this.persistItem(item, 'local_runtime')
+      }
     }
     this.initialized = true
   }
@@ -412,7 +424,9 @@ export class QueryEngine {
       sawWorkspaceMutationSignal: execution.sawWorkspaceMutationSignal,
     })
 
-    this.history = [...execution.result.state.items]
+    const persistentState = splitStablePrefixItems(pruneNonPersistentRuntimeItems(execution.result.state.items))
+    this.stablePrefixItems = persistentState.stablePrefixItems
+    this.transcriptTailItems = persistentState.transcriptTailItems
     syncCompactStateFromLoopState(this.runtimeState.compact, execution.result.state)
     recordFinalSummary(this.runtimeState.compact, execution.result.finalText)
     return execution.result

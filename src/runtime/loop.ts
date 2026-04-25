@@ -21,6 +21,7 @@ import {
   createSystemItem,
   findLastAssistantText,
   functionCallItemsToToolCalls,
+  splitStablePrefixItems,
   itemsToMessages,
   toolResultMessageToOutputItem,
   type ConversationItem,
@@ -94,7 +95,9 @@ export interface RunLoopOptions {
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
   subagents?: SubagentToolRuntime
   maxTurns?: number
+  stablePrefixItems?: ConversationItem[]
   initialItems?: ConversationItem[]
+  initialOverlayItems?: ConversationItem[]
   persistInitialMessages?: boolean
   onItemAppended?: (entry: TranscriptItemEntry) => Promise<void> | void
   onResponseBoundary?: (boundary: ProviderResponseBoundary) => Promise<void> | void
@@ -135,18 +138,28 @@ export interface RunLoopResult {
 }
 
 function buildRequestMessages(
-  items: ConversationItem[],
+  stablePrefixItems: ConversationItem[],
+  overlayItems: ConversationItem[],
+  transcriptItems: ConversationItem[],
   intentContract?: string,
 ): ConversationItem[] {
   const contract = intentContract?.trim()
-  if (!contract) return items
+  const requestItems = [
+    ...stablePrefixItems,
+    ...overlayItems,
+  ]
+  if (contract) {
+    requestItems.push(
+      createSystemItem(
+        'Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\n' +
+          contract,
+        'runtime'
+      ),
+    )
+  }
   return [
-    ...items,
-    createSystemItem(
-      'Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\n' +
-        contract,
-      'runtime'
-    ),
+    ...requestItems,
+    ...transcriptItems,
   ]
 }
 
@@ -172,7 +185,9 @@ function normalizeInjectedItems(value: ConversationItem[] | void): ConversationI
 }
 
 interface InternalLoopState {
+  stablePrefixItems: ConversationItem[]
   items: ConversationItem[]
+  overlayItems: ConversationItem[]
   turnCount: number
   maxOutputTokensRecoveryCount: number
   hasAttemptedReactiveCompact: boolean
@@ -181,7 +196,7 @@ interface InternalLoopState {
 
 function projectLoopState(state: InternalLoopState): LoopState {
   return {
-    items: [...state.items],
+    items: [...state.stablePrefixItems, ...state.items],
     turnCount: state.turnCount,
     maxOutputTokensRecoveryCount: state.maxOutputTokensRecoveryCount,
     hasAttemptedReactiveCompact: state.hasAttemptedReactiveCompact,
@@ -255,10 +270,12 @@ async function tryGenerateNaturalSummary(
       'Focus on concrete outcomes and mention unfinished parts only if needed. ' +
       'Do not call tools.'
   )
-
-  await appendItems(state, options, [summaryRequest], 'local_runtime')
-
-  const requestItems = buildRequestMessages(state.items, options.intentContract)
+  const requestItems = buildRequestMessages(
+    state.stablePrefixItems,
+    [...state.overlayItems, summaryRequest],
+    state.items,
+    options.intentContract,
+  )
 
   try {
     const result = await withRetry(
@@ -286,21 +303,31 @@ async function tryGenerateNaturalSummary(
 function createState(
   systemPrompt: string,
   userPrompt: string,
+  stablePrefixItems?: ConversationItem[],
   initialItems?: ConversationItem[],
+  initialOverlayItems?: ConversationItem[],
 ): InternalLoopState {
-  const items: ConversationItem[] = initialItems
-    ? [...initialItems]
-    : [
-        createSystemItem(systemPrompt, 'static'),
-        ...(userPrompt.trim() !== '' ? [createExternalUserItem(userPrompt)] : []),
-      ]
+  const providedStablePrefix = stablePrefixItems ? [...stablePrefixItems] : undefined
+  const baseState = initialItems
+    ? (providedStablePrefix
+        ? {
+            stablePrefixItems: providedStablePrefix,
+            transcriptTailItems: [...initialItems],
+          }
+        : splitStablePrefixItems(initialItems))
+    : {
+        stablePrefixItems: providedStablePrefix ?? [createSystemItem(systemPrompt, 'static')],
+        transcriptTailItems: [] as ConversationItem[],
+      }
 
-  if (initialItems && userPrompt.trim() !== '') {
-    items.push(createExternalUserItem(userPrompt))
+  if (userPrompt.trim() !== '') {
+    baseState.transcriptTailItems.push(createExternalUserItem(userPrompt))
   }
 
   return {
-    items,
+    stablePrefixItems: baseState.stablePrefixItems,
+    items: baseState.transcriptTailItems,
+    overlayItems: initialOverlayItems ? [...initialOverlayItems] : [],
     turnCount: 0,
     maxOutputTokensRecoveryCount: 0,
     hasAttemptedReactiveCompact: false,
@@ -433,13 +460,21 @@ async function persistInitialLoopState(
   options: RunLoopOptions,
 ): Promise<void> {
   if (options.persistInitialMessages === false) return
-  for (const item of state.items) {
+  for (const item of [...state.stablePrefixItems, ...state.items]) {
     await options.onItemAppended?.({
       type: 'item',
       item,
       origin: item.kind === 'function_call_output' ? 'local_tool_output' : 'local_runtime',
     })
   }
+}
+
+async function appendOverlayItems(
+  state: InternalLoopState,
+  items: ConversationItem[],
+): Promise<void> {
+  if (items.length === 0) return
+  state.overlayItems.push(...items)
 }
 
 function applyReactiveCompact(state: InternalLoopState): void {
@@ -520,10 +555,10 @@ async function handleToolCallPhase(params: {
   }
 
   if (toolArgumentHint) {
-    await appendItems(state, options, [createRuntimeUserItem(toolArgumentHint)], 'local_runtime')
+    await appendOverlayItems(state, [createRuntimeUserItem(toolArgumentHint)])
   }
   if (hint) {
-    await appendItems(state, options, [createRuntimeUserItem(hint)], 'local_runtime')
+    await appendOverlayItems(state, [createRuntimeUserItem(hint)])
   }
 
   if (toolResultEvents.length > 0 && toolResultEvents.every((event) => event.isError)) {
@@ -535,12 +570,7 @@ async function handleToolCallPhase(params: {
     guardrails.consecutiveAllErrorBatches >= NO_PROGRESS_BATCH_THRESHOLD &&
     guardrails.noProgressHintCount < MAX_NO_PROGRESS_HINTS
   ) {
-    await appendItems(
-      state,
-      options,
-      [createRuntimeUserItem(formatNoProgressHint(guardrails.consecutiveAllErrorBatches))],
-      'local_runtime'
-    )
+    await appendOverlayItems(state, [createRuntimeUserItem(formatNoProgressHint(guardrails.consecutiveAllErrorBatches))])
     guardrails.noProgressHintCount += 1
     guardrails.consecutiveAllErrorBatches = 0
   }
@@ -622,13 +652,13 @@ async function handleToolCallPhase(params: {
   }
 
   if (mutationHint) {
-    await appendItems(state, options, [createRuntimeUserItem(mutationHint)], 'local_runtime')
+    await appendOverlayItems(state, [createRuntimeUserItem(mutationHint)])
   }
   if (largeDiffHint) {
-    await appendItems(state, options, [createRuntimeUserItem(largeDiffHint)], 'local_runtime')
+    await appendOverlayItems(state, [createRuntimeUserItem(largeDiffHint)])
   }
   if (overwriteAfterEditHint) {
-    await appendItems(state, options, [createRuntimeUserItem(overwriteAfterEditHint)], 'local_runtime')
+    await appendOverlayItems(state, [createRuntimeUserItem(overwriteAfterEditHint)])
   }
 
   sawTestOnlyMutationBatch = batchMutationCount > 0 && batchTestPaths.length === batchMutationCount
@@ -662,7 +692,7 @@ async function handleToolCallPhase(params: {
     !guardrails.hasSuccessfulNonTestMutation &&
     sawTestOnlyMutationBatch
   ) {
-    await appendItems(state, options, [createRuntimeUserItem(formatTestFirstBugFixHint(batchTestPaths))], 'local_runtime')
+    await appendOverlayItems(state, [createRuntimeUserItem(formatTestFirstBugFixHint(batchTestPaths))])
     guardrails.testFirstBugFixHintInjected = true
   }
 
@@ -675,9 +705,8 @@ async function handleToolCallPhase(params: {
     guardrails.explorationHintCount < MAX_EXPLORATION_HINTS &&
     guardrails.exploredPathsWindow.size >= 2
   ) {
-    await appendItems(
+    await appendOverlayItems(
       state,
-      options,
       [createRuntimeUserItem(
         formatExplorationBudgetHint(
           guardrails.consecutiveExplorationBatches,
@@ -685,7 +714,6 @@ async function handleToolCallPhase(params: {
           guardrails.bugFixMode
         )
       )],
-      'local_runtime'
     )
     guardrails.explorationHintCount += 1
     guardrails.consecutiveExplorationBatches = 0
@@ -697,11 +725,9 @@ async function handleToolCallPhase(params: {
     guardrails.consecutiveNoMutationBatches >= noMutationThreshold &&
     guardrails.noMutationHintCount < MAX_NO_MUTATION_HINTS
   ) {
-    await appendItems(
+    await appendOverlayItems(
       state,
-      options,
       [createRuntimeUserItem(formatNoMutationHint(guardrails.consecutiveNoMutationBatches, guardrails.bugFixMode))],
-      'local_runtime'
     )
     guardrails.noMutationHintCount += 1
     guardrails.consecutiveNoMutationBatches = 0
@@ -710,7 +736,7 @@ async function handleToolCallPhase(params: {
     guardrails.consecutiveTodoOnlyBatches >= TODO_ONLY_BATCH_THRESHOLD &&
     guardrails.todoDriftHintCount < MAX_TODO_DRIFT_HINTS
   ) {
-    await appendItems(state, options, [createRuntimeUserItem(formatTodoDriftHint())], 'local_runtime')
+    await appendOverlayItems(state, [createRuntimeUserItem(formatTodoDriftHint())])
     guardrails.todoDriftHintCount += 1
     guardrails.consecutiveTodoOnlyBatches = 0
   }
@@ -720,7 +746,7 @@ async function handleToolCallPhase(params: {
     results: toolResultEvents,
   })
   if (Array.isArray(postToolMessages) && postToolMessages.length > 0) {
-    await appendItems(state, options, normalizeInjectedItems(postToolMessages), 'local_runtime')
+    await appendOverlayItems(state, normalizeInjectedItems(postToolMessages))
   }
   return true
 }
@@ -736,11 +762,9 @@ async function handleTerminalPhase(params: {
 
   if (assistant.finishReason === 'length' && state.maxOutputTokensRecoveryCount < 3) {
     state.maxOutputTokensRecoveryCount += 1
-    await appendItems(
+    await appendOverlayItems(
       state,
-      options,
       [createRuntimeUserItem('Output was cut off. Continue directly from where you stopped. No recap, no apology.')],
-      'local_runtime'
     )
     return 'continue'
   }
@@ -769,11 +793,9 @@ async function handleTerminalPhase(params: {
     if (guardrails.emptyStopRecoveryCount < 1) {
       guardrails.emptyStopRecoveryCount += 1
       guardrails.awaitingPostToolSummary = true
-      await appendItems(
+      await appendOverlayItems(
         state,
-        options,
         [createRuntimeUserItem('You just finished tool execution. Please provide a natural-language final summary for this request.')],
-        'local_runtime'
       )
       return 'continue'
     }
@@ -786,9 +808,8 @@ async function handleTerminalPhase(params: {
   if (assistant.finishReason === 'stop' && shouldRecoverMutationlessStop) {
     if (guardrails.noMutationStopRecoveryCount < 1) {
       guardrails.noMutationStopRecoveryCount += 1
-      await appendItems(
+      await appendOverlayItems(
         state,
-        options,
         [
           createRuntimeUserItem(
             'You have not made any successful file changes yet. Do not finish now. ' +
@@ -796,7 +817,6 @@ async function handleTerminalPhase(params: {
               'or explain with concrete evidence why no edit is required.'
           )
         ],
-        'local_runtime'
       )
       return 'continue'
     }
@@ -804,7 +824,7 @@ async function handleTerminalPhase(params: {
 
   if (assistant.finishReason === 'stop' && shouldRecoverWeakVerificationStop) {
     guardrails.verificationHintCount += 1
-    await appendItems(state, options, [createRuntimeUserItem(formatVerificationHint())], 'local_runtime')
+    await appendOverlayItems(state, [createRuntimeUserItem(formatVerificationHint())])
     return 'continue'
   }
 
@@ -813,14 +833,12 @@ async function handleTerminalPhase(params: {
   }
 
   if (shouldNudge(text, state)) {
-    await appendItems(
+    await appendOverlayItems(
       state,
-      options,
       [createRuntimeUserItem(
         'Continue with the task. Use your tools to make progress. ' +
           'If you have completed everything, describe what was done.'
       )],
-      'local_runtime'
     )
     state.nudgeCount += 1
     return 'continue'
@@ -831,7 +849,13 @@ async function handleTerminalPhase(params: {
 }
 
 export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
-  const state = createState(options.systemPrompt, options.userPrompt, options.initialItems)
+  const state = createState(
+    options.systemPrompt,
+    options.userPrompt,
+    options.stablePrefixItems,
+    options.initialItems,
+    options.initialOverlayItems,
+  )
   const maxTurns = options.maxTurns ?? 100
   const guardrails = createLoopGuardrailState(options.userPrompt)
   const promptObservability = options.promptObservabilityTracker ?? createPromptObservabilityTracker()
@@ -853,7 +877,12 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     let promptSnapshot: PromptObservabilitySnapshot | undefined
     try {
       applyReactiveCompact(state)
-      const requestItems = buildRequestMessages(state.items, options.intentContract)
+      const requestItems = buildRequestMessages(
+        state.stablePrefixItems,
+        state.overlayItems,
+        state.items,
+        options.intentContract,
+      )
       promptSnapshot = promptObservability.record(state.turnCount + 1, requestItems)
       await options.onPromptObservability?.(promptSnapshot)
       await options.onTurnStart?.({ turn: state.turnCount + 1 })

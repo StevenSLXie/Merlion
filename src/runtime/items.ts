@@ -113,6 +113,14 @@ const LEGACY_RUNTIME_USER_PATTERNS: RegExp[] = [
   /^Write a natural-language summary of what you completed in this run\./i,
 ]
 
+const NON_PERSISTENT_RUNTIME_SYSTEM_PATTERNS: RegExp[] = [
+  /^User-specified target paths detected\./i,
+  /^Prompt-derived path guidance\./i,
+  /^Path guidance update\./i,
+  /^Execution charter for this turn:/i,
+  /^Execution contract for the current request\./i,
+]
+
 function normalizeContent(content: string | null | undefined): string {
   return typeof content === 'string' ? content : ''
 }
@@ -126,6 +134,18 @@ function classifyLegacyUserMessage(content: string): 'external' | 'runtime' {
     if (pattern.test(content.trim())) return 'runtime'
   }
   return 'external'
+}
+
+function isLegacyRuntimeUserMessage(content: string): boolean {
+  return classifyLegacyUserMessage(content) === 'runtime'
+}
+
+function isNonPersistentRuntimeSystemMessage(content: string): boolean {
+  const normalized = content.trim()
+  for (const pattern of NON_PERSISTENT_RUNTIME_SYSTEM_PATTERNS) {
+    if (pattern.test(normalized)) return true
+  }
+  return false
 }
 
 export function toolCallToFunctionCallItem(call: ToolCall): FunctionCallItem {
@@ -202,6 +222,37 @@ export function messagesToItems(messages: ChatMessage[]): ConversationItem[] {
     if (message.role === 'system') systemIndex += 1
   }
   return items
+}
+
+export function isNonPersistentRuntimeItem(item: ConversationItem): boolean {
+  if (item.kind !== 'message') return false
+  if (item.role === 'user' && item.source === 'runtime') {
+    return isLegacyRuntimeUserMessage(item.content)
+  }
+  if (item.role === 'system' && item.source === 'runtime') {
+    return isNonPersistentRuntimeSystemMessage(item.content)
+  }
+  return false
+}
+
+export function pruneNonPersistentRuntimeItems(items: ConversationItem[]): ConversationItem[] {
+  return items.filter((item) => !isNonPersistentRuntimeItem(item))
+}
+
+export function splitStablePrefixItems(items: ConversationItem[]): {
+  stablePrefixItems: ConversationItem[]
+  transcriptTailItems: ConversationItem[]
+} {
+  let splitIndex = 0
+  while (splitIndex < items.length) {
+    const item = items[splitIndex]
+    if (!item || item.kind !== 'message' || item.role !== 'system') break
+    splitIndex += 1
+  }
+  return {
+    stablePrefixItems: items.slice(0, splitIndex),
+    transcriptTailItems: items.slice(splitIndex),
+  }
 }
 
 function toToolCall(item: FunctionCallItem): ToolCall {

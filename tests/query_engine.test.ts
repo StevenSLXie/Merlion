@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../src/types.ts'
 import type { ConversationItem } from '../src/runtime/items.ts'
-import { createSystemItem } from '../src/runtime/items.ts'
+import { createExternalUserItem, createSystemItem } from '../src/runtime/items.ts'
 import { ToolRegistry } from '../src/tools/registry.ts'
 import type { ToolDefinition } from '../src/tools/types.ts'
 import { QueryEngine } from '../src/runtime/query_engine.ts'
@@ -68,6 +68,19 @@ function makeApprovalTool(): ToolDefinition {
         return { content: '[Permission denied]', isError: true }
       }
       return { content: 'ok', isError: false }
+    },
+  }
+}
+
+function makeReadOnlyProbeTool(): ToolDefinition {
+  return {
+    name: 'probe',
+    description: 'read-only probe tool for query engine tests',
+    parameters: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'] },
+    concurrencySafe: true,
+    isReadOnly: true,
+    async execute(input) {
+      return { content: `probed ${String(input.target)}`, isError: false }
     },
   }
 }
@@ -221,4 +234,164 @@ test('QueryEngine narrows analysis turns to read-only tools and records correcti
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }
+})
+
+test('QueryEngine keeps turn overlays within one submit and excludes them from persisted history', async () => {
+  const provider = new RecordingProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('probe', { target: 'src/runtime/query_engine.ts' })],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+    {
+      role: 'assistant',
+      content: 'Finished the first request.',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+    {
+      role: 'assistant',
+      content: 'Finished the follow-up request.',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+  ])
+
+  const persisted: ConversationItem[] = []
+  const registry = new ToolRegistry()
+  registry.register(makeReadOnlyProbeTool())
+  const engine = new QueryEngine({
+    cwd: process.cwd(),
+    provider,
+    registry,
+    permissions: { ask: async () => 'allow' },
+    contextService: {
+      getTrustLevel: () => 'trusted',
+      getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+      getGeneratedMapMode: () => false,
+      setGeneratedMapMode() {},
+      async prefetchIfSafe() {
+        return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+      },
+      async getSystemPrompt() {
+        return 'system prompt'
+      },
+      async buildPromptPrelude(prompt) {
+        return [
+          createSystemItem(`Prompt-derived path guidance.\n\nfocus: ${prompt}`, 'runtime'),
+        ]
+      },
+      async buildPathGuidanceItems() {
+        return {
+          loadedFiles: ['src/runtime/query_engine.ts'],
+          items: [createSystemItem('Path guidance update.\n\n- src/runtime/query_engine.ts', 'runtime')],
+        }
+      },
+      async extractCandidatePathsFromText() {
+        return []
+      },
+      async extractCandidatePathsFromToolEvent() {
+        return ['src/runtime/query_engine.ts']
+      },
+    },
+    persistItem: async (item) => {
+      persisted.push(item)
+    },
+    model: 'test-model',
+  })
+
+  await engine.submitPrompt('inspect src/runtime/query_engine.ts')
+  await engine.submitPrompt('summarize the findings')
+
+  const firstTurnSystems = provider.seenMessages[0]!.filter((message) => message.role === 'system').map((message) => message.content ?? '')
+  const toolFollowUpSystems = provider.seenMessages[1]!.filter((message) => message.role === 'system').map((message) => message.content ?? '')
+  const secondRequestSystems = provider.seenMessages[2]!.filter((message) => message.role === 'system').map((message) => message.content ?? '')
+
+  assert.equal(firstTurnSystems.some((content) => content.includes('focus: inspect src/runtime/query_engine.ts')), true)
+  assert.equal(toolFollowUpSystems.some((content) => content.startsWith('Prompt-derived path guidance.')), true)
+  assert.equal(toolFollowUpSystems.some((content) => content.startsWith('Path guidance update.')), true)
+  assert.equal(
+    secondRequestSystems.some(
+      (content) => content.startsWith('Prompt-derived path guidance.') && content.includes('focus: inspect src/runtime/query_engine.ts')
+    ),
+    false,
+  )
+  assert.equal(secondRequestSystems.some((content) => content.startsWith('Path guidance update.')), false)
+
+  const persistedText = persisted
+    .filter((item): item is Extract<ConversationItem, { kind: 'message' }> => item.kind === 'message')
+    .map((item) => item.content)
+    .join('\n')
+  assert.equal(/Prompt-derived path guidance\./.test(persistedText), false)
+  assert.equal(/Path guidance update\./.test(persistedText), false)
+  assert.equal(/Execution charter for this turn:/.test(persistedText), false)
+
+  const snapshotText = engine.getItems()
+    .filter((item): item is Extract<ConversationItem, { kind: 'message' }> => item.kind === 'message')
+    .map((item) => item.content)
+    .join('\n')
+  assert.equal(/Prompt-derived path guidance\./.test(snapshotText), false)
+  assert.equal(/Path guidance update\./.test(snapshotText), false)
+  assert.equal(/Execution charter for this turn:/.test(snapshotText), false)
+})
+
+test('QueryEngine resumeFromTranscript strips legacy overlay items before the next request', async () => {
+  const provider = new RecordingProvider([
+    {
+      role: 'assistant',
+      content: 'Resumed cleanly.',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+  ])
+
+  const engine = new QueryEngine({
+    cwd: process.cwd(),
+    provider,
+    registry: buildDefaultRegistry({ mode: 'default' }),
+    permissions: { ask: async () => 'allow' },
+    contextService: {
+      getTrustLevel: () => 'trusted',
+      getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+      getGeneratedMapMode: () => false,
+      setGeneratedMapMode() {},
+      async prefetchIfSafe() {
+        return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+      },
+      async getSystemPrompt() {
+        return 'system prompt'
+      },
+      async buildPromptPrelude() {
+        return []
+      },
+      async buildPathGuidanceItems() {
+        return { items: [], loadedFiles: [] }
+      },
+      async extractCandidatePathsFromText() {
+        return []
+      },
+      async extractCandidatePathsFromToolEvent() {
+        return []
+      },
+    },
+    model: 'test-model',
+  })
+
+  await engine.resumeFromTranscript([
+    createSystemItem('system prompt', 'static'),
+    createSystemItem('Prompt-derived path guidance.\n\nlegacy overlay', 'runtime'),
+    createSystemItem('Path guidance update.\n\nlegacy guidance', 'runtime'),
+    createExternalUserItem('original task'),
+  ])
+
+  assert.equal(engine.getItems().some((item) => item.kind === 'message' && item.content.includes('legacy overlay')), false)
+  assert.equal(engine.getItems().some((item) => item.kind === 'message' && item.content.includes('legacy guidance')), false)
+
+  await engine.submitPrompt('continue from the resumed session')
+
+  const requestSystems = provider.seenMessages[0]!.filter((message) => message.role === 'system').map((message) => message.content ?? '')
+  assert.equal(requestSystems.some((content) => content.includes('legacy overlay')), false)
+  assert.equal(requestSystems.some((content) => content.includes('legacy guidance')), false)
 })
