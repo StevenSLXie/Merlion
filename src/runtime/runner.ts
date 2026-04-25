@@ -5,7 +5,7 @@ import { runReplSession } from '../cli/repl.ts'
 import { createPermissionStore } from '../permissions/store.ts'
 import { OpenAICompatProvider } from '../providers/openai.ts'
 import { OpenAIResponsesProvider } from '../providers/openai_responses.ts'
-import { createPromptObservabilityTrackerWithToolSchema } from './prompt_observability.ts'
+import { createPromptObservabilityTracker } from './prompt_observability.ts'
 import { buildIntentContract } from './intent_contract.ts'
 import {
   appendTranscriptItem,
@@ -59,19 +59,6 @@ export interface CliRuntimeOptions {
 function isAuthFailureResult(result: { output: string; terminal: string }): boolean {
   if (result.terminal !== 'model_error') return false
   return /Provider authentication failed \(401\/403\)\./i.test(result.output)
-}
-
-function serializeToolSchema(registry: ReturnType<typeof buildDefaultRegistry>): string {
-  return JSON.stringify(registry.getAll().map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters
-  })))
-}
-
-function estimateToolSchemaTokens(registry: ReturnType<typeof buildDefaultRegistry>): number {
-  const serialized = serializeToolSchema(registry)
-  return Math.ceil(serialized.length / 4)
 }
 
 function parseEnvNumber(name: string): number | undefined {
@@ -144,7 +131,6 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
   }
   let provider = createProvider()
   const registry = buildDefaultRegistry({ mode: 'default' })
-  const toolSchemaSerialized = serializeToolSchema(registry)
   const approvalPolicy = options.approvalPolicy ?? approvalPolicyFromLegacyPermissionMode(options.permissionMode)
   const session = options.resumeSessionId
     ? await getSessionFilesForResume(options.cwd, options.resumeSessionId)
@@ -166,8 +152,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
   if (!options.resumeSessionId) {
     await appendSessionMeta(session.transcriptPath, session.sessionId, options.model, options.cwd)
   }
-  const toolSchemaTokensEstimate = estimateToolSchemaTokens(registry)
-  const promptObservabilityTracker = createPromptObservabilityTrackerWithToolSchema(toolSchemaSerialized)
+  const promptObservabilityTracker = createPromptObservabilityTracker()
   const initialTranscriptFromResume = options.resumeSessionId
     ? await loadSessionTranscript(session.transcriptPath)
     : undefined
@@ -229,7 +214,8 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
         prompt_tokens: entry.prompt_tokens,
         completion_tokens: entry.completion_tokens,
         cached_tokens: entry.cached_tokens ?? null,
-        tool_schema_tokens_estimate: toolSchemaTokensEstimate,
+        tool_schema_tokens_estimate:
+          entry.toolSchemaTokensEstimate ?? entry.promptObservability?.tool_schema_tokens_estimate ?? 0,
         runtime_response_id: entry.runtimeResponseId,
         provider_response_id: entry.providerResponseId,
         provider_finish_reason: entry.providerFinishReason,
@@ -238,7 +224,6 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     },
     usageTracker,
     usageRates,
-    toolSchemaTokensEstimate,
     buildIntentContract: (prompt, contractOptions) => buildIntentContract(prompt, contractOptions) ?? undefined,
     createSubagentRuntime: ({ prompt, history, runtimeState, depth }) => createChildSubagentRuntime({
       cwd: options.cwd,

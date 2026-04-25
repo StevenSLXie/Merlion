@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -10,7 +11,12 @@ import { createExternalUserItem, createSystemItem } from '../src/runtime/items.t
 import { ToolRegistry } from '../src/tools/registry.ts'
 import type { ToolDefinition } from '../src/tools/types.ts'
 import { QueryEngine } from '../src/runtime/query_engine.ts'
+import { summarizeToolSchema } from '../src/runtime/prompt_observability.ts'
 import { buildDefaultRegistry } from '../src/tools/builtin/index.ts'
+
+function shortHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 12)
+}
 
 class StubProvider implements ModelProvider {
   private index = 0
@@ -364,6 +370,126 @@ test('QueryEngine changes tool schema only on explicit phase switches', async ()
     assert.equal(snapshot.runtimeState.task.profileEpoch.epoch, 2)
     assert.equal(snapshot.runtimeState.task.profileEpoch.lastSchemaChangeReason, 'phase_switch')
     assert.equal(snapshot.runtimeState.task.currentTask?.kind, 'verification')
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test('QueryEngine persists prompt observability from the actual per-turn request schema', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'merlion-observability-schema-'))
+  try {
+    const provider = new RecordingProvider([
+      {
+        role: 'assistant',
+        content: 'Initial analysis.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+      {
+        role: 'assistant',
+        content: 'Verification plan.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+    const usageEntries: Array<{
+      toolSchemaTokensEstimate?: number
+      promptObservability?: {
+        tool_schema_tokens_estimate: number
+        tool_schema_hash: string | null
+        schema_change_reason: string | null
+        overlay_tokens_estimate: number
+      }
+    }> = []
+
+    const engine = new QueryEngine({
+      cwd,
+      provider,
+      registry: buildDefaultRegistry({ mode: 'default' }),
+      permissions: { ask: async () => 'allow' },
+      contextService: {
+        getTrustLevel: () => 'trusted',
+        getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+        getGeneratedMapMode: () => false,
+        setGeneratedMapMode() {},
+        async prefetchIfSafe() {
+          return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+        },
+        async getSystemPrompt() {
+          return 'system prompt'
+        },
+        async buildPromptPrelude() {
+          return []
+        },
+        async buildPathGuidanceItems() {
+          return { items: [], loadedFiles: [] }
+        },
+        async extractCandidatePathsFromText() {
+          return []
+        },
+        async extractCandidatePathsFromToolEvent() {
+          return []
+        },
+      },
+      persistUsage: async (entry) => {
+        usageEntries.push({
+          toolSchemaTokensEstimate: entry.toolSchemaTokensEstimate,
+          promptObservability: entry.promptObservability
+            ? {
+                tool_schema_tokens_estimate: entry.promptObservability.tool_schema_tokens_estimate,
+                tool_schema_hash: entry.promptObservability.tool_schema_hash,
+                schema_change_reason: entry.promptObservability.schema_change_reason,
+                overlay_tokens_estimate: entry.promptObservability.overlay_tokens_estimate,
+              }
+            : undefined,
+        })
+      },
+      model: 'test-model',
+    })
+
+    await engine.submitPrompt('Analyze this module and summarize its weaknesses.')
+    await engine.submitPrompt('Verify the fix by running the relevant tests now.')
+
+    const allTools = buildDefaultRegistry({ mode: 'default' }).getAll()
+    const fullSchema = summarizeToolSchema(allTools)
+    const firstTurnSchema = summarizeToolSchema(
+      allTools.filter((tool) => provider.seenToolNames[0]?.includes(tool.name))
+    )
+    const secondTurnSchema = summarizeToolSchema(
+      allTools.filter((tool) => provider.seenToolNames[1]?.includes(tool.name))
+    )
+
+    assert.equal(usageEntries.length, 2)
+    assert.equal(
+      usageEntries[0]?.promptObservability?.tool_schema_tokens_estimate,
+      firstTurnSchema.tool_schema_tokens_estimate,
+    )
+    assert.equal(usageEntries[0]?.toolSchemaTokensEstimate, firstTurnSchema.tool_schema_tokens_estimate)
+    assert.equal(
+      usageEntries[0]?.promptObservability?.tool_schema_hash,
+      shortHash(firstTurnSchema.tool_schema_serialized),
+    )
+    assert.notEqual(
+      usageEntries[0]?.promptObservability?.tool_schema_hash,
+      shortHash(fullSchema.tool_schema_serialized),
+    )
+    assert.equal(usageEntries[0]?.promptObservability?.schema_change_reason, 'initial_epoch')
+    assert.equal((usageEntries[0]?.promptObservability?.overlay_tokens_estimate ?? 0) > 0, true)
+
+    assert.equal(
+      usageEntries[1]?.promptObservability?.tool_schema_tokens_estimate,
+      secondTurnSchema.tool_schema_tokens_estimate,
+    )
+    assert.equal(usageEntries[1]?.toolSchemaTokensEstimate, secondTurnSchema.tool_schema_tokens_estimate)
+    assert.equal(
+      usageEntries[1]?.promptObservability?.tool_schema_hash,
+      shortHash(secondTurnSchema.tool_schema_serialized),
+    )
+    assert.equal(usageEntries[1]?.promptObservability?.schema_change_reason, 'phase_switch')
+    assert.equal(
+      usageEntries[0]?.promptObservability?.tool_schema_hash !== usageEntries[1]?.promptObservability?.tool_schema_hash,
+      true,
+    )
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

@@ -780,7 +780,8 @@ async function runChildAgent(
         prompt_tokens: entry.prompt_tokens,
         completion_tokens: entry.completion_tokens,
         cached_tokens: entry.cached_tokens ?? null,
-        tool_schema_tokens_estimate: 0,
+        tool_schema_tokens_estimate:
+          entry.toolSchemaTokensEstimate ?? entry.promptObservability?.tool_schema_tokens_estimate ?? 0,
         runtime_response_id: entry.runtimeResponseId,
         provider_response_id: entry.providerResponseId,
         provider_finish_reason: entry.providerFinishReason,

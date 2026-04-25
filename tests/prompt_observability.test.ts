@@ -1,13 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 
 import {
   createPromptObservabilityTracker,
   createPromptObservabilityTrackerWithToolSchema,
+  estimateTokensFromChars,
   summarizeToolSchema,
   withResponseBoundaryPromptObservability,
 } from '../src/runtime/prompt_observability.ts'
 import { createExternalUserItem, createFunctionCallOutputItem, createSystemItem, messagesToItems } from '../src/runtime/items.ts'
+
+function shortHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 12)
+}
 
 test('prompt observability tracks role tokens and stable prefix hash', () => {
   const tracker = createPromptObservabilityTracker()
@@ -20,6 +26,9 @@ test('prompt observability tracks role tokens and stable prefix hash', () => {
   assert.equal(first.turn, 1)
   assert.equal(first.stable_prefix_tokens, 0)
   assert.equal(first.stable_prefix_hash, null)
+  assert.equal(first.tool_schema_hash, null)
+  assert.equal(first.schema_change_reason, null)
+  assert.equal(first.overlay_tokens_estimate, 0)
   assert.equal(first.role_tokens.system > 0, true)
   assert.equal(first.role_tokens.user > 0, true)
   assert.equal(first.role_tokens.assistant, 0)
@@ -36,6 +45,8 @@ test('prompt observability tracks role tokens and stable prefix hash', () => {
   assert.equal(second.turn, 2)
   assert.equal(second.stable_prefix_tokens > 0, true)
   assert.equal(typeof second.stable_prefix_hash, 'string')
+  assert.equal(second.tool_schema_hash, null)
+  assert.equal(second.overlay_tokens_estimate, 0)
   assert.equal(second.role_tokens.tool > 0, true)
   assert.equal(second.role_delta_tokens.tool > 0, true)
 })
@@ -52,6 +63,7 @@ test('prompt observability includes stable tool schema tokens across turns', () 
 
   const first = tracker.record(1, messagesToItems([{ role: 'system', content: 'sys' }]))
   assert.equal(first.tool_schema_tokens_estimate, toolSchema.tool_schema_tokens_estimate)
+  assert.equal(first.tool_schema_hash, shortHash(toolSchema.tool_schema_serialized))
   assert.equal(first.stable_prefix_tokens, 0)
 
   const second = tracker.record(2, messagesToItems([
@@ -61,6 +73,7 @@ test('prompt observability includes stable tool schema tokens across turns', () 
   assert.equal(second.tool_schema_tokens_estimate, first.tool_schema_tokens_estimate)
   assert.equal(second.stable_prefix_tokens >= second.tool_schema_tokens_estimate, true)
   assert.equal(typeof second.stable_prefix_hash, 'string')
+  assert.equal(second.tool_schema_hash, first.tool_schema_hash)
 })
 
 test('prompt observability exposes cache-instability signals without changing tool schema accounting', () => {
@@ -92,6 +105,122 @@ test('prompt observability exposes cache-instability signals without changing to
   assert.equal(unstable.estimated_input_tokens >= stable.estimated_input_tokens, true)
   assert.equal(stable.stable_prefix_ratio > unstable.stable_prefix_ratio, true)
   assert.equal(unstable.stable_prefix_tokens < stable.stable_prefix_tokens, true)
+})
+
+test('prompt observability excludes overlay tokens from stable prefix math', () => {
+  const toolSchema = summarizeToolSchema([
+    {
+      name: 'read_file',
+      description: 'Read a file from disk.',
+      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+    },
+  ])
+  const tracker = createPromptObservabilityTracker()
+
+  const first = tracker.record(1, {
+    stablePrefixItems: [createSystemItem('sys', 'static')],
+    overlayItems: [createSystemItem('Execution charter for this turn:\n- stay read-only', 'runtime')],
+    transcriptItems: [createExternalUserItem('read hello.txt')],
+    tools: [
+      {
+        name: 'read_file',
+        description: 'Read a file from disk.',
+        parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+      },
+    ],
+    schemaChangeReason: 'initial_epoch',
+  })
+  const second = tracker.record(2, {
+    stablePrefixItems: [createSystemItem('sys', 'static')],
+    overlayItems: [createSystemItem('Execution charter for this turn:\n- stay read-only and mention exact output', 'runtime')],
+    transcriptItems: [createExternalUserItem('read hello.txt')],
+    tools: [
+      {
+        name: 'read_file',
+        description: 'Read a file from disk.',
+        parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+      },
+    ],
+    schemaChangeReason: null,
+  })
+
+  assert.equal(first.overlay_tokens_estimate > 0, true)
+  assert.equal(second.overlay_tokens_estimate > first.overlay_tokens_estimate, true)
+  assert.equal(second.tool_schema_hash, shortHash(toolSchema.tool_schema_serialized))
+  assert.equal(second.stable_prefix_ratio, 1)
+  assert.equal(second.stable_prefix_tokens, estimateTokensFromChars('systemstaticsys'.length) + estimateTokensFromChars('userexternalread hello.txt'.length) + toolSchema.tool_schema_tokens_estimate)
+})
+
+test('prompt observability records schema-change reasons from the real tool schema', () => {
+  const analysisTools = summarizeToolSchema([
+    {
+      name: 'read_file',
+      description: 'Read a file from disk.',
+      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+    },
+  ])
+  const verificationTools = summarizeToolSchema([
+    {
+      name: 'read_file',
+      description: 'Read a file from disk.',
+      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+    },
+    {
+      name: 'bash',
+      description: 'Run a shell command.',
+      parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
+    },
+  ])
+  const tracker = createPromptObservabilityTracker()
+  const input = {
+    stablePrefixItems: [createSystemItem('sys', 'static')],
+    overlayItems: [],
+    transcriptItems: [createExternalUserItem('verify the fix')],
+  }
+
+  tracker.record(1, {
+    ...input,
+    tools: [
+      {
+        name: 'read_file',
+        description: 'Read a file from disk.',
+        parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+      },
+    ],
+    schemaChangeReason: 'initial_epoch',
+  })
+  const stable = tracker.record(2, {
+    ...input,
+    tools: [
+      {
+        name: 'read_file',
+        description: 'Read a file from disk.',
+        parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+      },
+    ],
+    schemaChangeReason: null,
+  })
+  const switched = tracker.record(3, {
+    ...input,
+    tools: [
+      {
+        name: 'read_file',
+        description: 'Read a file from disk.',
+        parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+      },
+      {
+        name: 'bash',
+        description: 'Run a shell command.',
+        parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
+      },
+    ],
+    schemaChangeReason: 'phase_switch',
+  })
+
+  assert.equal(stable.tool_schema_hash, shortHash(analysisTools.tool_schema_serialized))
+  assert.equal(switched.tool_schema_hash, shortHash(verificationTools.tool_schema_serialized))
+  assert.equal(switched.schema_change_reason, 'phase_switch')
+  assert.equal(switched.stable_prefix_tokens < stable.stable_prefix_tokens, true)
 })
 
 test('tool schema observability summary matches serialized prompt accounting inputs', () => {

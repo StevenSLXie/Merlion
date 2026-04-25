@@ -15,6 +15,7 @@
 - New recovery branches must be bounded to prevent loops.
 - Keep transcript/usage hooks consistent with tests.
 - Request-local overlay items in `query_engine.ts` / `loop.ts` must stay visible for the active `submitPrompt()` run but must not be appended into persistent transcript history or resume state.
+- Prompt observability in `loop.ts` / `prompt_observability.ts` must be recorded from the fully assembled per-turn request layers plus the actual registry passed to the provider; do not reuse runner-startup tool-schema estimates.
 - Turn-level task control is derived in `query_engine.ts` before `runLoop()`: update task-state, execution-charter injection, and profile-filtered registry together.
 - When re-creating a `QueryEngine` in-process, resume from `QueryEngineSnapshot` rather than only `items` so sticky capability-profile epochs survive provider or runtime rebuilds.
 - Subagent role semantics are runtime-bound: workers must stay in implementation mode, explorers/verifiers stay read-only even if prompt wording is vague.

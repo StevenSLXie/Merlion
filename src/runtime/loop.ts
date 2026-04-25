@@ -77,7 +77,7 @@ import {
 } from './loop_guardrails.ts'
 import type { SandboxBackend } from '../sandbox/backend.ts'
 import type { ResolvedSandboxPolicy } from '../sandbox/policy.ts'
-import type { TaskControlDecision } from './task_state.ts'
+import type { SchemaChangeReason, TaskControlDecision } from './task_state.ts'
 
 export { shouldNudge } from './loop_guardrails.ts'
 
@@ -109,10 +109,20 @@ export interface RunLoopOptions {
     runtimeResponseId?: string
     providerResponseId?: string
     providerFinishReason?: string
+    promptObservability?: PromptObservabilitySnapshot
   }) => Promise<void> | void
   onPromptObservability?: (snapshot: PromptObservabilitySnapshot) => Promise<void> | void
   promptObservabilityTracker?: {
-    record: (turn: number, items: ConversationItem[]) => PromptObservabilitySnapshot
+    record: (
+      turn: number,
+      input: {
+        stablePrefixItems: ConversationItem[]
+        overlayItems: ConversationItem[]
+        transcriptItems: ConversationItem[]
+        tools?: ReturnType<ToolRegistry['getAll']>
+        schemaChangeReason?: SchemaChangeReason | null
+      }
+    ) => PromptObservabilitySnapshot
   }
   onTurnStart?: (event: { turn: number }) => Promise<void> | void
   onAssistantResponse?: (event: {
@@ -125,6 +135,7 @@ export interface RunLoopOptions {
   onToolCallResult?: (event: ToolCallResultEvent) => Promise<void> | void
   onSandboxEvent?: (event: RuntimeSandboxEvent) => Promise<void> | void
   taskControl?: TaskControlDecision
+  schemaChangeReason?: SchemaChangeReason | null
   onToolBatchComplete?: (event: {
     turn: number
     results: ToolCallResultEvent[]
@@ -137,19 +148,21 @@ export interface RunLoopResult {
   state: LoopState
 }
 
-function buildRequestMessages(
+function assembleRequestMessages(
   stablePrefixItems: ConversationItem[],
   overlayItems: ConversationItem[],
   transcriptItems: ConversationItem[],
   intentContract?: string,
-): ConversationItem[] {
+): {
+  stablePrefixItems: ConversationItem[]
+  overlayItems: ConversationItem[]
+  transcriptItems: ConversationItem[]
+  requestItems: ConversationItem[]
+} {
   const contract = intentContract?.trim()
-  const requestItems = [
-    ...stablePrefixItems,
-    ...overlayItems,
-  ]
+  const requestOverlayItems = [...overlayItems]
   if (contract) {
-    requestItems.push(
+    requestOverlayItems.push(
       createSystemItem(
         'Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\n' +
           contract,
@@ -157,10 +170,16 @@ function buildRequestMessages(
       ),
     )
   }
-  return [
-    ...requestItems,
-    ...transcriptItems,
-  ]
+  return {
+    stablePrefixItems: [...stablePrefixItems],
+    overlayItems: requestOverlayItems,
+    transcriptItems: [...transcriptItems],
+    requestItems: [
+      ...stablePrefixItems,
+      ...requestOverlayItems,
+      ...transcriptItems,
+    ],
+  }
 }
 
 function ensureBoundary(
@@ -266,33 +285,44 @@ async function appendItems(
 async function tryGenerateNaturalSummary(
   options: RunLoopOptions,
   state: InternalLoopState,
+  promptObservability: NonNullable<RunLoopOptions['promptObservabilityTracker']>,
 ): Promise<string | null> {
   const summaryRequest = createRuntimeUserItem(
     'Write a natural-language summary of what you completed in this run. ' +
       'Focus on concrete outcomes and mention unfinished parts only if needed. ' +
       'Do not call tools.'
   )
-  const requestItems = buildRequestMessages(
+  const requestAssembly = assembleRequestMessages(
     state.stablePrefixItems,
     [...state.overlayItems, summaryRequest],
     state.items,
     options.intentContract,
   )
+  let promptSnapshot = promptObservability.record(state.turnCount + 1, {
+    stablePrefixItems: requestAssembly.stablePrefixItems,
+    overlayItems: requestAssembly.overlayItems,
+    transcriptItems: requestAssembly.transcriptItems,
+    tools: [],
+    schemaChangeReason: null,
+  })
 
   try {
     const result = await withRetry(
-      () => completeProviderTurn({ ...options, registry: new ToolRegistry() }, requestItems),
+      () => completeProviderTurn({ ...options, registry: new ToolRegistry() }, requestAssembly.requestItems),
       { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 5_000 },
     )
 
     const boundary = ensureBoundary(result.responseBoundary, result, options.provider)
     await options.onResponseBoundary?.(boundary)
+    promptSnapshot = withResponseBoundaryPromptObservability(promptSnapshot, boundary)
+    await options.onPromptObservability?.(promptSnapshot)
     await appendItems(state, options, result.outputItems, 'provider_output', boundary.runtimeResponseId)
     await options.onUsage?.({
       ...result.usage,
       runtimeResponseId: boundary.runtimeResponseId,
       providerResponseId: boundary.providerResponseId,
       providerFinishReason: boundary.finishReason,
+      promptObservability: promptSnapshot,
     })
 
     const text = findLastAssistantText(result.outputItems).trim()
@@ -869,7 +899,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     if (state.turnCount >= maxTurns) {
       if (guardrails.finalText.trim() === '') {
         guardrails.finalText =
-          (await tryGenerateNaturalSummary(options, state)) ??
+          (await tryGenerateNaturalSummary(options, state, promptObservability)) ??
           'Reached max turns before producing a final summary.'
       }
       return { terminal: 'max_turns_exceeded', finalText: guardrails.finalText, state: projectLoopState(state) }
@@ -879,17 +909,23 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     let promptSnapshot: PromptObservabilitySnapshot | undefined
     try {
       applyReactiveCompact(state)
-      const requestItems = buildRequestMessages(
+      const requestAssembly = assembleRequestMessages(
         state.stablePrefixItems,
         state.overlayItems,
         state.items,
         options.intentContract,
       )
-      promptSnapshot = promptObservability.record(state.turnCount + 1, requestItems)
+      promptSnapshot = promptObservability.record(state.turnCount + 1, {
+        stablePrefixItems: requestAssembly.stablePrefixItems,
+        overlayItems: requestAssembly.overlayItems,
+        transcriptItems: requestAssembly.transcriptItems,
+        tools: options.registry.getAll(),
+        schemaChangeReason: options.schemaChangeReason ?? null,
+      })
       await options.onPromptObservability?.(promptSnapshot)
       await options.onTurnStart?.({ turn: state.turnCount + 1 })
       assistant = await withRetry(
-        () => completeProviderTurn(options, requestItems),
+        () => completeProviderTurn(options, requestAssembly.requestItems),
         { maxAttempts: 5, baseDelayMs: 200, maxDelayMs: 32_000 },
       )
     } catch (error) {
@@ -911,6 +947,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
       runtimeResponseId: boundary.runtimeResponseId,
       providerResponseId: boundary.providerResponseId,
       providerFinishReason: boundary.finishReason,
+      promptObservability: promptSnapshot,
     })
     await options.onAssistantResponse?.({
       turn: state.turnCount,

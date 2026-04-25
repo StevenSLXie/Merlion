@@ -29,6 +29,7 @@ import {
   deriveTaskControl,
   resolveCapabilityProfileEpoch,
   type TaskControlDecision,
+  type SchemaChangeReason,
   type TaskState,
 } from './task_state.ts'
 import type { SandboxBackend } from '../sandbox/backend.ts'
@@ -66,7 +67,16 @@ export interface QueryEngineOptions {
   deriveTaskControl?: (prompt: string, previousTask?: TaskState | null) => TaskControlDecision
   sink?: RuntimeSink
   promptObservabilityTracker?: {
-    record: (turn: number, items: ConversationItem[]) => PromptObservabilitySnapshot
+    record: (
+      turn: number,
+      input: {
+        stablePrefixItems: ConversationItem[]
+        overlayItems: ConversationItem[]
+        transcriptItems: ConversationItem[]
+        tools?: ReturnType<ToolRegistry['getAll']>
+        schemaChangeReason?: SchemaChangeReason | null
+      }
+    ) => PromptObservabilitySnapshot
   }
   persistItem?: (item: ConversationItem, origin: 'provider_output' | 'local_tool_output' | 'local_runtime', runtimeResponseId?: string) => Promise<void> | void
   persistResponseBoundary?: (boundary: ProviderResponseBoundary) => Promise<void> | void
@@ -286,7 +296,6 @@ export class QueryEngine {
     const toolPathSignals = new Set<string>()
     let sawSuccessfulGitCommit = false
     let sawWorkspaceMutationSignal = false
-    let latestPromptObservability: PromptObservabilitySnapshot | undefined
     const candidateTaskControl = (this.options.deriveTaskControl ?? deriveTaskControl)(
       prompt,
       this.runtimeState.task.currentTask,
@@ -354,6 +363,7 @@ export class QueryEngine {
       initialOverlayItems: overlayItems,
       persistInitialMessages: false,
       taskControl,
+      schemaChangeReason: profileResolution.schemaChangeReason,
       subagents: this.options.createSubagentRuntime?.({
         prompt,
         history: this.getItems(),
@@ -372,9 +382,10 @@ export class QueryEngine {
       onUsage: async (usage) => {
         await this.options.persistUsage?.({
           ...usage,
-          promptObservability: latestPromptObservability,
+          promptObservability: usage.promptObservability,
           model: this.options.model,
-          toolSchemaTokensEstimate: this.options.toolSchemaTokensEstimate,
+          toolSchemaTokensEstimate:
+            usage.promptObservability?.tool_schema_tokens_estimate ?? this.options.toolSchemaTokensEstimate,
           sessionId: this.options.sessionId,
         })
         const snapshot = this.options.usageTracker?.record(usage)
@@ -384,15 +395,12 @@ export class QueryEngine {
             snapshot,
             estimatedCost,
             provider: usage.provider,
-            promptObservability: latestPromptObservability,
+            promptObservability: usage.promptObservability,
             runtimeResponseId: usage.runtimeResponseId,
             providerResponseId: usage.providerResponseId,
             providerFinishReason: usage.providerFinishReason,
           })
         }
-      },
-      onPromptObservability: (snapshot) => {
-        latestPromptObservability = snapshot
       },
       onTurnStart: ({ turn }) => {
         this.options.sink?.onTurnStart({ turn })
