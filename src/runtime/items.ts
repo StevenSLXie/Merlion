@@ -171,6 +171,23 @@ const RUNTIME_USER_OVERLAY_DESCRIPTORS: OverlayMessageDescriptor[] = [
   { kind: 'natural_summary_request', order: 550, pattern: /^Write a natural-language summary of what you completed in this run\./i },
 ]
 
+const LEGACY_RUNTIME_USER_PATTERNS: RegExp[] = [
+  /^Output was cut off\. Continue directly from where you stopped\./i,
+  /^You just finished tool execution\. Please provide a natural-language final summary/i,
+  /^You have not made any successful file changes yet\. Do not finish now\./i,
+  /^Continue with the task\. Use your tools to make progress\./i,
+  /^You appear to be looping on tool errors\./i,
+  /^Tool argument validation failed/i,
+  /^Exploration budget exceeded:/i,
+  /^No concrete progress has been made/i,
+  /^You only changed tests so far\./i,
+  /^Please verify the change before finishing\./i,
+  /^You are drifting in todo-only updates\./i,
+  /^A large edit was just made\./i,
+  /^You rewrote a file immediately after an edit/i,
+  /^Write a natural-language summary of what you completed in this run\./i,
+]
+
 type CanonicalOverlayDescriptor = {
   kind: CanonicalOverlayKind
   order: number
@@ -189,6 +206,10 @@ function isBlank(value: string | null | undefined): boolean {
 
 function classifyLegacyUserMessage(content: string): 'external' | 'runtime' {
   if (matchOverlayDescriptor(content, RUNTIME_USER_OVERLAY_DESCRIPTORS)) return 'runtime'
+  const normalized = normalizeItemContent(content)
+  for (const pattern of LEGACY_RUNTIME_USER_PATTERNS) {
+    if (pattern.test(normalized)) return 'runtime'
+  }
   return 'external'
 }
 

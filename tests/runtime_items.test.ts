@@ -165,3 +165,17 @@ test('pruneNonPersistentRuntimeItems removes canonical overlay templates but kee
     createExternalUserItem('real user prompt'),
   ])
 })
+
+test('pruneNonPersistentRuntimeItems also strips legacy runtime user overlays from older transcripts', () => {
+  const items = [
+    createSystemItem('system prompt', 'static'),
+    createRuntimeUserItem('Please verify the change before finishing.'),
+    createRuntimeUserItem('You only changed tests so far.'),
+    createExternalUserItem('real user prompt'),
+  ]
+
+  assert.deepEqual(pruneNonPersistentRuntimeItems(items), [
+    createSystemItem('system prompt', 'static'),
+    createExternalUserItem('real user prompt'),
+  ])
+})

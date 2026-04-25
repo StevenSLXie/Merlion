@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../src/types.ts'
 import type { ConversationItem } from '../src/runtime/items.ts'
-import { createExternalUserItem, createSystemItem } from '../src/runtime/items.ts'
+import { createExternalUserItem, createRuntimeUserItem, createSystemItem } from '../src/runtime/items.ts'
 import { ToolRegistry } from '../src/tools/registry.ts'
 import type { ToolDefinition } from '../src/tools/types.ts'
 import { QueryEngine } from '../src/runtime/query_engine.ts'
@@ -869,11 +869,13 @@ test('QueryEngine resumeFromTranscript strips legacy overlay items before the ne
     createSystemItem('system prompt', 'static'),
     createSystemItem('Prompt-derived path guidance.\n\nlegacy overlay', 'runtime'),
     createSystemItem('Path guidance update.\n\nlegacy guidance', 'runtime'),
+    createRuntimeUserItem('Please verify the change before finishing.'),
     createExternalUserItem('original task'),
   ])
 
   assert.equal(engine.getItems().some((item) => item.kind === 'message' && item.content.includes('legacy overlay')), false)
   assert.equal(engine.getItems().some((item) => item.kind === 'message' && item.content.includes('legacy guidance')), false)
+  assert.equal(engine.getItems().some((item) => item.kind === 'message' && item.content.includes('Please verify the change before finishing.')), false)
 
   await engine.submitPrompt('continue from the resumed session')
 
