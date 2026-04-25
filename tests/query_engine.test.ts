@@ -393,7 +393,7 @@ test('QueryEngine canonicalizes equivalent provider-visible tool schemas within 
       description: 'Read the requested path.',
       properties: {
         path: { type: 'string' },
-        format: { type: ['string', 'null'], enum: ['json', 'text'] },
+        format: { type: ['string', 'number', 'boolean', 'null'], enum: ['json', 7, true, '7', null] },
       },
       required: ['format', 'path'],
     }))
@@ -403,7 +403,7 @@ test('QueryEngine canonicalizes equivalent provider-visible tool schemas within 
       name: 'alpha_tool',
       description: 'Read the requested path.',
       properties: {
-        format: { enum: ['text', 'json'], type: ['null', 'string'] },
+        format: { enum: ['7', true, null, 'json', 7], type: ['boolean', 'null', 'number', 'string'] },
         path: { type: 'string' },
       },
       required: ['path', 'format'],
@@ -468,7 +468,8 @@ test('QueryEngine canonicalizes equivalent provider-visible tool schemas within 
     assert.equal(providerA.seenToolSchemas[0], providerB.seenToolSchemas[0])
     assert.match(providerA.seenToolSchemas[0] ?? '', /"name":"alpha_tool".*"name":"zeta_tool"/)
     assert.match(providerA.seenToolSchemas[0] ?? '', /"required":\["format","path"\]/)
-    assert.match(providerA.seenToolSchemas[0] ?? '', /"enum":\["json","text"\]/)
+    assert.match(providerA.seenToolSchemas[0] ?? '', /"enum":\[true,null,7,"7","json"\]/)
+    assert.match(providerA.seenToolSchemas[0] ?? '', /"type":\["boolean","null","number","string"\]/)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

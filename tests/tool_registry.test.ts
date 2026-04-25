@@ -18,11 +18,31 @@ function makeTool(name: string): ToolDefinition {
 
 test('register and get by name', () => {
   const registry = new ToolRegistry()
-  const read = makeTool('read_file')
+  const read: ToolDefinition = {
+    ...makeTool('read_file'),
+    parameters: {
+      type: 'object',
+      properties: {
+        mode: { enum: ['write', 'read'], type: ['string', 'null'] },
+        path: { type: 'string' },
+      },
+      required: ['path', 'mode'],
+    },
+  }
 
   registry.register(read)
 
-  assert.equal(registry.get('read_file'), read)
+  assert.deepEqual(registry.get('read_file'), {
+    ...read,
+    parameters: {
+      properties: {
+        mode: { enum: ['read', 'write'], type: ['null', 'string'] },
+        path: { type: 'string' },
+      },
+      required: ['mode', 'path'],
+      type: 'object',
+    },
+  })
   assert.equal(registry.get('missing'), undefined)
 })
 
@@ -33,7 +53,7 @@ test('duplicate registration throws', () => {
   assert.throws(() => registry.register(makeTool('read_file')), /already registered/i)
 })
 
-test('getAll preserves insertion order', () => {
+test('getAll returns deterministic name order', () => {
   const registry = new ToolRegistry()
   const read = makeTool('read_file')
   const search = makeTool('search')
@@ -45,7 +65,6 @@ test('getAll preserves insertion order', () => {
 
   assert.deepEqual(
     registry.getAll().map((tool) => tool.name),
-    ['read_file', 'search', 'edit_file']
+    ['edit_file', 'read_file', 'search']
   )
 })
-

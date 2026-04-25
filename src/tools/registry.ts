@@ -2,23 +2,19 @@ import type { ToolDefinition } from './types.js'
 
 const ORDER_INSENSITIVE_SCHEMA_ARRAY_KEYS = new Set(['required', 'enum', 'type'])
 
-function compareScalarValues(left: boolean | number | string, right: boolean | number | string): number {
-  return String(left).localeCompare(String(right))
+function schemaValueSortKey(value: unknown): string {
+  if (value === null) return 'null:null'
+  if (Array.isArray(value)) return `array:${JSON.stringify(value)}`
+  if (typeof value === 'object') return `object:${JSON.stringify(value)}`
+  return `${typeof value}:${JSON.stringify(value)}`
 }
 
 function canonicalizeSchemaValue(value: unknown, parentKey?: string): unknown {
   if (Array.isArray(value)) {
     const items = value.map((entry) => canonicalizeSchemaValue(entry))
-    if (
-      parentKey &&
-      ORDER_INSENSITIVE_SCHEMA_ARRAY_KEYS.has(parentKey) &&
-      items.every((entry) => typeof entry === 'boolean' || typeof entry === 'number' || typeof entry === 'string')
-    ) {
+    if (parentKey && ORDER_INSENSITIVE_SCHEMA_ARRAY_KEYS.has(parentKey)) {
       return [...items].sort((left, right) =>
-        compareScalarValues(
-          left as boolean | number | string,
-          right as boolean | number | string,
-        )
+        schemaValueSortKey(left).localeCompare(schemaValueSortKey(right))
       )
     }
     return items

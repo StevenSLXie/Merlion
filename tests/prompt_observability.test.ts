@@ -265,7 +265,7 @@ test('tool schema observability summary canonicalizes equivalent tool registries
         type: 'object',
         properties: {
           path: { type: 'string' },
-          format: { type: ['string', 'null'], enum: ['json', 'text'] },
+          format: { type: ['string', 'number', 'boolean', 'null'], enum: ['json', 7, true, '7', null] },
         },
         required: ['format', 'path'],
       },
@@ -278,7 +278,7 @@ test('tool schema observability summary canonicalizes equivalent tool registries
       parameters: {
         required: ['path', 'format'],
         properties: {
-          format: { enum: ['text', 'json'], type: ['null', 'string'] },
+          format: { enum: ['7', true, null, 'json', 7], type: ['boolean', 'null', 'number', 'string'] },
           path: { type: 'string' },
         },
         type: 'object',
@@ -302,7 +302,8 @@ test('tool schema observability summary canonicalizes equivalent tool registries
   assert.equal(first.tool_schema_tokens_estimate, second.tool_schema_tokens_estimate)
   assert.match(first.tool_schema_serialized, /"name":"alpha_tool".*"name":"zeta_tool"/)
   assert.match(first.tool_schema_serialized, /"required":\["format","path"\]/)
-  assert.match(first.tool_schema_serialized, /"enum":\["json","text"\]/)
+  assert.match(first.tool_schema_serialized, /"enum":\[true,null,7,"7","json"\]/)
+  assert.match(first.tool_schema_serialized, /"type":\["boolean","null","number","string"\]/)
 })
 
 test('prompt observability can track stable prefix over item transcripts', () => {
