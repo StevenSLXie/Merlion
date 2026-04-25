@@ -448,6 +448,66 @@ test('loop falls back to synthetic summary when stop remains empty after recover
   assert.match(result.finalText, /returned no final summary/i)
 })
 
+test('loop records prompt observability for synthetic natural-summary fallback turns', async () => {
+  const usageEvents: Array<Record<string, unknown>> = []
+  const provider = new StubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'ok' })],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: '',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: '',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'Synthetic summary after tool execution.',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEchoTool())
+
+  const result = await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    cwd: process.cwd(),
+    maxTurns: 8,
+    onUsage: async (usage) => {
+      usageEvents.push(usage as Record<string, unknown>)
+    },
+  })
+
+  assert.equal(result.terminal, 'completed')
+  assert.equal(result.finalText, 'Synthetic summary after tool execution.')
+  assert.equal(usageEvents.length, 4)
+  assert.equal(typeof usageEvents[3]?.['runtimeResponseId'], 'string')
+  assert.equal(usageEvents[3]?.['providerFinishReason'], 'stop')
+  assert.equal(typeof usageEvents[3]?.['providerResponseId'], 'undefined')
+
+  const promptObservability = usageEvents[3]?.['promptObservability'] as Record<string, unknown> | undefined
+  assert.ok(promptObservability)
+  assert.equal(promptObservability['schema_change_reason'], null)
+  assert.equal((promptObservability['overlay_tokens_estimate'] as number) > 0, true)
+  assert.equal(typeof promptObservability['tool_schema_hash'], 'string')
+  assert.equal((promptObservability['stable_prefix_tokens'] as number) > 0, true)
+})
+
 test('item-native loop recovers empty stop after tool calls by requesting final summary', async () => {
   const provider = new ItemStubProvider([
     {

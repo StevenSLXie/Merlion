@@ -4,6 +4,30 @@ Started: Sat Apr 25 18:33:07 +08 2026
 - Keep request-local overlays visible in `runLoop()` return state for the active submit, but prune them before storing `QueryEngine` history or resume state.
 - Keep sticky capability-profile epochs stable on lightweight follow-up prompts; only rotate schema when the user makes an explicit correction or phase switch rather than inferring it from a task-kind change alone.
 - Emit per-turn observability change reasons only on the provider turn where the schema epoch actually changes; tool-follow-up turns in the same submit should keep the schema hash but clear the change reason.
+- When `runLoop()` makes an extra provider turn outside the main turn loop, thread prompt observability and usage persistence through that fallback path exactly like a normal provider turn.
+---
+## [2026-04-25 20:48:18 +0800] - SPEC-108-prefix-stability-regression-coverage
+- What was implemented
+- Independently reviewed the final SPEC-108 hardening pass, confirmed the new phase-switch E2E plus the existing local/E2E regressions cover the stable-prefix contract, and added the missing runtime regression for observability on synthetic natural-summary fallback turns.
+- Files changed
+- `tests/runtime_loop.test.ts`
+- `scripts/ralph-codex/prd.json`
+- `scripts/ralph-codex/progress.txt`
+- `scripts/ralph-codex/current_story.json` (removed)
+- Verification run
+- `node --experimental-strip-types --test tests/runtime_loop.test.ts`
+- `node --experimental-strip-types --test tests/query_engine.test.ts tests/prompt_observability.test.ts tests/e2e/e2e_profile_epoch_switch.test.ts`
+- Review notes:
+- Checked `docs/features/108-prefix-stability-first-context-assembly.md`, the handoff story, the new `tests/e2e/e2e_profile_epoch_switch.test.ts`, adjacent local regressions in `tests/query_engine.test.ts`, and the fallback request path in `src/runtime/loop.ts`.
+- Found one P1 issue: the coverage story did not lock down prompt observability on the synthetic natural-summary fallback path, so a future regression in that extra provider turn could silently drop real request-shape accounting while the main-line tests stayed green.
+- Resolved it by adding a `tests/runtime_loop.test.ts` regression that forces the empty-stop recovery path into `tryGenerateNaturalSummary()` and asserts the persisted usage row still carries per-turn prompt observability for the fallback request.
+- Learnings for future iterations:
+- Reusable patterns
+- Coverage stories need at least one assertion for every provider-turn shape the runtime can emit, including fallback or synthetic turns outside the main request loop.
+- Gotchas
+- `tryGenerateNaturalSummary()` failures are intentionally swallowed and replaced with a fallback summary, which can hide observability regressions unless usage rows are asserted directly.
+- Useful context
+- The new `tests/e2e/e2e_profile_epoch_switch.test.ts` now closes the explicit schema-boundary acceptance gap, while `tests/runtime_loop.test.ts` protects the extra observability path that the E2E does not exercise.
 ---
 ## [2026-04-25 19:21:16 +0800] - SPEC-108-real-request-prompt-observability
 - What was implemented

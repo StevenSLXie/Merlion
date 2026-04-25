@@ -61,7 +61,7 @@
         "Feature 106 targeted narrowing and feature 107 cache-aware cost or prefix diagnostics remain covered and do not regress."
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Source specs:\n- docs/features/108-prefix-stability-first-context-assembly.md (108 Prefix Stability First Context Assembly)\nFiles:\n- tests/query_engine.test.ts\n- tests/prompt_observability.test.ts\n- tests/e2e/helpers_registry.test.ts\n- tests/e2e/e2e_cache_hit_rate.test.ts\n- tests/e2e/e2e_context_caching.test.ts\n- tests/e2e/e2e_session_resume.test.ts\n- tests/e2e/e2e_query_engine_local.test.ts\n- tests/e2e/e2e_task_runtime_local.test.ts\n- tests/e2e/e2e_subagent_local.test.ts\n- tests/e2e/e2e_profile_epoch_switch.test.ts\nVerification:\n- node --experimental-strip-types --test tests/query_engine.test.ts\n- node --experimental-strip-types --test tests/prompt_observability.test.ts\n- node --experimental-strip-types --test tests/e2e/helpers_registry.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_query_engine_local.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_task_runtime_local.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_subagent_local.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_cache_hit_rate.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_context_caching.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_session_resume.test.ts\n- npm run test:all\nNotes:\n- Keep the new E2E focused on explicit schema-transition behavior rather than broad end-to-end feature coverage.\n- This story is the final hardening pass after the runtime behavior is in place."
     }
   ]
