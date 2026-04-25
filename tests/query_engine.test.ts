@@ -436,6 +436,73 @@ test('QueryEngine records user_correction when a correction changes the active p
   }
 })
 
+test('QueryEngine keeps implementation schema sticky across lightweight follow-up prompts', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'merlion-sticky-implementation-'))
+  try {
+    const provider = new RecordingProvider([
+      {
+        role: 'assistant',
+        content: 'Applied the fix.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+      {
+        role: 'assistant',
+        content: 'You should inspect the touched call sites next.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+
+    const engine = new QueryEngine({
+      cwd,
+      provider,
+      registry: buildDefaultRegistry({ mode: 'default' }),
+      permissions: { ask: async () => 'allow' },
+      contextService: {
+        getTrustLevel: () => 'trusted',
+        getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+        getGeneratedMapMode: () => false,
+        setGeneratedMapMode() {},
+        async prefetchIfSafe() {
+          return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+        },
+        async getSystemPrompt() {
+          return 'system prompt'
+        },
+        async buildPromptPrelude() {
+          return []
+        },
+        async buildPathGuidanceItems() {
+          return { items: [], loadedFiles: [] }
+        },
+        async extractCandidatePathsFromText() {
+          return []
+        },
+        async extractCandidatePathsFromToolEvent() {
+          return []
+        },
+      },
+      model: 'test-model',
+    })
+
+    await engine.submitPrompt('Fix the failing login flow in src/auth.ts.')
+    await engine.submitPrompt('What else should I inspect next?')
+
+    assert.equal(provider.seenToolNames[0]?.includes('edit_file'), true)
+    assert.deepEqual(provider.seenToolNames[1], provider.seenToolNames[0])
+
+    const snapshot = engine.getSnapshot()
+    assert.equal(snapshot.runtimeState.task.capabilityProfile, 'implementation_scoped')
+    assert.equal(snapshot.runtimeState.task.profileEpoch.epoch, 1)
+    assert.equal(snapshot.runtimeState.task.profileEpoch.lastSchemaChangeReason, null)
+    assert.equal(snapshot.runtimeState.task.currentTask?.kind, 'question')
+    assert.equal(snapshot.runtimeState.task.mutationPolicy?.mayMutateFiles, false)
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
 test('QueryEngine keeps turn overlays within one submit and excludes them from persisted history', async () => {
   const provider = new RecordingProvider([
     {

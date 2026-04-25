@@ -319,18 +319,6 @@ function isExplicitPhaseSwitch(params: {
   if (!previousTask) return true
   if (previousTask.kind === candidateTaskState.kind) return false
   if (candidateTaskState.correctionOfPreviousTurn) return false
-
-  const involvesHighLeveragePhase =
-    previousTask.kind === 'implementation' ||
-    candidateTaskState.kind === 'implementation' ||
-    previousTask.kind === 'verification' ||
-    candidateTaskState.kind === 'verification' ||
-    previousTask.kind === 'review' ||
-    candidateTaskState.kind === 'review' ||
-    previousTask.kind === 'meta_correction' ||
-    candidateTaskState.kind === 'meta_correction'
-
-  if (involvesHighLeveragePhase) return true
   return EXPLICIT_PHASE_SWITCH_PATTERNS.some((pattern) => pattern.test(prompt.trim()))
 }
 

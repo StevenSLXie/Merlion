@@ -45,6 +45,22 @@ test('correction prompts may explicitly switch into an implementation epoch', ()
   assert.equal(resolution.schemaChangeReason, 'user_correction')
 })
 
+test('lightweight implementation follow-ups keep the existing profile epoch', () => {
+  const firstTurn = deriveTaskControl('Fix the failing login flow in src/auth.ts.')
+  const followUp = deriveTaskControl('What else should I inspect next?', firstTurn.taskState)
+  const resolution = resolveCapabilityProfileEpoch({
+    prompt: 'What else should I inspect next?',
+    previousTask: firstTurn.taskState,
+    previousCapabilityProfile: firstTurn.capabilityProfile,
+    candidateTaskState: followUp.taskState,
+  })
+
+  assert.equal(followUp.taskState.kind, 'question')
+  assert.equal(followUp.capabilityProfile, 'readonly_question')
+  assert.equal(resolution.capabilityProfile, 'implementation_scoped')
+  assert.equal(resolution.schemaChangeReason, null)
+})
+
 test('readonly and implementation profiles derive the expected mutation policy', () => {
   const readonly = deriveTaskControl('Review the latest diff.')
   assert.equal(readonly.capabilityProfile, 'readonly_review')

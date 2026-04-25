@@ -32,7 +32,7 @@
         "Task control, execution charter semantics, mutation policy, and targeted registry narrowing from feature 106 remain in effect under the sticky epoch model."
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Source specs:\n- docs/features/108-prefix-stability-first-context-assembly.md (108 Prefix Stability First Context Assembly)\nFiles:\n- src/runtime/query_engine.ts\n- src/runtime/task_state.ts\n- src/runtime/state/types.ts\n- src/runtime/runner.ts\n- src/tools/builtin/index.ts\n- src/tools/pool.ts\nVerification:\n- node --experimental-strip-types --test tests/query_engine.test.ts\n- node --experimental-strip-types --test tests/e2e/helpers_registry.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_task_runtime_local.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_session_resume.test.ts\nNotes:\n- Prefer schema stability first; use policy and mutation guards for finer-grained control before reaching for schema churn.\n- Keep profile switching observable and reviewable rather than implicit."
     },
     {

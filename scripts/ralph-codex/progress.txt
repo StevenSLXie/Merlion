@@ -2,6 +2,7 @@
 Started: Sat Apr 25 18:33:07 +08 2026
 ## Codebase Patterns
 - Keep request-local overlays visible in `runLoop()` return state for the active submit, but prune them before storing `QueryEngine` history or resume state.
+- Keep sticky capability-profile epochs stable on lightweight follow-up prompts; only rotate schema when the user makes an explicit correction or phase switch rather than inferring it from a task-kind change alone.
 ---
 ## [2026-04-25 19:16:57 +0800] - SPEC-108-prompt-layering-non-persistent-overlay
 - What was implemented
@@ -27,4 +28,34 @@ Started: Sat Apr 25 18:33:07 +08 2026
 - Story-focused tests can miss regressions in shared loop-state contracts, so run adjacent runtime suites when changing `runLoop()` state projection or item assembly.
 - Useful context
 - `QueryEngine.submitPrompt()` already prunes non-persistent runtime items before updating stored history, so `runLoop()` can expose overlays in its return value without leaking them into resume state.
+---
+## [2026-04-25 19:08:49 +0800] - SPEC-108-sticky-tool-profile-epochs
+- What was implemented
+- Independently reviewed the sticky capability-profile epoch work, found an implicit schema-churn regression on lightweight implementation follow-ups, and tightened the phase-switch heuristic so sticky schemas only rotate on explicit boundaries.
+- Files changed
+- `src/runtime/task_state.ts`
+- `tests/task_state.test.ts`
+- `tests/query_engine.test.ts`
+- `scripts/ralph-codex/prd.json`
+- `scripts/ralph-codex/progress.txt`
+- `scripts/ralph-codex/current_story.json` (removed)
+- Verification run
+- `node --experimental-strip-types --test tests/task_state.test.ts`
+- `node --experimental-strip-types --test tests/query_engine.test.ts`
+- `node --experimental-strip-types --test tests/tool_pool.test.ts`
+- `node --experimental-strip-types --test tests/runtime_loop.test.ts`
+- `node --experimental-strip-types --test tests/e2e/helpers_registry.test.ts`
+- `node --experimental-strip-types --test tests/e2e/e2e_task_runtime_local.test.ts`
+- `node --experimental-strip-types --test tests/e2e/e2e_session_resume.test.ts` (skipped because `OPENROUTER_API_KEY` is not set)
+- Review notes:
+- Checked `docs/features/108-prefix-stability-first-context-assembly.md`, the handoff story, and the sticky-epoch flow in `src/runtime/query_engine.ts`, `src/runtime/task_state.ts`, `src/runtime/state/types.ts`, `src/runtime/runner.ts`, and `src/tools/pool.ts`.
+- Found one P1 issue: `resolveCapabilityProfileEpoch()` treated any task-kind change involving `implementation`, `review`, `verification`, or `meta_correction` as an automatic phase switch, so a lightweight follow-up like “What else should I inspect next?” silently dropped the active implementation schema even without an explicit boundary.
+- Resolved it by requiring explicit phase-switch phrasing for non-correction schema changes and adding unit/integration regressions that prove implementation follow-ups keep the prior schema hash while task control still updates for the new prompt.
+- Learnings for future iterations:
+- Reusable patterns
+- Sticky schema logic should bias toward keeping the prior epoch and letting task-control or mutation-policy guards absorb lightweight prompt drift.
+- Gotchas
+- Task-kind classifiers are too coarse to drive schema rotation on their own; using them directly causes prompt-shape churn that contradicts stable-prefix goals.
+- Useful context
+- The review regression is easiest to surface in `tests/query_engine.test.ts` by comparing provider-visible tool names across consecutive turns, not by inspecting runtime state alone.
 ---
