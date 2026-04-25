@@ -4,7 +4,7 @@ import test from 'node:test'
 import type { RunLoopResult } from '../../src/runtime/loop.ts'
 import type { PromptObservabilitySnapshot } from '../../src/runtime/prompt_observability.ts'
 import { summarizeToolSchema } from '../../src/runtime/prompt_observability.ts'
-import { buildUsageArchivePayload } from './helpers.ts'
+import { assertPromptObservabilityArchive, buildUsageArchivePayload } from './helpers.ts'
 
 test('E2E usage archive payload includes tool schema and prompt floor observability fields', () => {
   const toolSchema = summarizeToolSchema([
@@ -204,4 +204,74 @@ test('E2E usage archive payload keeps degraded derived totals and prompt observa
     payload.prompt_observability[1]?.tool_schema_tokens_estimate,
     payload.prompt_observability[2]?.tool_schema_tokens_estimate,
   )
+})
+
+test('prompt observability archive assertions summarize cache-first stability signals', () => {
+  const toolSchema = summarizeToolSchema([
+    {
+      name: 'read_file',
+      description: 'Read a file from disk.',
+      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+    },
+  ])
+  const payload = buildUsageArchivePayload({
+    scenario: 'Archive Signals',
+    task: 'Inspect cache-first prompt observability.',
+    cwd: '/tmp/merlion-test',
+    result: {
+      terminal: 'completed',
+      finalText: 'done',
+      state: {
+        items: [],
+        turnCount: 2,
+        maxOutputTokensRecoveryCount: 0,
+        hasAttemptedReactiveCompact: false,
+        nudgeCount: 0,
+      },
+    } satisfies RunLoopResult,
+    model: 'test-model',
+    baseURL: 'https://example.test/v1',
+    usageSamples: [
+      { prompt_tokens: 300, completion_tokens: 20, cached_tokens: 0 },
+      { prompt_tokens: 320, completion_tokens: 18, cached_tokens: 80 },
+    ],
+    totals: {
+      prompt_tokens: 620,
+      completion_tokens: 38,
+      cached_tokens: 80,
+      total_tokens: 658,
+    },
+    toolSchema,
+    promptObservability: [
+      {
+        turn: 1,
+        estimated_input_tokens: 300,
+        tool_schema_tokens_estimate: toolSchema.tool_schema_tokens_estimate,
+        role_tokens: { system: 100, user: 20, assistant: 0, tool: 0 },
+        role_delta_tokens: { system: 100, user: 20, assistant: 0, tool: 0 },
+        stable_prefix_tokens: 0,
+        stable_prefix_ratio: 0,
+        stable_prefix_hash: null,
+      },
+      {
+        turn: 2,
+        estimated_input_tokens: 320,
+        tool_schema_tokens_estimate: toolSchema.tool_schema_tokens_estimate,
+        role_tokens: { system: 100, user: 20, assistant: 12, tool: 0 },
+        role_delta_tokens: { system: 0, user: 0, assistant: 12, tool: 0 },
+        stable_prefix_tokens: 280,
+        stable_prefix_ratio: 0.875,
+        stable_prefix_hash: 'stable-two',
+      },
+    ],
+  })
+
+  const summary = assertPromptObservabilityArchive(payload, {
+    minSnapshots: 2,
+    minStablePrefixTokens: 200,
+    minStablePrefixRatio: 0.8,
+  })
+
+  assert.equal(summary.maxStablePrefixTokens, 280)
+  assert.equal(summary.maxStablePrefixRatio, 0.875)
 })

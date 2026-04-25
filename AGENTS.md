@@ -8,6 +8,7 @@
 - Prefer small, test-backed changes and keep docs/features in sync.
 - Do not write outside the workspace root.
 - Use path-guided exploration before broad repository scans.
+- For cache-first/runtime hardening, extend focused tests to assert prompt observability via usage archive payloads instead of only task success.
 
 ## Major Areas
 - `src/index.ts`: CLI bootstrap, config, session wiring, orientation.

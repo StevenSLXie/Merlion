@@ -23,6 +23,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  assertPromptObservabilityArchive,
+  buildUsageArchivePayload,
   makeSandbox,
   rmSandbox,
   SKIP,
@@ -36,6 +38,8 @@ import {
   loadSessionTranscript,
 } from '../../src/runtime/session.ts'
 import { itemsToMessages } from '../../src/runtime/items.ts'
+import { createPromptObservabilityTrackerWithToolSchema, summarizeToolSchema } from '../../src/runtime/prompt_observability.ts'
+import { createUsageTracker } from '../../src/runtime/usage.ts'
 
 // Unique marker embedded in the file so we can assert on it cross-session.
 const MARKER = `merlion-session-resume-${randomUUID().slice(0, 12)}`
@@ -49,17 +53,37 @@ if (SKIP) {
     async () => {
       const sandbox = await makeSandbox()
       const transcriptPath = join(sandbox, 'session1.jsonl')
+      const registry = makeRegistry()
+      const toolSchema = summarizeToolSchema(registry.getAll())
+      const session1PromptObservability = [] as Array<ReturnType<ReturnType<typeof createPromptObservabilityTrackerWithToolSchema>['record']>>
+      const session2PromptObservability = [] as Array<ReturnType<ReturnType<typeof createPromptObservabilityTrackerWithToolSchema>['record']>>
+      const session1Usage = createUsageTracker()
+      const session2Usage = createUsageTracker()
+      const session1UsageSamples: Array<{ prompt_tokens: number; completion_tokens: number; cached_tokens: number | null }> = []
+      const session2UsageSamples: Array<{ prompt_tokens: number; completion_tokens: number; cached_tokens: number | null }> = []
 
       try {
         // ── Session 1: create marker.txt, persist every message ───────────────
         const result1 = await runLoop({
           provider: makeProvider(),
-          registry: makeRegistry(),
+          registry,
           systemPrompt: SYSTEM_PROMPT,
           userPrompt: `Create a file called marker.txt whose content is exactly: ${MARKER}`,
           cwd: sandbox,
           maxTurns: 15,
           permissions: { ask: async () => 'allow_session' },
+          promptObservabilityTracker: createPromptObservabilityTrackerWithToolSchema(toolSchema.tool_schema_serialized),
+          onPromptObservability: (snapshot) => {
+            session1PromptObservability.push(snapshot)
+          },
+          onUsage: (usage) => {
+            const snapshot = session1Usage.record(usage)
+            session1UsageSamples.push({
+              prompt_tokens: snapshot.delta.prompt_tokens,
+              completion_tokens: snapshot.delta.completion_tokens,
+              cached_tokens: snapshot.delta.cached_tokens,
+            })
+          },
           onItemAppended: (entry) => appendTranscriptItem(
             transcriptPath,
             entry.item,
@@ -96,7 +120,7 @@ if (SKIP) {
         // ── Session 2: inject restored context, ask about marker.txt ─────────
         const result2 = await runLoop({
           provider: makeProvider(),
-          registry: makeRegistry(),
+          registry,
           // systemPrompt is ignored when initialItems is provided
           systemPrompt: SYSTEM_PROMPT,
           userPrompt: 'Read marker.txt and tell me its exact content.',
@@ -104,6 +128,18 @@ if (SKIP) {
           initialItems: restoredTranscript.items,
           maxTurns: 15,
           permissions: { ask: async () => 'allow_session' },
+          promptObservabilityTracker: createPromptObservabilityTrackerWithToolSchema(toolSchema.tool_schema_serialized),
+          onPromptObservability: (snapshot) => {
+            session2PromptObservability.push(snapshot)
+          },
+          onUsage: (usage) => {
+            const snapshot = session2Usage.record(usage)
+            session2UsageSamples.push({
+              prompt_tokens: snapshot.delta.prompt_tokens,
+              completion_tokens: snapshot.delta.completion_tokens,
+              cached_tokens: snapshot.delta.cached_tokens,
+            })
+          },
         })
 
         assert.equal(result2.terminal, 'completed', `Session 2 ended: ${result2.terminal}`)
@@ -119,6 +155,26 @@ if (SKIP) {
           result2.state.items.length > result1.state.items.length,
           'Session 2 should accumulate more items than session 1',
         )
+
+        const resumedArchive = buildUsageArchivePayload({
+          scenario: 'Session Resume',
+          task: 'Read marker.txt and tell me its exact content.',
+          cwd: sandbox,
+          result: result2,
+          model: process.env.MERLION_E2E_MODEL ?? process.env.MERLION_MODEL ?? 'default',
+          baseURL: process.env.MERLION_BASE_URL ?? 'https://openrouter.ai/api/v1',
+          usageSamples: session2UsageSamples,
+          totals: session2Usage.getTotals(),
+          toolSchema,
+          promptObservability: session2PromptObservability,
+        })
+        const resumedSummary = assertPromptObservabilityArchive(resumedArchive, {
+          minSnapshots: 1,
+          minStablePrefixTokens: 1,
+        })
+        assert.equal(resumedSummary.maxStablePrefixRatio > 0, true)
+        assert.equal(session1PromptObservability.length > 0, true)
+        assert.equal(session1UsageSamples.length > 0, true)
       } finally {
         await rmSandbox(sandbox)
       }

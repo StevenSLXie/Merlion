@@ -18,7 +18,8 @@ import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { makeSandbox, rmSandbox, SKIP, makeProvider, makeRegistry, SYSTEM_PROMPT } from './helpers.ts'
+import { createPromptObservabilityTrackerWithToolSchema, summarizeToolSchema } from '../../src/runtime/prompt_observability.ts'
+import { makeSandbox, rmSandbox, SKIP, makeProvider, makeRegistry, SYSTEM_PROMPT, assertPromptObservabilityArchive, buildUsageArchivePayload } from './helpers.ts'
 import { runLoop } from '../../src/runtime/loop.ts'
 import { createUsageTracker } from '../../src/runtime/usage.ts'
 
@@ -37,14 +38,18 @@ if (SKIP) {
           completion_tokens: number
           cached_tokens: number | null
         }> = []
+        const promptObservability: Array<ReturnType<ReturnType<typeof createPromptObservabilityTrackerWithToolSchema>['record']>> = []
         const tracker = createUsageTracker()
+        const registry = makeRegistry()
+        const toolSchema = summarizeToolSchema(registry.getAll())
+        const promptObservabilityTracker = createPromptObservabilityTrackerWithToolSchema(toolSchema.tool_schema_serialized)
 
         // Multi-turn task: read a file then create a summary file.
         // This guarantees ≥2 LLM turns (turn 1 = tool call, turn 2 = final answer),
         // giving the provider cache a chance to warm on the second turn.
         const result = await runLoop({
           provider: makeProvider(),
-          registry: makeRegistry(),
+          registry,
           systemPrompt: SYSTEM_PROMPT,
           userPrompt:
             'First read hello.txt. Then create a new file called summary.txt ' +
@@ -52,6 +57,10 @@ if (SKIP) {
           cwd: sandbox,
           maxTurns: 20,
           permissions: { ask: async () => 'allow_session' },
+          promptObservabilityTracker,
+          onPromptObservability: (snapshot) => {
+            promptObservability.push(snapshot)
+          },
           onUsage: (usage) => {
             const snap = tracker.record(usage)
             samples.push({
@@ -99,6 +108,30 @@ if (SKIP) {
         // ── summary.txt must exist (task completed correctly) ────────────────
         const summaryContent = await readFile(join(sandbox, 'summary.txt'), 'utf8')
         assert.match(summaryContent, /Lines: 3/, `summary.txt content unexpected: ${summaryContent}`)
+
+        const archive = buildUsageArchivePayload({
+          scenario: 'Context Caching',
+          task:
+            'First read hello.txt. Then create a new file called summary.txt whose content is exactly: "Lines: 3".',
+          cwd: sandbox,
+          result,
+          model: process.env.MERLION_E2E_MODEL ?? process.env.MERLION_MODEL ?? 'default',
+          baseURL: process.env.MERLION_BASE_URL ?? 'https://openrouter.ai/api/v1',
+          usageSamples: samples.map(({ prompt_tokens, completion_tokens, cached_tokens }) => ({
+            prompt_tokens,
+            completion_tokens,
+            cached_tokens,
+          })),
+          totals,
+          toolSchema,
+          promptObservability,
+        })
+        const observabilitySummary = assertPromptObservabilityArchive(archive, {
+          minSnapshots: 1,
+          minStablePrefixTokens: 1,
+        })
+        assert.equal(archive.prompt_observability.length, samples.length)
+        assert.equal(observabilitySummary.maxStablePrefixTokens >= toolSchema.tool_schema_tokens_estimate, true)
 
         // ── Soft observation: provider-level caching ─────────────────────────
         const cachedTotal = totals.cached_tokens

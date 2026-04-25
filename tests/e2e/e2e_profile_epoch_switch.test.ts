@@ -8,6 +8,8 @@ import type { AssistantResponse, ChatMessage, ModelProvider } from '../../src/ty
 import type { ToolDefinition } from '../../src/tools/types.ts'
 import { buildDefaultRegistry } from '../../src/tools/builtin/index.ts'
 import { QueryEngine } from '../../src/runtime/query_engine.ts'
+import { assertPromptObservabilityArchive, buildUsageArchivePayload } from './helpers.ts'
+import { summarizeToolSchema } from '../../src/runtime/prompt_observability.ts'
 
 class RecordingProvider implements ModelProvider {
   readonly seenToolNames: string[][] = []
@@ -57,9 +59,15 @@ function makeContextService() {
 test('e2e local explicit profile switch changes schema only at the boundary and records the reason', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'merlion-e2e-profile-epoch-'))
   const usageEntries: Array<{
+    prompt_tokens: number
+    completion_tokens: number
+    cached_tokens: number | null
     toolSchemaHash: string | null
     schemaChangeReason: string | null
+    stablePrefixTokens: number
+    stablePrefixRatio: number
   }> = []
+  const registry = buildDefaultRegistry({ mode: 'default' })
 
   try {
     const provider = new RecordingProvider([
@@ -80,20 +88,25 @@ test('e2e local explicit profile switch changes schema only at the boundary and 
     const engine = new QueryEngine({
       cwd,
       provider,
-      registry: buildDefaultRegistry({ mode: 'default' }),
+      registry,
       permissions: { ask: async () => 'allow' },
       contextService: makeContextService(),
       persistUsage: async (entry) => {
         usageEntries.push({
+          prompt_tokens: entry.prompt_tokens,
+          completion_tokens: entry.completion_tokens,
+          cached_tokens: entry.cached_tokens ?? null,
           toolSchemaHash: entry.promptObservability?.tool_schema_hash ?? null,
           schemaChangeReason: entry.promptObservability?.schema_change_reason ?? null,
+          stablePrefixTokens: entry.promptObservability?.stable_prefix_tokens ?? 0,
+          stablePrefixRatio: entry.promptObservability?.stable_prefix_ratio ?? 0,
         })
       },
       model: 'test-model',
     })
 
     await engine.submitPrompt('Analyze this module and summarize its weaknesses.')
-    await engine.submitPrompt('Verify the fix by running the relevant tests now.')
+    const secondResult = await engine.submitPrompt('Verify the fix by running the relevant tests now.')
 
     assert.equal(provider.seenToolNames.length, 2)
     assert.equal(usageEntries.length, 2)
@@ -104,6 +117,45 @@ test('e2e local explicit profile switch changes schema only at the boundary and 
     assert.equal(usageEntries[0]?.schemaChangeReason, 'initial_epoch')
     assert.equal(usageEntries[1]?.schemaChangeReason, 'phase_switch')
     assert.notEqual(usageEntries[1]?.toolSchemaHash, usageEntries[0]?.toolSchemaHash)
+    assert.equal(typeof usageEntries[1]?.stablePrefixTokens, 'number')
+    assert.equal(typeof usageEntries[1]?.stablePrefixRatio, 'number')
+
+    const archive = buildUsageArchivePayload({
+      scenario: 'Profile Epoch Switch',
+      task: 'Verify the fix by running the relevant tests now.',
+      cwd,
+      result: secondResult,
+      model: 'test-model',
+      baseURL: 'https://example.test/v1',
+      usageSamples: usageEntries.map((entry) => ({
+        prompt_tokens: entry.prompt_tokens,
+        completion_tokens: entry.completion_tokens,
+        cached_tokens: entry.cached_tokens,
+      })),
+      totals: {
+        prompt_tokens: usageEntries.reduce((sum, entry) => sum + entry.prompt_tokens, 0),
+        completion_tokens: usageEntries.reduce((sum, entry) => sum + entry.completion_tokens, 0),
+        cached_tokens: usageEntries.reduce((sum, entry) => sum + Math.max(0, entry.cached_tokens ?? 0), 0),
+        total_tokens: usageEntries.reduce((sum, entry) => sum + entry.prompt_tokens + entry.completion_tokens, 0),
+      },
+      toolSchema: summarizeToolSchema(registry.getAll()),
+      promptObservability: usageEntries.map((entry, index) => ({
+        turn: index + 1,
+        estimated_input_tokens: entry.prompt_tokens,
+        tool_schema_tokens_estimate: 0,
+        role_tokens: { system: 0, user: 0, assistant: 0, tool: 0 },
+        role_delta_tokens: { system: 0, user: 0, assistant: 0, tool: 0 },
+        stable_prefix_tokens: entry.stablePrefixTokens,
+        stable_prefix_ratio: entry.stablePrefixRatio,
+        stable_prefix_hash: entry.toolSchemaHash,
+        tool_schema_hash: entry.toolSchemaHash,
+        schema_change_reason: entry.schemaChangeReason,
+      })),
+    })
+    const archiveSummary = assertPromptObservabilityArchive(archive, {
+      minSnapshots: 2,
+    })
+    assert.equal(typeof archiveSummary.maxStablePrefixRatio, 'number')
 
     const snapshot = engine.getSnapshot()
     assert.equal(snapshot.runtimeState.task.capabilityProfile, 'verification_readonly')

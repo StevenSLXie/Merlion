@@ -237,6 +237,43 @@ export async function readUsageArchivePayload(path: string): Promise<UsageArchiv
   return JSON.parse(raw) as UsageArchivePayload
 }
 
+export function assertPromptObservabilityArchive(
+  archive: UsageArchivePayload,
+  options?: {
+    minSnapshots?: number
+    minStablePrefixTokens?: number
+    minStablePrefixRatio?: number
+  },
+): { maxStablePrefixTokens: number; maxStablePrefixRatio: number } {
+  const minSnapshots = options?.minSnapshots ?? 1
+  const maxStablePrefixTokens = Math.max(0, ...archive.prompt_observability.map((snapshot) => snapshot.stable_prefix_tokens))
+  const maxStablePrefixRatio = Math.max(0, ...archive.prompt_observability.map((snapshot) => snapshot.stable_prefix_ratio))
+
+  assert.ok(
+    archive.prompt_observability.length >= minSnapshots,
+    `expected at least ${minSnapshots} prompt observability snapshots in the archive`,
+  )
+  for (const snapshot of archive.prompt_observability) {
+    assert.equal(typeof snapshot.stable_prefix_tokens, 'number')
+    assert.equal(typeof snapshot.stable_prefix_ratio, 'number')
+    assert.equal(typeof snapshot.tool_schema_tokens_estimate, 'number')
+  }
+  if (options?.minStablePrefixTokens !== undefined) {
+    assert.ok(
+      maxStablePrefixTokens >= options.minStablePrefixTokens,
+      `expected max stable_prefix_tokens >= ${options.minStablePrefixTokens}, got ${maxStablePrefixTokens}`,
+    )
+  }
+  if (options?.minStablePrefixRatio !== undefined) {
+    assert.ok(
+      maxStablePrefixRatio >= options.minStablePrefixRatio,
+      `expected max stable_prefix_ratio >= ${options.minStablePrefixRatio}, got ${maxStablePrefixRatio}`,
+    )
+  }
+
+  return { maxStablePrefixTokens, maxStablePrefixRatio }
+}
+
 async function writeUsageArchive(params: UsageArchiveParams): Promise<string> {
   const dir = getUsageArchiveDir()
   await mkdir(dir, { recursive: true })
@@ -297,12 +334,7 @@ export async function assertArchivedCostGateContract(
 
   assert.equal(archive.scenario, safeScenarioLabel(scenario))
   assert.ok(report.archivePath.length > 0, 'expected a usage archive path')
-  assert.ok(archive.prompt_observability.length > 0, 'expected prompt observability snapshots in the archive')
-  for (const snapshot of archive.prompt_observability) {
-    assert.equal(typeof snapshot.stable_prefix_tokens, 'number')
-    assert.equal(typeof snapshot.stable_prefix_ratio, 'number')
-    assert.equal(typeof snapshot.tool_schema_tokens_estimate, 'number')
-  }
+  assertPromptObservabilityArchive(archive)
 
   assert.notEqual(report.decision.status, 'skip', 'expected the targeted E2E cost gate to evaluate a baseline')
   if (report.decision.status === 'skip') {

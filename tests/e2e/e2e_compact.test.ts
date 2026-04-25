@@ -18,7 +18,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { ChatMessage } from '../../src/types.js'
 
-import { makeSandbox, rmSandbox, SKIP, makeProvider, makeRegistry, SYSTEM_PROMPT } from './helpers.ts'
+import { createPromptObservabilityTrackerWithToolSchema, summarizeToolSchema } from '../../src/runtime/prompt_observability.ts'
+import { createUsageTracker } from '../../src/runtime/usage.ts'
+import { makeSandbox, rmSandbox, SKIP, makeProvider, makeRegistry, SYSTEM_PROMPT, assertPromptObservabilityArchive, buildUsageArchivePayload } from './helpers.ts'
 import { messagesToItems } from '../../src/runtime/items.ts'
 import { runLoop } from '../../src/runtime/loop.ts'
 
@@ -52,9 +54,14 @@ if (SKIP) {
       process.env.MERLION_COMPACT_KEEP_RECENT   = '3'
 
       try {
+        const registry = makeRegistry()
+        const toolSchema = summarizeToolSchema(registry.getAll())
+        const promptObservability = [] as Array<ReturnType<ReturnType<typeof createPromptObservabilityTrackerWithToolSchema>['record']>>
+        const usageTracker = createUsageTracker()
+        const usageSamples: Array<{ prompt_tokens: number; completion_tokens: number; cached_tokens: number | null }> = []
         const result = await runLoop({
           provider: makeProvider(),
-          registry: makeRegistry(),
+          registry,
           // systemPrompt is ignored — provided via initialItems
           systemPrompt: SYSTEM_PROMPT,
           userPrompt: 'Read hello.txt and tell me the content of the first line.',
@@ -62,6 +69,18 @@ if (SKIP) {
           initialItems: messagesToItems(makeFakeHistory()),
           maxTurns: 15,
           permissions: { ask: async () => 'allow_session' },
+          promptObservabilityTracker: createPromptObservabilityTrackerWithToolSchema(toolSchema.tool_schema_serialized),
+          onPromptObservability: (snapshot) => {
+            promptObservability.push(snapshot)
+          },
+          onUsage: (usage) => {
+            const snapshot = usageTracker.record(usage)
+            usageSamples.push({
+              prompt_tokens: snapshot.delta.prompt_tokens,
+              completion_tokens: snapshot.delta.completion_tokens,
+              cached_tokens: snapshot.delta.cached_tokens,
+            })
+          },
         })
 
         // Compaction must have fired
@@ -81,6 +100,24 @@ if (SKIP) {
             `Expected first-line content in response, got: ${result.finalText}`,
           )
         }
+
+        const archive = buildUsageArchivePayload({
+          scenario: 'Compact',
+          task: 'Read hello.txt and tell me the content of the first line.',
+          cwd: sandbox,
+          result,
+          model: process.env.MERLION_E2E_MODEL ?? process.env.MERLION_MODEL ?? 'default',
+          baseURL: process.env.MERLION_BASE_URL ?? 'https://openrouter.ai/api/v1',
+          usageSamples,
+          totals: usageTracker.getTotals(),
+          toolSchema,
+          promptObservability,
+        })
+        const observabilitySummary = assertPromptObservabilityArchive(archive, {
+          minSnapshots: 1,
+          minStablePrefixTokens: 1,
+        })
+        assert.equal(observabilitySummary.maxStablePrefixRatio > 0, true)
       } finally {
         if (prevTrigger === undefined) delete process.env.MERLION_COMPACT_TRIGGER_CHARS
         else process.env.MERLION_COMPACT_TRIGGER_CHARS = prevTrigger

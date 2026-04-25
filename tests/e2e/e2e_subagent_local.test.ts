@@ -12,6 +12,8 @@ import { createSessionFiles } from '../../src/runtime/session.ts'
 import { createRuntimeState } from '../../src/runtime/state/types.ts'
 import { createSubagentRuntime } from '../../src/runtime/subagents.ts'
 import { deriveTaskControl } from '../../src/runtime/task_state.ts'
+import { assertPromptObservabilityArchive, buildUsageArchivePayload } from './helpers.ts'
+import { summarizeToolSchema } from '../../src/runtime/prompt_observability.ts'
 
 function call(name: string, args: Record<string, unknown>, id = 'call_1'): ToolCall {
   return {
@@ -225,10 +227,20 @@ test('e2e local subagent request regenerates child overlay instead of inheriting
   try {
     const session = await createSessionFiles(cwd)
     const childProvider = new RecordingChildExplorerProvider()
+    const registry = buildDefaultRegistry({ mode: 'default' })
+    const usageEntries: Array<{
+      prompt_tokens: number
+      completion_tokens: number
+      cached_tokens: number | null
+      stablePrefixTokens: number
+      stablePrefixRatio: number
+      toolSchemaHash: string | null
+      schemaChangeReason: string | null
+    }> = []
     const engine = new QueryEngine({
       cwd,
       provider: new ForegroundParentProvider(),
-      registry: buildDefaultRegistry({ mode: 'default' }),
+      registry,
       permissions: { ask: async () => 'allow_session' },
       contextService: makeContextService('parent overlay'),
       model: 'parent-model',
@@ -257,11 +269,22 @@ test('e2e local subagent request regenerates child overlay instead of inheriting
           },
         }
       },
+      persistUsage: async (entry) => {
+        usageEntries.push({
+          prompt_tokens: entry.prompt_tokens,
+          completion_tokens: entry.completion_tokens,
+          cached_tokens: entry.cached_tokens ?? null,
+          stablePrefixTokens: entry.promptObservability?.stable_prefix_tokens ?? 0,
+          stablePrefixRatio: entry.promptObservability?.stable_prefix_ratio ?? 0,
+          toolSchemaHash: entry.promptObservability?.tool_schema_hash ?? null,
+          schemaChangeReason: entry.promptObservability?.schema_change_reason ?? null,
+        })
+      },
       createSubagentRuntime: ({ prompt, historyProjection, runtimeState, depth }) => createSubagentRuntime({
         cwd,
         session,
         model: 'parent-model',
-        parentRegistry: buildDefaultRegistry({ mode: 'default' }),
+        parentRegistry: registry,
         permissions: { ask: async () => 'allow_session' },
         runtimeState: runtimeState ?? createRuntimeState(),
         historyProjection,
@@ -298,6 +321,44 @@ test('e2e local subagent request regenerates child overlay instead of inheriting
     assert.match(childTranscript, /Subagent briefing:/)
     assert.match(childTranscript, /Earlier parent task\./)
     assert.match(childTranscript, /Earlier parent result\./)
+
+    const archive = buildUsageArchivePayload({
+      scenario: 'Subagent Overlay',
+      task: 'Parent overlay prompt should stay local to the parent request.',
+      cwd,
+      result,
+      model: 'parent-model',
+      baseURL: 'https://example.test/v1',
+      usageSamples: usageEntries.map((entry) => ({
+        prompt_tokens: entry.prompt_tokens,
+        completion_tokens: entry.completion_tokens,
+        cached_tokens: entry.cached_tokens,
+      })),
+      totals: {
+        prompt_tokens: usageEntries.reduce((sum, entry) => sum + entry.prompt_tokens, 0),
+        completion_tokens: usageEntries.reduce((sum, entry) => sum + entry.completion_tokens, 0),
+        cached_tokens: usageEntries.reduce((sum, entry) => sum + Math.max(0, entry.cached_tokens ?? 0), 0),
+        total_tokens: usageEntries.reduce((sum, entry) => sum + entry.prompt_tokens + entry.completion_tokens, 0),
+      },
+      toolSchema: summarizeToolSchema(registry.getAll()),
+      promptObservability: usageEntries.map((entry, index) => ({
+        turn: index + 1,
+        estimated_input_tokens: entry.prompt_tokens,
+        tool_schema_tokens_estimate: 0,
+        role_tokens: { system: 0, user: 0, assistant: 0, tool: 0 },
+        role_delta_tokens: { system: 0, user: 0, assistant: 0, tool: 0 },
+        stable_prefix_tokens: entry.stablePrefixTokens,
+        stable_prefix_ratio: entry.stablePrefixRatio,
+        stable_prefix_hash: entry.toolSchemaHash,
+        tool_schema_hash: entry.toolSchemaHash,
+        schema_change_reason: entry.schemaChangeReason,
+      })),
+    })
+    const archiveSummary = assertPromptObservabilityArchive(archive, {
+      minSnapshots: 2,
+      minStablePrefixTokens: 1,
+    })
+    assert.equal(archiveSummary.maxStablePrefixRatio > 0, true)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }
