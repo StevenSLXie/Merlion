@@ -26,7 +26,13 @@ import { buildDefaultRegistry, buildRegistryFromPool } from '../../src/tools/bui
 import type { RuntimeSandboxEvent } from '../../src/runtime/events.ts'
 import { runLoop } from '../../src/runtime/loop.ts'
 import type { RunLoopResult } from '../../src/runtime/loop.ts'
-import { createUsageTracker } from '../../src/runtime/usage.ts'
+import {
+  createUsageTracker,
+  deriveUsageMetrics,
+  resolveUsageRatesFromEnv,
+  summarizeUsageSamples,
+  type UsageRates,
+} from '../../src/runtime/usage.ts'
 import type { MerlionSandboxConfig } from '../../src/sandbox/policy.ts'
 import { resolveSandboxPolicy } from '../../src/sandbox/policy.ts'
 import { deriveSandboxProtectedPaths } from '../../src/sandbox/protected_paths.ts'
@@ -149,6 +155,7 @@ interface UsageArchiveParams {
   totals: { prompt_tokens: number; completion_tokens: number; cached_tokens: number; total_tokens: number }
   toolSchema: ReturnType<typeof summarizeToolSchema>
   promptObservability: PromptObservabilitySnapshot[]
+  usageRates?: UsageRates
 }
 
 export interface E2ECostGateReport {
@@ -159,6 +166,10 @@ export interface E2ECostGateReport {
 }
 
 export function buildUsageArchivePayload(params: UsageArchiveParams) {
+  const derivedTotals = deriveUsageMetrics(
+    summarizeUsageSamples(params.usageSamples),
+    params.usageRates,
+  )
   return {
     timestamp: new Date().toISOString(),
     scenario: safeScenarioLabel(params.scenario),
@@ -174,6 +185,18 @@ export function buildUsageArchivePayload(params: UsageArchiveParams) {
     tool_schema_tokens_estimate: params.toolSchema.tool_schema_tokens_estimate,
     usage_samples: params.usageSamples,
     totals: params.totals,
+    derived_totals: {
+      uncached_prompt_tokens: derivedTotals.uncached_prompt_tokens,
+      cached_prompt_ratio: derivedTotals.cached_prompt_ratio,
+      effective_input_tokens: derivedTotals.effective_input_tokens,
+      effective_total_tokens: derivedTotals.effective_total_tokens,
+      ...(derivedTotals.estimated_cost_usd === undefined
+        ? {}
+        : { estimated_cost_usd: derivedTotals.estimated_cost_usd }),
+      primary_metric: derivedTotals.primary_metric,
+      primary_metric_value: derivedTotals.primary_metric_value,
+      primary_metric_degraded_reason: derivedTotals.primary_metric_degraded_reason,
+    },
     prompt_observability: [...params.promptObservability].sort((left, right) => left.turn - right.turn),
   }
 }
@@ -267,6 +290,7 @@ export async function runSandboxedAgent(
   const toolSchema = summarizeToolSchema(registry.getAll())
   const promptObservabilityTracker = createPromptObservabilityTrackerWithToolSchema(toolSchema.tool_schema_serialized)
   const usageTracker = createUsageTracker()
+  const usageRates = resolveUsageRatesFromEnv(process.env)
   const usageSamples: Array<{ prompt_tokens: number; completion_tokens: number; cached_tokens: number | null }> = []
   const promptObservabilityByTurn = new Map<number, PromptObservabilitySnapshot>()
   const sandboxEvents: RuntimeSandboxEvent[] = []
@@ -326,6 +350,7 @@ export async function runSandboxedAgent(
     totals: usageTracker.getTotals(),
     toolSchema,
     promptObservability: Array.from(promptObservabilityByTurn.values()),
+    usageRates,
   })
   const costGate = await evaluateArchivedCostGate(
     options?.scenario ?? 'e2e',

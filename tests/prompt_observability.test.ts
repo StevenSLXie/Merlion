@@ -63,6 +63,37 @@ test('prompt observability includes stable tool schema tokens across turns', () 
   assert.equal(typeof second.stable_prefix_hash, 'string')
 })
 
+test('prompt observability exposes cache-instability signals without changing tool schema accounting', () => {
+  const toolSchema = summarizeToolSchema([
+    {
+      name: 'read_file',
+      description: 'Read a file from disk.',
+      parameters: { type: 'object', properties: { path: { type: 'string' } } },
+    },
+  ])
+  const tracker = createPromptObservabilityTrackerWithToolSchema(toolSchema.tool_schema_serialized)
+
+  tracker.record(1, messagesToItems([
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'read hello.txt' },
+  ]))
+  const stable = tracker.record(2, messagesToItems([
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'read hello.txt' },
+    { role: 'assistant', content: 'hello' },
+  ]))
+  const unstable = tracker.record(3, messagesToItems([
+    { role: 'system', content: 'sys updated' },
+    { role: 'user', content: 'read hello.txt' },
+    { role: 'assistant', content: 'hello' },
+  ]))
+
+  assert.equal(stable.tool_schema_tokens_estimate, unstable.tool_schema_tokens_estimate)
+  assert.equal(unstable.estimated_input_tokens >= stable.estimated_input_tokens, true)
+  assert.equal(stable.stable_prefix_ratio > unstable.stable_prefix_ratio, true)
+  assert.equal(unstable.stable_prefix_tokens < stable.stable_prefix_tokens, true)
+})
+
 test('tool schema observability summary matches serialized prompt accounting inputs', () => {
   const summary = summarizeToolSchema([
     {
