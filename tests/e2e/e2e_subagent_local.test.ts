@@ -228,6 +228,18 @@ test('e2e local subagent request regenerates child overlay instead of inheriting
     const session = await createSessionFiles(cwd)
     const childProvider = new RecordingChildExplorerProvider()
     const registry = buildDefaultRegistry({ mode: 'default' })
+    const promptObservability = [] as Array<{
+      turn: number
+      estimated_input_tokens: number
+      tool_schema_tokens_estimate: number
+      role_tokens: { system: number; user: number; assistant: number; tool: number }
+      role_delta_tokens: { system: number; user: number; assistant: number; tool: number }
+      stable_prefix_tokens: number
+      stable_prefix_ratio: number
+      stable_prefix_hash: string | null
+      tool_schema_hash?: string | null
+      schema_change_reason?: string | null
+    }>
     const usageEntries: Array<{
       prompt_tokens: number
       completion_tokens: number
@@ -270,6 +282,9 @@ test('e2e local subagent request regenerates child overlay instead of inheriting
         }
       },
       persistUsage: async (entry) => {
+        if (entry.promptObservability) {
+          promptObservability.push(entry.promptObservability)
+        }
         usageEntries.push({
           prompt_tokens: entry.prompt_tokens,
           completion_tokens: entry.completion_tokens,
@@ -341,24 +356,14 @@ test('e2e local subagent request regenerates child overlay instead of inheriting
         total_tokens: usageEntries.reduce((sum, entry) => sum + entry.prompt_tokens + entry.completion_tokens, 0),
       },
       toolSchema: summarizeToolSchema(registry.getAll()),
-      promptObservability: usageEntries.map((entry, index) => ({
-        turn: index + 1,
-        estimated_input_tokens: entry.prompt_tokens,
-        tool_schema_tokens_estimate: 0,
-        role_tokens: { system: 0, user: 0, assistant: 0, tool: 0 },
-        role_delta_tokens: { system: 0, user: 0, assistant: 0, tool: 0 },
-        stable_prefix_tokens: entry.stablePrefixTokens,
-        stable_prefix_ratio: entry.stablePrefixRatio,
-        stable_prefix_hash: entry.toolSchemaHash,
-        tool_schema_hash: entry.toolSchemaHash,
-        schema_change_reason: entry.schemaChangeReason,
-      })),
+      promptObservability,
     })
     const archiveSummary = assertPromptObservabilityArchive(archive, {
       minSnapshots: 2,
       minStablePrefixTokens: 1,
     })
     assert.equal(archiveSummary.maxStablePrefixRatio > 0, true)
+    assert.equal(promptObservability.length, usageEntries.length)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

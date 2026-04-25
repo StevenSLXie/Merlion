@@ -67,7 +67,7 @@ test('search scenario keeps only the search tool to avoid alternate read paths',
 
 test('edit scenario keeps only read_file and edit_file', () => {
   const names = makeRegistry({ scenario: 'e2e-edit' }).getAll().map((tool) => tool.name)
-  assert.deepEqual(names, ['read_file', 'edit_file'])
+  assert.deepEqual(names, ['edit_file', 'read_file'])
   assert.equal(names.includes('create_file'), false)
   assert.equal(names.includes('write_file'), false)
 })
