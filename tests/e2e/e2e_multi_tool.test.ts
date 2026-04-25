@@ -15,7 +15,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { itemsToMessages } from '../../src/runtime/items.ts'
-import { assertNoCostRegression, makeSandbox, rmSandbox, runSandboxedAgent, SKIP } from './helpers.ts'
+import {
+  assertArchivedCostGateContract,
+  assertNoCostRegression,
+  makeSandbox,
+  rmSandbox,
+  runSandboxedAgent,
+  SKIP,
+} from './helpers.ts'
 
 if (SKIP) {
   test.skip('E2E multi-tool: skipped (no OPENROUTER_API_KEY)')
@@ -53,6 +60,7 @@ if (SKIP) {
         // At minimum: read_file + create_file calls
         const toolMessages = itemsToMessages(result.state.items).filter((m) => m.role === 'tool')
         assert.ok(toolMessages.length >= 2, 'Expected at least 2 tool calls')
+        await assertArchivedCostGateContract(costGate, 'e2e-multi-tool')
         assertNoCostRegression(costGate)
       } finally {
         await rmSandbox(sandbox)

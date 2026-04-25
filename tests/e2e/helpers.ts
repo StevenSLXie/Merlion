@@ -4,7 +4,8 @@
  * All E2E tests require OPENROUTER_API_KEY in the environment.
  * Tests are skipped automatically when the key is absent.
  */
-import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import assert from 'node:assert/strict'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -160,6 +161,34 @@ interface UsageArchiveParams {
   derivedTotals?: UsageDerivedMetrics
 }
 
+export interface UsageArchivePayload {
+  timestamp: string
+  scenario: string
+  model: string
+  base_url: string
+  cwd: string
+  terminal: RunLoopResult['terminal']
+  task: string
+  final_text: string
+  turn_count: number
+  tool_count: number
+  tool_schema_serialized_chars: number
+  tool_schema_tokens_estimate: number
+  usage_samples: Array<{ prompt_tokens: number; completion_tokens: number; cached_tokens: number | null }>
+  totals: { prompt_tokens: number; completion_tokens: number; cached_tokens: number; total_tokens: number }
+  derived_totals: {
+    uncached_prompt_tokens: number
+    cached_prompt_ratio: number
+    effective_input_tokens: number
+    effective_total_tokens: number
+    estimated_cost_usd?: number
+    primary_metric: UsageDerivedMetrics['primary_metric']
+    primary_metric_value: number
+    primary_metric_degraded_reason: string | null
+  }
+  prompt_observability: PromptObservabilitySnapshot[]
+}
+
 export interface E2ECostGateReport {
   scenario: string
   totalTokens: number
@@ -167,7 +196,7 @@ export interface E2ECostGateReport {
   decision: CostGateDecision
 }
 
-export function buildUsageArchivePayload(params: UsageArchiveParams) {
+export function buildUsageArchivePayload(params: UsageArchiveParams): UsageArchivePayload {
   const derivedTotals = params.derivedTotals ?? deriveUsageMetrics(
     summarizeUsageSamples(params.usageSamples),
     params.usageRates,
@@ -201,6 +230,11 @@ export function buildUsageArchivePayload(params: UsageArchiveParams) {
     },
     prompt_observability: [...params.promptObservability].sort((left, right) => left.turn - right.turn),
   }
+}
+
+export async function readUsageArchivePayload(path: string): Promise<UsageArchivePayload> {
+  const raw = await readFile(path, 'utf8')
+  return JSON.parse(raw) as UsageArchivePayload
 }
 
 async function writeUsageArchive(params: UsageArchiveParams): Promise<string> {
@@ -247,6 +281,51 @@ export function formatCostGateFailure(report: E2ECostGateReport): string {
     return report.decision.message
   }
   return `${report.decision.message}; usage_archive=${report.archivePath}`
+}
+
+export async function assertArchivedCostGateContract(
+  report: E2ECostGateReport,
+  scenario: string,
+  options?: {
+    env?: Record<string, string | undefined>
+    expectedPrimaryMetric?: UsageDerivedMetrics['primary_metric']
+  },
+): Promise<UsageArchivePayload> {
+  const archive = await readUsageArchivePayload(report.archivePath)
+  const expectedPrimaryMetric = options?.expectedPrimaryMetric ??
+    (resolveUsageRatesFromEnv(options?.env ?? process.env) ? 'estimated_cost_usd' : 'effective_total_tokens')
+
+  assert.equal(archive.scenario, safeScenarioLabel(scenario))
+  assert.ok(report.archivePath.length > 0, 'expected a usage archive path')
+  assert.ok(archive.prompt_observability.length > 0, 'expected prompt observability snapshots in the archive')
+  for (const snapshot of archive.prompt_observability) {
+    assert.equal(typeof snapshot.stable_prefix_tokens, 'number')
+    assert.equal(typeof snapshot.stable_prefix_ratio, 'number')
+    assert.equal(typeof snapshot.tool_schema_tokens_estimate, 'number')
+  }
+
+  assert.notEqual(report.decision.status, 'skip', 'expected the targeted E2E cost gate to evaluate a baseline')
+  if (report.decision.status === 'skip') {
+    return archive
+  }
+
+  assert.equal(report.decision.selectedPrimaryMetric, expectedPrimaryMetric)
+  assert.equal(archive.derived_totals.primary_metric, expectedPrimaryMetric)
+  assert.equal(
+    archive.derived_totals.primary_metric_degraded_reason,
+    report.decision.primaryMetricDegradedReason,
+  )
+  assert.ok(
+    Math.abs(archive.derived_totals.primary_metric_value - report.decision.observedValue) < 1e-12,
+    'expected archive-derived totals to match the gate observed value',
+  )
+  if (expectedPrimaryMetric === 'estimated_cost_usd') {
+    assert.equal(typeof archive.derived_totals.estimated_cost_usd, 'number')
+  } else {
+    assert.equal(archive.derived_totals.estimated_cost_usd, undefined)
+  }
+
+  return archive
 }
 
 export function assertNoCostRegression(report: E2ECostGateReport): void {

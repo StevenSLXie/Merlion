@@ -5,7 +5,8 @@
     "e2e-read": {
       "primary_metric": {
         "baselines": {
-          "effective_total_tokens": 2000
+          "effective_total_tokens": 2000,
+          "estimated_cost_usd": 0.002
         }
       },
       "guardrails": {
@@ -41,7 +42,8 @@
     "e2e-search": {
       "primary_metric": {
         "baselines": {
-          "effective_total_tokens": 2000
+          "effective_total_tokens": 2000,
+          "estimated_cost_usd": 0.002
         }
       },
       "guardrails": {
@@ -65,7 +67,8 @@
     "e2e-tool-error": {
       "primary_metric": {
         "baselines": {
-          "effective_total_tokens": 2000
+          "effective_total_tokens": 2000,
+          "estimated_cost_usd": 0.002
         }
       },
       "guardrails": {
@@ -101,7 +104,8 @@
     "e2e-multi-tool": {
       "primary_metric": {
         "baselines": {
-          "effective_total_tokens": 3000
+          "effective_total_tokens": 3000,
+          "estimated_cost_usd": 0.003
         }
       },
       "guardrails": {
@@ -113,7 +117,8 @@
     "e2e-edit": {
       "primary_metric": {
         "baselines": {
-          "effective_total_tokens": 4000
+          "effective_total_tokens": 4000,
+          "estimated_cost_usd": 0.004
         }
       },
       "guardrails": {
