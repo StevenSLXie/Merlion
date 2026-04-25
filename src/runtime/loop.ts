@@ -16,6 +16,7 @@ import {
 import {
   assistantResponseToItems,
   buildCanonicalRequestAssembly,
+  buildCanonicalOverlayItems,
   countFunctionCallItems,
   createExternalUserItem,
   createRuntimeUserItem,
@@ -184,13 +185,11 @@ interface InternalLoopState {
 }
 
 function visibleOverlayItems(state: InternalLoopState): ConversationItem[] {
-  const items = [...state.promptPreludeItems]
-  const charterText = state.executionCharterText?.trim()
-  if (charterText) {
-    items.push(createSystemItem(charterText, 'runtime'))
-  }
-  items.push(...state.overlayItems)
-  return items
+  return buildCanonicalOverlayItems({
+    promptPreludeItems: state.promptPreludeItems,
+    executionCharterText: state.executionCharterText,
+    runtimeOverlayItems: state.overlayItems,
+  })
 }
 
 function projectLoopState(state: InternalLoopState): LoopState {

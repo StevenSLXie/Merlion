@@ -743,12 +743,16 @@ test('QueryEngine keeps turn overlays within one submit and excludes them from p
       async buildPromptPrelude(prompt) {
         return [
           createSystemItem(`Prompt-derived path guidance.\n\nfocus: ${prompt}`, 'runtime'),
+          createSystemItem(`User-specified target paths detected.\n- ${prompt}`, 'runtime'),
         ]
       },
       async buildPathGuidanceItems() {
         return {
           loadedFiles: ['src/runtime/query_engine.ts'],
-          items: [createSystemItem('Path guidance update.\n\n- src/runtime/query_engine.ts', 'runtime')],
+          items: [
+            createSystemItem('Path guidance update.\n\n- src/runtime/query_engine.ts', 'runtime'),
+            createSystemItem('Path guidance update.\n\n- src/runtime/query_engine.ts', 'runtime'),
+          ],
         }
       },
       async extractCandidatePathsFromText() {
@@ -773,21 +777,27 @@ test('QueryEngine keeps turn overlays within one submit and excludes them from p
   const secondRequestSystems = provider.seenMessages[2]!.filter((message) => message.role === 'system').map((message) => message.content ?? '')
 
   const firstPreludeIndex = firstTurnSystems.findIndex((content) => content.startsWith('Prompt-derived path guidance.'))
+  const firstTargetsIndex = firstTurnSystems.findIndex((content) => content.startsWith('User-specified target paths detected.'))
   const firstCharterIndex = firstTurnSystems.findIndex((content) => content.startsWith('Execution charter for this turn:'))
   const firstContractIndex = firstTurnSystems.findIndex((content) => content.startsWith('Execution contract for the current request.'))
+  const followUpTargetsIndex = toolFollowUpSystems.findIndex((content) => content.startsWith('User-specified target paths detected.'))
   const followUpPreludeIndex = toolFollowUpSystems.findIndex((content) => content.startsWith('Prompt-derived path guidance.'))
   const followUpCharterIndex = toolFollowUpSystems.findIndex((content) => content.startsWith('Execution charter for this turn:'))
   const followUpGuidanceIndex = toolFollowUpSystems.findIndex((content) => content.startsWith('Path guidance update.'))
   const followUpContractIndex = toolFollowUpSystems.findIndex((content) => content.startsWith('Execution contract for the current request.'))
 
   assert.equal(firstTurnSystems.some((content) => content.includes('focus: inspect src/runtime/query_engine.ts')), true)
+  assert.equal(firstTurnSystems.some((content) => content.startsWith('User-specified target paths detected.')), true)
   assert.equal(toolFollowUpSystems.some((content) => content.startsWith('Prompt-derived path guidance.')), true)
   assert.equal(toolFollowUpSystems.some((content) => content.startsWith('Path guidance update.')), true)
+  assert.equal(firstTargetsIndex < firstPreludeIndex, true)
   assert.equal(firstPreludeIndex < firstCharterIndex, true)
   assert.equal(firstCharterIndex < firstContractIndex, true)
+  assert.equal(followUpTargetsIndex < followUpPreludeIndex, true)
   assert.equal(followUpPreludeIndex < followUpCharterIndex, true)
   assert.equal(followUpCharterIndex < followUpGuidanceIndex, true)
   assert.equal(followUpGuidanceIndex < followUpContractIndex, true)
+  assert.equal(toolFollowUpSystems.filter((content) => content.startsWith('Path guidance update.')).length, 1)
   assert.equal(
     secondRequestSystems.some(
       (content) => content.startsWith('Prompt-derived path guidance.') && content.includes('focus: inspect src/runtime/query_engine.ts')

@@ -112,30 +112,72 @@ export interface CanonicalRequestAssemblyInput {
   intentContract?: string
 }
 
-const LEGACY_RUNTIME_USER_PATTERNS: RegExp[] = [
-  /^Output was cut off\. Continue directly from where you stopped\./i,
-  /^You just finished tool execution\. Please provide a natural-language final summary/i,
-  /^You have not made any successful file changes yet\. Do not finish now\./i,
-  /^Continue with the task\. Use your tools to make progress\./i,
-  /^You appear to be looping on tool errors\./i,
-  /^Tool argument validation failed/i,
-  /^Exploration budget exceeded:/i,
-  /^No concrete progress has been made/i,
-  /^You only changed tests so far\./i,
-  /^Please verify the change before finishing\./i,
-  /^You are drifting in todo-only updates\./i,
-  /^A large edit was just made\./i,
-  /^You rewrote a file immediately after an edit/i,
-  /^Write a natural-language summary of what you completed in this run\./i,
+type CanonicalOverlayKind =
+  | 'target_paths'
+  | 'prompt_path_guidance'
+  | 'execution_charter'
+  | 'tool_path_guidance'
+  | 'tool_argument_hint'
+  | 'tool_error_hint'
+  | 'no_progress_hint'
+  | 'mutation_oscillation_hint'
+  | 'large_diff_hint'
+  | 'overwrite_after_edit_hint'
+  | 'test_first_bugfix_hint'
+  | 'exploration_budget_hint'
+  | 'no_mutation_hint'
+  | 'todo_drift_hint'
+  | 'max_output_recovery'
+  | 'post_tool_summary'
+  | 'no_mutation_stop'
+  | 'verification_hint'
+  | 'continue_task_hint'
+  | 'natural_summary_request'
+  | 'intent_contract'
+  | 'runtime_system_other'
+  | 'runtime_user_other'
+  | 'overlay_other'
+
+type OverlayMessageDescriptor = {
+  kind: CanonicalOverlayKind
+  order: number
+  pattern: RegExp
+}
+
+const RUNTIME_SYSTEM_OVERLAY_DESCRIPTORS: OverlayMessageDescriptor[] = [
+  { kind: 'target_paths', order: 100, pattern: /^User-specified target paths detected\./i },
+  { kind: 'prompt_path_guidance', order: 110, pattern: /^Prompt-derived path guidance\./i },
+  { kind: 'execution_charter', order: 200, pattern: /^Execution charter for this turn:/i },
+  { kind: 'tool_path_guidance', order: 300, pattern: /^Path guidance update\./i },
+  { kind: 'intent_contract', order: 900, pattern: /^Execution contract for the current request\./i },
 ]
 
-const NON_PERSISTENT_RUNTIME_SYSTEM_PATTERNS: RegExp[] = [
-  /^User-specified target paths detected\./i,
-  /^Prompt-derived path guidance\./i,
-  /^Path guidance update\./i,
-  /^Execution charter for this turn:/i,
-  /^Execution contract for the current request\./i,
+const RUNTIME_USER_OVERLAY_DESCRIPTORS: OverlayMessageDescriptor[] = [
+  { kind: 'tool_argument_hint', order: 400, pattern: /^Tool arguments were invalid for /i },
+  { kind: 'tool_error_hint', order: 410, pattern: /^Repeated tool failure detected:/i },
+  { kind: 'no_progress_hint', order: 420, pattern: /^No progress detected:/i },
+  { kind: 'mutation_oscillation_hint', order: 430, pattern: /^Mutation oscillation detected /i },
+  { kind: 'large_diff_hint', order: 440, pattern: /^Large patch self-review:/i },
+  { kind: 'overwrite_after_edit_hint', order: 450, pattern: /^Overwrite-after-edit guardrail:/i },
+  { kind: 'test_first_bugfix_hint', order: 460, pattern: /^Bug-fix guardrail:/i },
+  { kind: 'exploration_budget_hint', order: 470, pattern: /^Exploration budget exceeded:/i },
+  { kind: 'no_mutation_hint', order: 480, pattern: /^(Bug-fix convergence:|No material progress detected:)/i },
+  { kind: 'todo_drift_hint', order: 490, pattern: /^Todo drift detected:/i },
+  { kind: 'max_output_recovery', order: 500, pattern: /^Output was cut off\. Continue directly from where you stopped\./i },
+  { kind: 'post_tool_summary', order: 510, pattern: /^You just finished tool execution\. Please provide a natural-language final summary/i },
+  { kind: 'no_mutation_stop', order: 520, pattern: /^You have not made any successful file changes yet\. Do not finish now\./i },
+  { kind: 'verification_hint', order: 530, pattern: /^Before concluding a code-change task, provide validation evidence\./i },
+  { kind: 'continue_task_hint', order: 540, pattern: /^Continue with the task\. Use your tools to make progress\./i },
+  { kind: 'natural_summary_request', order: 550, pattern: /^Write a natural-language summary of what you completed in this run\./i },
 ]
+
+type CanonicalOverlayDescriptor = {
+  kind: CanonicalOverlayKind
+  order: number
+  item: ConversationItem
+  sortKey: string
+  dedupeKey: string
+}
 
 function normalizeContent(content: string | null | undefined): string {
   return typeof content === 'string' ? content : ''
@@ -146,9 +188,7 @@ function isBlank(value: string | null | undefined): boolean {
 }
 
 function classifyLegacyUserMessage(content: string): 'external' | 'runtime' {
-  for (const pattern of LEGACY_RUNTIME_USER_PATTERNS) {
-    if (pattern.test(content.trim())) return 'runtime'
-  }
+  if (matchOverlayDescriptor(content, RUNTIME_USER_OVERLAY_DESCRIPTORS)) return 'runtime'
   return 'external'
 }
 
@@ -157,11 +197,136 @@ function isLegacyRuntimeUserMessage(content: string): boolean {
 }
 
 function isNonPersistentRuntimeSystemMessage(content: string): boolean {
-  const normalized = content.trim()
-  for (const pattern of NON_PERSISTENT_RUNTIME_SYSTEM_PATTERNS) {
-    if (pattern.test(normalized)) return true
+  return matchOverlayDescriptor(content, RUNTIME_SYSTEM_OVERLAY_DESCRIPTORS) !== null
+}
+
+function normalizeItemContent(content: string | null | undefined): string {
+  return normalizeContent(content).replace(/\r\n/g, '\n').trim()
+}
+
+function matchOverlayDescriptor(
+  content: string,
+  descriptors: OverlayMessageDescriptor[],
+): OverlayMessageDescriptor | null {
+  const normalized = normalizeItemContent(content)
+  for (const descriptor of descriptors) {
+    if (descriptor.pattern.test(normalized)) return descriptor
   }
-  return false
+  return null
+}
+
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((item) => stableSerialize(item)).join(',')}]`
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    const keys = Object.keys(record).sort()
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function createIntentContractItem(intentContract: string): SystemMessageItem {
+  return createSystemItem(
+    'Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\n' +
+      intentContract,
+    'runtime',
+  )
+}
+
+function createCanonicalOverlayDescriptor(item: ConversationItem): CanonicalOverlayDescriptor | null {
+  if (item.kind !== 'message') {
+    const sortKey = stableSerialize(item)
+    return {
+      kind: 'overlay_other',
+      order: 800,
+      item: { ...item },
+      sortKey,
+      dedupeKey: `${item.kind}:${sortKey}`,
+    }
+  }
+
+  const normalizedContent = normalizeItemContent(item.content)
+  if (normalizedContent === '') return null
+
+  const normalizedItem: ConversationItem =
+    item.role === 'system'
+      ? createSystemItem(normalizedContent, item.source)
+      : item.role === 'user'
+        ? item.source === 'runtime'
+          ? createRuntimeUserItem(normalizedContent)
+          : createExternalUserItem(normalizedContent)
+        : createAssistantItem(normalizedContent)
+
+  if (normalizedItem.role === 'system' && normalizedItem.source === 'runtime') {
+    const descriptor = matchOverlayDescriptor(normalizedContent, RUNTIME_SYSTEM_OVERLAY_DESCRIPTORS)
+    return {
+      kind: descriptor?.kind ?? 'runtime_system_other',
+      order: descriptor?.order ?? 350,
+      item: normalizedItem,
+      sortKey: normalizedContent,
+      dedupeKey: `system:${normalizedItem.source}:${descriptor?.kind ?? 'runtime_system_other'}:${normalizedContent}`,
+    }
+  }
+
+  if (normalizedItem.role === 'user' && normalizedItem.source === 'runtime') {
+    const descriptor = matchOverlayDescriptor(normalizedContent, RUNTIME_USER_OVERLAY_DESCRIPTORS)
+    return {
+      kind: descriptor?.kind ?? 'runtime_user_other',
+      order: descriptor?.order ?? 600,
+      item: normalizedItem,
+      sortKey: normalizedContent,
+      dedupeKey: `user:${normalizedItem.source}:${descriptor?.kind ?? 'runtime_user_other'}:${normalizedContent}`,
+    }
+  }
+
+  return {
+    kind: 'overlay_other',
+    order: 800,
+    item: normalizedItem,
+    sortKey: normalizedContent,
+    dedupeKey: `${normalizedItem.role}:${'source' in normalizedItem ? normalizedItem.source : 'unknown'}:${normalizedContent}`,
+  }
+}
+
+export function buildCanonicalOverlayItems(input: Omit<CanonicalRequestAssemblyInput, 'stablePrefixItems' | 'transcriptItems'>): ConversationItem[] {
+  const descriptors: CanonicalOverlayDescriptor[] = []
+  if (Array.isArray(input.promptPreludeItems)) {
+    for (const item of input.promptPreludeItems) {
+      const descriptor = createCanonicalOverlayDescriptor(item)
+      if (descriptor) descriptors.push(descriptor)
+    }
+  }
+
+  const charterText = normalizeItemContent(input.executionCharterText)
+  if (charterText !== '') {
+    descriptors.push(createCanonicalOverlayDescriptor(createSystemItem(charterText, 'runtime'))!)
+  }
+
+  if (Array.isArray(input.runtimeOverlayItems)) {
+    for (const item of input.runtimeOverlayItems) {
+      const descriptor = createCanonicalOverlayDescriptor(item)
+      if (descriptor) descriptors.push(descriptor)
+    }
+  }
+
+  const intentContract = normalizeItemContent(input.intentContract)
+  if (intentContract !== '') {
+    descriptors.push(createCanonicalOverlayDescriptor(createIntentContractItem(intentContract))!)
+  }
+
+  descriptors.sort((a, b) => {
+    if (a.order !== b.order) return a.order - b.order
+    return a.sortKey.localeCompare(b.sortKey)
+  })
+
+  const overlayItems: ConversationItem[] = []
+  const seen = new Set<string>()
+  for (const descriptor of descriptors) {
+    if (seen.has(descriptor.dedupeKey)) continue
+    seen.add(descriptor.dedupeKey)
+    overlayItems.push(descriptor.item)
+  }
+  return overlayItems
 }
 
 export function toolCallToFunctionCallItem(call: ToolCall): FunctionCallItem {
@@ -415,27 +580,7 @@ export function createFunctionCallOutputItem(callId: string, outputText: string,
 }
 
 export function buildCanonicalRequestAssembly(input: CanonicalRequestAssemblyInput): CanonicalRequestAssembly {
-  const overlayItems: ConversationItem[] = []
-  if (Array.isArray(input.promptPreludeItems) && input.promptPreludeItems.length > 0) {
-    overlayItems.push(...input.promptPreludeItems)
-  }
-  const charterText = input.executionCharterText?.trim()
-  if (charterText) {
-    overlayItems.push(createSystemItem(charterText, 'runtime'))
-  }
-  if (Array.isArray(input.runtimeOverlayItems) && input.runtimeOverlayItems.length > 0) {
-    overlayItems.push(...input.runtimeOverlayItems)
-  }
-  const intentContract = input.intentContract?.trim()
-  if (intentContract) {
-    overlayItems.push(
-      createSystemItem(
-        'Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\n' +
-          intentContract,
-        'runtime',
-      ),
-    )
-  }
+  const overlayItems = buildCanonicalOverlayItems(input)
   return {
     stablePrefixItems: [...input.stablePrefixItems],
     overlayItems,

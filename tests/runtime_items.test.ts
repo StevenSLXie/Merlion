@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import type { ChatMessage } from '../src/types.ts'
 import {
+  buildCanonicalRequestAssembly,
   createAssistantItem,
   createExternalUserItem,
   createFunctionCallOutputItem,
@@ -11,6 +12,7 @@ import {
   itemsToMessages,
   legacyMessageToItems,
   messagesToItems,
+  pruneNonPersistentRuntimeItems,
 } from '../src/runtime/items.ts'
 
 test('legacy assistant message with content and tool calls canonicalizes to message then function calls', () => {
@@ -93,3 +95,73 @@ test('messagesToItems marks first system message static and later system message
   assert.equal(items[1]?.source, 'runtime')
 })
 
+test('canonical request builder sorts and deduplicates overlay items across categories', () => {
+  const stablePrefixItems = [createSystemItem('system prompt', 'static')]
+  const transcriptItems = [createExternalUserItem('Inspect src/runtime/items.ts')]
+  const promptPreludeItems = [
+    createSystemItem('Prompt-derived path guidance.\n\nfocus: src/runtime/items.ts', 'runtime'),
+    createSystemItem('User-specified target paths detected.\n- src/runtime/items.ts', 'runtime'),
+  ]
+  const runtimeOverlayItems = [
+    createRuntimeUserItem('Continue with the task. Use your tools to make progress. If you have completed everything, describe what was done.'),
+    createSystemItem('Path guidance update.\n\n- src/runtime/query_engine.ts', 'runtime'),
+    createRuntimeUserItem('Before concluding a code-change task, provide validation evidence. Run the most relevant available check now, or explicitly state what you could not validate and why. Do not claim success without naming the command, repro, or test coverage you relied on.'),
+    createSystemItem('Path guidance update.\n\n- src/runtime/query_engine.ts', 'runtime'),
+    createRuntimeUserItem('No progress detected: the last 3 tool batches all failed. Stop retrying broad mutations. Re-plan with 2-3 concrete steps, validate target paths via `list_dir`/`stat_path`, then run one minimal next tool call.'),
+  ]
+
+  const first = buildCanonicalRequestAssembly({
+    stablePrefixItems,
+    promptPreludeItems,
+    executionCharterText: 'Execution charter for this turn:\n- stay focused',
+    runtimeOverlayItems,
+    transcriptItems,
+    intentContract: 'Mention only concrete outcomes.',
+  })
+  const second = buildCanonicalRequestAssembly({
+    stablePrefixItems,
+    promptPreludeItems: [...promptPreludeItems].reverse(),
+    executionCharterText: 'Execution charter for this turn:\n- stay focused',
+    runtimeOverlayItems: [...runtimeOverlayItems].reverse(),
+    transcriptItems,
+    intentContract: 'Mention only concrete outcomes.',
+  })
+
+  assert.deepEqual(second.overlayItems, first.overlayItems)
+  assert.deepEqual(
+    first.overlayItems.map((item) => item.kind === 'message' ? `${item.role}:${item.content}` : item.kind),
+    [
+      'system:User-specified target paths detected.\n- src/runtime/items.ts',
+      'system:Prompt-derived path guidance.\n\nfocus: src/runtime/items.ts',
+      'system:Execution charter for this turn:\n- stay focused',
+      'system:Path guidance update.\n\n- src/runtime/query_engine.ts',
+      'user:No progress detected: the last 3 tool batches all failed. Stop retrying broad mutations. Re-plan with 2-3 concrete steps, validate target paths via `list_dir`/`stat_path`, then run one minimal next tool call.',
+      'user:Before concluding a code-change task, provide validation evidence. Run the most relevant available check now, or explicitly state what you could not validate and why. Do not claim success without naming the command, repro, or test coverage you relied on.',
+      'user:Continue with the task. Use your tools to make progress. If you have completed everything, describe what was done.',
+      'system:Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\nMention only concrete outcomes.',
+    ],
+  )
+  assert.deepEqual(first.requestItems, [...stablePrefixItems, ...first.overlayItems, ...transcriptItems])
+})
+
+test('pruneNonPersistentRuntimeItems removes canonical overlay templates but keeps persistent transcript items', () => {
+  const items = [
+    createSystemItem('system prompt', 'static'),
+    createSystemItem('User-specified target paths detected.\n- src/runtime/items.ts', 'runtime'),
+    createSystemItem('Prompt-derived path guidance.\n\nfocus: src/runtime/items.ts', 'runtime'),
+    createSystemItem('Path guidance update.\n\n- src/runtime/query_engine.ts', 'runtime'),
+    createSystemItem('Execution charter for this turn:\n- stay focused', 'runtime'),
+    createSystemItem(
+      'Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\nMention only concrete outcomes.',
+      'runtime',
+    ),
+    createRuntimeUserItem('Before concluding a code-change task, provide validation evidence. Run the most relevant available check now, or explicitly state what you could not validate and why. Do not claim success without naming the command, repro, or test coverage you relied on.'),
+    createRuntimeUserItem('No progress detected: the last 3 tool batches all failed. Stop retrying broad mutations. Re-plan with 2-3 concrete steps, validate target paths via `list_dir`/`stat_path`, then run one minimal next tool call.'),
+    createExternalUserItem('real user prompt'),
+  ]
+
+  assert.deepEqual(pruneNonPersistentRuntimeItems(items), [
+    createSystemItem('system prompt', 'static'),
+    createExternalUserItem('real user prompt'),
+  ])
+})
