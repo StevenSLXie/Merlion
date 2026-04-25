@@ -1,5 +1,66 @@
 import type { ToolDefinition } from './types.js'
 
+const ORDER_INSENSITIVE_SCHEMA_ARRAY_KEYS = new Set(['required', 'enum', 'type'])
+
+function compareScalarValues(left: boolean | number | string, right: boolean | number | string): number {
+  return String(left).localeCompare(String(right))
+}
+
+function canonicalizeSchemaValue(value: unknown, parentKey?: string): unknown {
+  if (Array.isArray(value)) {
+    const items = value.map((entry) => canonicalizeSchemaValue(entry))
+    if (
+      parentKey &&
+      ORDER_INSENSITIVE_SCHEMA_ARRAY_KEYS.has(parentKey) &&
+      items.every((entry) => typeof entry === 'boolean' || typeof entry === 'number' || typeof entry === 'string')
+    ) {
+      return [...items].sort((left, right) =>
+        compareScalarValues(
+          left as boolean | number | string,
+          right as boolean | number | string,
+        )
+      )
+    }
+    return items
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const key of Object.keys(value).sort()) {
+      out[key] = canonicalizeSchemaValue((value as Record<string, unknown>)[key], key)
+    }
+    return out
+  }
+  return value
+}
+
+function compareToolDefinitions(left: Pick<ToolDefinition, 'name' | 'description' | 'parameters'>, right: Pick<ToolDefinition, 'name' | 'description' | 'parameters'>): number {
+  const nameOrder = left.name.localeCompare(right.name)
+  if (nameOrder !== 0) return nameOrder
+  const descriptionOrder = left.description.localeCompare(right.description)
+  if (descriptionOrder !== 0) return descriptionOrder
+  return JSON.stringify(left.parameters).localeCompare(JSON.stringify(right.parameters))
+}
+
+export function canonicalizeToolDefinition(tool: ToolDefinition): ToolDefinition {
+  return {
+    ...tool,
+    parameters: canonicalizeSchemaValue(tool.parameters) as ToolDefinition['parameters'],
+  }
+}
+
+export function serializeToolSchema(
+  tools: Array<Pick<ToolDefinition, 'name' | 'description' | 'parameters'>>
+): string {
+  const canonicalTools = tools
+    .map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: canonicalizeSchemaValue(tool.parameters),
+    }))
+    .sort(compareToolDefinitions)
+  return JSON.stringify(canonicalTools)
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>()
 
@@ -7,7 +68,7 @@ export class ToolRegistry {
     if (this.tools.has(tool.name)) {
       throw new Error(`Tool "${tool.name}" is already registered.`)
     }
-    this.tools.set(tool.name, tool)
+    this.tools.set(tool.name, canonicalizeToolDefinition(tool))
   }
 
   get(name: string): ToolDefinition | undefined {
@@ -15,7 +76,6 @@ export class ToolRegistry {
   }
 
   getAll(): ToolDefinition[] {
-    return Array.from(this.tools.values())
+    return Array.from(this.tools.values()).sort(compareToolDefinitions)
   }
 }
-

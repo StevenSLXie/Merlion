@@ -60,6 +60,28 @@ class RecordingProvider implements ModelProvider {
   }
 }
 
+class SchemaRecordingProvider implements ModelProvider {
+  readonly seenToolSchemas: string[] = []
+  private index = 0
+  private readonly responses: AssistantResponse[]
+
+  constructor(responses: AssistantResponse[]) {
+    this.responses = responses
+  }
+
+  async complete(_messages: ChatMessage[], tools: ToolDefinition[]): Promise<AssistantResponse> {
+    this.seenToolSchemas.push(JSON.stringify(tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    }))))
+    const response = this.responses[this.index]
+    if (!response) throw new Error(`unexpected provider call at index=${this.index}`)
+    this.index += 1
+    return response
+  }
+}
+
 function call(name: string, args: Record<string, unknown>, id = 'call_1'): ToolCall {
   return {
     id,
@@ -93,6 +115,28 @@ function makeReadOnlyProbeTool(): ToolDefinition {
     isReadOnly: true,
     async execute(input) {
       return { content: `probed ${String(input.target)}`, isError: false }
+    },
+  }
+}
+
+function makeSchemaOrderTool(params?: {
+  name: string
+  description: string
+  properties: Record<string, unknown>
+  required?: string[]
+}): ToolDefinition {
+  return {
+    name: params?.name ?? 'schema_probe',
+    description: params?.description ?? 'schema probe tool',
+    parameters: {
+      type: 'object',
+      properties: params?.properties ?? { target: { type: 'string' } },
+      required: params?.required,
+    },
+    concurrencySafe: true,
+    isReadOnly: true,
+    async execute(input) {
+      return { content: JSON.stringify(input), isError: false }
     },
   }
 }
@@ -309,6 +353,122 @@ test('QueryEngine keeps the active tool schema sticky across lightweight follow-
     assert.equal(snapshot.runtimeState.task.profileEpoch.epoch, 1)
     assert.equal(snapshot.runtimeState.task.profileEpoch.lastSchemaChangeReason, null)
     assert.equal(snapshot.runtimeState.task.currentTask?.kind, 'question')
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test('QueryEngine canonicalizes equivalent provider-visible tool schemas within a sticky epoch', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'merlion-canonical-tool-schema-'))
+  try {
+    const providerA = new SchemaRecordingProvider([
+      {
+        role: 'assistant',
+        content: 'Answered the question.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+    const providerB = new SchemaRecordingProvider([
+      {
+        role: 'assistant',
+        content: 'Answered the question.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+
+    const firstRegistry = new ToolRegistry()
+    firstRegistry.register(makeSchemaOrderTool({
+      name: 'zeta_tool',
+      description: 'Inspect the requested target.',
+      properties: {
+        target: { type: 'string' },
+        mode: { enum: ['write', 'read'], type: 'string' },
+      },
+      required: ['target', 'mode'],
+    }))
+    firstRegistry.register(makeSchemaOrderTool({
+      name: 'alpha_tool',
+      description: 'Read the requested path.',
+      properties: {
+        path: { type: 'string' },
+        format: { type: ['string', 'null'], enum: ['json', 'text'] },
+      },
+      required: ['format', 'path'],
+    }))
+
+    const secondRegistry = new ToolRegistry()
+    secondRegistry.register(makeSchemaOrderTool({
+      name: 'alpha_tool',
+      description: 'Read the requested path.',
+      properties: {
+        format: { enum: ['text', 'json'], type: ['null', 'string'] },
+        path: { type: 'string' },
+      },
+      required: ['path', 'format'],
+    }))
+    secondRegistry.register(makeSchemaOrderTool({
+      name: 'zeta_tool',
+      description: 'Inspect the requested target.',
+      properties: {
+        mode: { type: 'string', enum: ['read', 'write'] },
+        target: { type: 'string' },
+      },
+      required: ['mode', 'target'],
+    }))
+
+    const contextService = {
+      getTrustLevel: () => 'trusted' as const,
+      getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+      getGeneratedMapMode: () => false,
+      setGeneratedMapMode() {},
+      async prefetchIfSafe() {
+        return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+      },
+      async getSystemPrompt() {
+        return 'system prompt'
+      },
+      async buildPromptPrelude() {
+        return []
+      },
+      async buildPathGuidanceItems() {
+        return { items: [], loadedFiles: [] }
+      },
+      async extractCandidatePathsFromText() {
+        return []
+      },
+      async extractCandidatePathsFromToolEvent() {
+        return []
+      },
+    }
+
+    const firstEngine = new QueryEngine({
+      cwd,
+      provider: providerA,
+      registry: firstRegistry,
+      permissions: { ask: async () => 'allow' },
+      contextService,
+      model: 'test-model',
+    })
+    const secondEngine = new QueryEngine({
+      cwd,
+      provider: providerB,
+      registry: secondRegistry,
+      permissions: { ask: async () => 'allow' },
+      contextService,
+      model: 'test-model',
+    })
+
+    await firstEngine.submitPrompt('What should I inspect next?')
+    await secondEngine.submitPrompt('What should I inspect next?')
+
+    assert.equal(providerA.seenToolSchemas.length, 1)
+    assert.equal(providerB.seenToolSchemas.length, 1)
+    assert.equal(providerA.seenToolSchemas[0], providerB.seenToolSchemas[0])
+    assert.match(providerA.seenToolSchemas[0] ?? '', /"name":"alpha_tool".*"name":"zeta_tool"/)
+    assert.match(providerA.seenToolSchemas[0] ?? '', /"required":\["format","path"\]/)
+    assert.match(providerA.seenToolSchemas[0] ?? '', /"enum":\["json","text"\]/)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

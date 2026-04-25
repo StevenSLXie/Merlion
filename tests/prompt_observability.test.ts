@@ -244,6 +244,67 @@ test('tool schema observability summary matches serialized prompt accounting inp
   assert.match(summary.tool_schema_serialized, /"name":"search"/)
 })
 
+test('tool schema observability summary canonicalizes equivalent tool registries', () => {
+  const first = summarizeToolSchema([
+    {
+      name: 'zeta_tool',
+      description: 'Inspect the requested target.',
+      parameters: {
+        type: 'object',
+        required: ['target', 'mode'],
+        properties: {
+          target: { type: 'string' },
+          mode: { enum: ['write', 'read'], type: 'string' },
+        },
+      },
+    },
+    {
+      name: 'alpha_tool',
+      description: 'Read the requested path.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          format: { type: ['string', 'null'], enum: ['json', 'text'] },
+        },
+        required: ['format', 'path'],
+      },
+    },
+  ])
+  const second = summarizeToolSchema([
+    {
+      name: 'alpha_tool',
+      description: 'Read the requested path.',
+      parameters: {
+        required: ['path', 'format'],
+        properties: {
+          format: { enum: ['text', 'json'], type: ['null', 'string'] },
+          path: { type: 'string' },
+        },
+        type: 'object',
+      },
+    },
+    {
+      name: 'zeta_tool',
+      description: 'Inspect the requested target.',
+      parameters: {
+        properties: {
+          mode: { type: 'string', enum: ['read', 'write'] },
+          target: { type: 'string' },
+        },
+        type: 'object',
+        required: ['mode', 'target'],
+      },
+    },
+  ])
+
+  assert.equal(first.tool_schema_serialized, second.tool_schema_serialized)
+  assert.equal(first.tool_schema_tokens_estimate, second.tool_schema_tokens_estimate)
+  assert.match(first.tool_schema_serialized, /"name":"alpha_tool".*"name":"zeta_tool"/)
+  assert.match(first.tool_schema_serialized, /"required":\["format","path"\]/)
+  assert.match(first.tool_schema_serialized, /"enum":\["json","text"\]/)
+})
+
 test('prompt observability can track stable prefix over item transcripts', () => {
   const tracker = createPromptObservabilityTracker()
 

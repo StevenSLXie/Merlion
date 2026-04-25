@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 import type { ConversationItem } from './items.ts'
 import type { ToolDefinition } from '../tools/types.js'
+import { serializeToolSchema } from '../tools/registry.ts'
 import type { SchemaChangeReason } from './task_state.ts'
 
 export interface PromptRoleTokens {
@@ -57,11 +58,7 @@ export function estimateTokensFromChars(chars: number): number {
 export function summarizeToolSchema(
   tools: Array<Pick<ToolDefinition, 'name' | 'description' | 'parameters'>>
 ): ToolSchemaObservabilitySummary {
-  const toolSchemaSerialized = JSON.stringify(tools.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters
-  })))
+  const toolSchemaSerialized = serializeToolSchema(tools)
   return {
     tool_count: tools.length,
     tool_schema_serialized: toolSchemaSerialized,

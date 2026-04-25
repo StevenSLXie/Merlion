@@ -16,6 +16,7 @@
 - Keep transcript/usage hooks consistent with tests.
 - Request-local overlay items in `query_engine.ts` / `loop.ts` must stay visible for the active `submitPrompt()` run but must not be appended into persistent transcript history or resume state.
 - Prompt observability in `loop.ts` / `prompt_observability.ts` must be recorded from the fully assembled per-turn request layers plus the actual registry passed to the provider; do not reuse runner-startup tool-schema estimates.
+- Tool-schema determinism is part of the provider-visible request contract: canonicalize registry order and schema JSON before provider calls, and reuse that same canonical serialization for prompt observability hashes/tokens.
 - Recovery paths that call back into the provider from `loop.ts` (for example synthetic or natural-summary fallback turns) must thread the active prompt-observability tracker through the helper callsite, not just the main turn loop.
 - Turn-level task control is derived in `query_engine.ts` before `runLoop()`: update task-state and the profile-filtered registry there, but keep provider-visible request assembly in `runLoop()` via the canonical request builder fed by prompt-prelude content, execution charter text, and turn-local overlays.
 - Overlay canonicalization and overlay non-persistent classification share one owner in `items.ts`; when adding new path-guidance, guardrail, recovery, or intent-contract templates, update the shared overlay descriptor tables there instead of introducing new ordering or pruning logic elsewhere.
