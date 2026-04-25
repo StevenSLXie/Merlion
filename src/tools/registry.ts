@@ -2,6 +2,12 @@ import type { ToolDefinition } from './types.js'
 
 const ORDER_INSENSITIVE_SCHEMA_ARRAY_KEYS = new Set(['required', 'enum', 'type'])
 
+type ComparableToolDefinition = {
+  name: string
+  description: string
+  parameters: unknown
+}
+
 function schemaValueSortKey(value: unknown): string {
   if (value === null) return 'null:null'
   if (Array.isArray(value)) return `array:${JSON.stringify(value)}`
@@ -29,7 +35,7 @@ function canonicalizeSchemaValue(value: unknown, parentKey?: string): unknown {
   return value
 }
 
-function compareToolDefinitions(left: Pick<ToolDefinition, 'name' | 'description' | 'parameters'>, right: Pick<ToolDefinition, 'name' | 'description' | 'parameters'>): number {
+function compareToolDefinitions(left: ComparableToolDefinition, right: ComparableToolDefinition): number {
   const nameOrder = left.name.localeCompare(right.name)
   if (nameOrder !== 0) return nameOrder
   const descriptionOrder = left.description.localeCompare(right.description)

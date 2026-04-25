@@ -1,0 +1,17 @@
+Version: 0.1.31
+Date: 2026-04-25
+
+Changes:
+- Prompt cache and context stability:
+  - merge the feature 107-109 runtime work into `main`, covering cache-aware cost metrics, prefix-stable request assembly, deterministic overlay canonicalization, explicit compaction boundaries, persisted projection reuse, and deterministic tool-schema epochs.
+  - add live E2E cache-progression coverage for pure-chat and tool-assisted follow-up turns.
+- Docs:
+  - refresh `docs/explained/02-context-management.md` to describe Merlion's current cache-first context strategy more concretely.
+- Release:
+  - fix a TypeScript build issue in `src/tools/registry.ts` so publish-time builds succeed after schema canonicalization changes.
+
+Related docs:
+- docs/features/107-cache-aware-cost-gate-and-prefix-stability.md
+- docs/features/108-prefix-stability-first-context-assembly.md
+- docs/features/109-cache-first-compaction-boundaries-and-canonical-prompt-assembly.md
+- docs/explained/02-context-management.md
