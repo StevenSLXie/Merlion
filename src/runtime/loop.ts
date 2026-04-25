@@ -196,7 +196,9 @@ interface InternalLoopState {
 
 function projectLoopState(state: InternalLoopState): LoopState {
   return {
-    items: [...state.stablePrefixItems, ...state.items],
+    // Returned loop state should still expose request-local overlays for the
+    // active submit, even though they are excluded from persistent transcript state.
+    items: [...state.stablePrefixItems, ...state.items, ...state.overlayItems],
     turnCount: state.turnCount,
     maxOutputTokensRecoveryCount: state.maxOutputTokensRecoveryCount,
     hasAttemptedReactiveCompact: state.hasAttemptedReactiveCompact,

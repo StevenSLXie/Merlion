@@ -1,68 +1,68 @@
 {
-  "project": "Merlion",
-  "branchName": "ralph/spec-107",
-  "description": "Preserve the shipped cache-aware E2E cost-gate and prefix-stability contract by keeping shared usage math, archive fields, gate behavior, and targeted validations aligned.",
+  "project": "ralph-spec-108",
+  "branchName": "ralph/spec-108",
+  "description": "Rework runtime context assembly around a stable-prefix-first contract by separating non-persistent overlays from transcript state, making tool-profile changes sticky and explicit, aligning observability with the real request shape, and locking the behavior down with prefix-stability regressions.",
   "generatedFromSpecs": [
-    "docs/features/107-cache-aware-cost-gate-and-prefix-stability.md"
+    "docs/features/108-prefix-stability-first-context-assembly.md"
   ],
   "userStories": [
     {
-      "id": "SPEC-107-shared-usage-derived-metrics",
-      "title": "Centralize cache-aware usage rates and derived metrics",
-      "description": "Keep a single runtime source of truth for usage aggregation, rate resolution, cache-aware cost calculation, and primary-metric selection so E2E helpers and runtime observability consume the same billing semantics.",
+      "id": "SPEC-108-prompt-layering-non-persistent-overlay",
+      "title": "Separate stable transcript state from turn-local overlays",
+      "description": "Introduce an explicit prompt layering contract in the runtime so stable prefix items, turn-local overlays, and recent transcript tail are assembled through different paths. Move prompt-derived path guidance, tool-derived path guidance, execution charter text, and temporary runtime hints onto a non-persistent overlay channel that stays visible for the full `submitPrompt()` run but is dropped from cross-request history and resume state by default.",
       "acceptanceCriteria": [
-        "A shared runtime helper resolves `MERLION_COST_INPUT_PER_1M`, `MERLION_COST_OUTPUT_PER_1M`, and optional `MERLION_COST_CACHED_INPUT_PER_1M` without duplicating env parsing in E2E helpers.",
-        "Derived usage metrics include `uncached_prompt_tokens`, `cached_prompt_ratio`, `effective_input_tokens`, `effective_total_tokens`, `primary_metric`, `primary_metric_value`, and `primary_metric_degraded_reason`, plus `estimated_cost_usd` when shared rates are available.",
-        "When any usage sample lacks `cached_tokens`, derived metrics record `primary_metric_degraded_reason = \"cached_tokens_unavailable\"`, stop applying cached-input discount for missing samples, and keep `estimated_cost_usd` as the primary metric when rates exist or fall back to `effective_total_tokens` when they do not.",
-        "Usage tracker aggregation and cost math are covered by unit tests for cached, uncached, and degraded cases."
+        "Runtime request assembly distinguishes `stable_prefix`, `turn_overlay`, and recent transcript/tail responsibilities instead of appending all runtime-authored items into a single cross-request history list.",
+        "Prompt-derived path guidance, tool-derived path guidance, execution charter text, and temporary recovery or verification hints are emitted as turn-local overlay items and are not appended to cross-request `QueryEngine.history` by default.",
+        "Overlay items remain visible across all provider turns within one `submitPrompt()` run, including tool-follow-up turns, but are absent from the next request unless regenerated for that request.",
+        "Session transcript persistence and `resumeFromTranscript()` do not depend on previously emitted overlay items, and resumed transcripts do not contain prompt-derived or tool-derived overlay items unless they were explicitly promoted into stable context.",
+        "Child/subagent requests are created from stable transcript state and regenerate overlay for the child turn instead of inheriting expired parent overlay items."
       ],
       "priority": 1,
       "passes": true,
-      "notes": "Source specs:\n- docs/features/107-cache-aware-cost-gate-and-prefix-stability.md (107 Cache-Aware Cost Gate And Prefix Stability)\nFiles:\n- src/runtime/usage.ts\n- tests/usage.test.ts\nVerification:\n- node --experimental-strip-types --test tests/usage.test.ts\nNotes:\n- The source spec is marked implemented; this story preserves the existing shared contract rather than adding new scope.\n- Do not introduce a second pricing table or E2E-only cost formula."
+      "notes": "Source specs:\n- docs/features/108-prefix-stability-first-context-assembly.md (108 Prefix Stability First Context Assembly)\nFiles:\n- src/runtime/query_engine.ts\n- src/runtime/loop.ts\n- src/context/service.ts\n- src/runtime/subagents.ts\n- src/runtime/items.ts\nVerification:\n- node --experimental-strip-types --test tests/query_engine.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_query_engine_local.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_subagent_local.test.ts\nNotes:\n- This story implements the layering contract first so later tool-profile and observability work can target a stable assembly shape.\n- Do not reintroduce turn-local content into history under a renamed field."
     },
     {
-      "id": "SPEC-107-archive-derived-totals-and-prefix-diagnostics",
-      "title": "Persist derived totals and prefix-stability diagnostics in archives",
-      "description": "Wire E2E archive payloads to the shared derived metrics and preserve prompt observability snapshots so reviewers can distinguish raw prompt growth from cache-hit regression without digging through free-form logs.",
+      "id": "SPEC-108-sticky-tool-profile-epochs",
+      "title": "Make tool schema decisions sticky within explicit profile epochs",
+      "description": "Replace per-turn capability-profile churn with a sticky epoch model. Select and keep a tool schema for the active task epoch, switch only at explicit boundaries, and carry or rehydrate epoch state on resume so the runtime never silently changes schema because task state was lost between requests.",
       "acceptanceCriteria": [
-        "Archive payloads keep raw provider `usage_samples` and add top-level `derived_totals` with stable field names for `uncached_prompt_tokens`, `cached_prompt_ratio`, `effective_input_tokens`, `effective_total_tokens`, `primary_metric`, `primary_metric_value`, and `primary_metric_degraded_reason`, plus `estimated_cost_usd` when rates are configured.",
-        "Archive `derived_totals` come from shared runtime usage helpers instead of an E2E-local billing implementation.",
-        "Archive `prompt_observability` remains a per-turn sorted snapshot stream containing prefix-stability signals such as `stable_prefix_tokens`, `stable_prefix_ratio`, and tool-schema token estimates.",
-        "Archive tests cover both the normal cache-aware case and the degraded `cached_tokens_unavailable` case while preserving prefix-stability triage data."
+        "Within a single task/profile epoch, follow-up turns reuse the same tool schema set and ordering by default, so light prompt changes do not change the provider-visible tool schema hash.",
+        "Tool-schema changes happen only at explicit, low-frequency boundaries and each change records a bounded reason from `initial_epoch`, `user_correction`, `phase_switch`, `resume_rehydration`, or `safety_override` before the provider request is sent.",
+        "Session resume restores the prior profile epoch when possible or emits an explicit `resume_rehydration` schema-change event before the first resumed request instead of silently reclassifying from the new prompt alone.",
+        "Task control, execution charter semantics, mutation policy, and targeted registry narrowing from feature 106 remain in effect under the sticky epoch model."
       ],
       "priority": 2,
-      "passes": true,
-      "notes": "Source specs:\n- docs/features/107-cache-aware-cost-gate-and-prefix-stability.md (107 Cache-Aware Cost Gate And Prefix Stability)\nFiles:\n- tests/e2e/helpers.ts\n- tests/e2e/helpers_archive.test.ts\n- src/runtime/prompt_observability.ts\n- tests/prompt_observability.test.ts\nVerification:\n- node --experimental-strip-types --test tests/e2e/helpers_archive.test.ts\n- node --experimental-strip-types --test tests/prompt_observability.test.ts\nNotes:\n- Do not invent a second per-turn cost archive; keep per-turn detail in `prompt_observability` and top-level billing decisions in `derived_totals`."
+      "passes": false,
+      "notes": "Source specs:\n- docs/features/108-prefix-stability-first-context-assembly.md (108 Prefix Stability First Context Assembly)\nFiles:\n- src/runtime/query_engine.ts\n- src/runtime/task_state.ts\n- src/runtime/state/types.ts\n- src/runtime/runner.ts\n- src/tools/builtin/index.ts\n- src/tools/pool.ts\nVerification:\n- node --experimental-strip-types --test tests/query_engine.test.ts\n- node --experimental-strip-types --test tests/e2e/helpers_registry.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_task_runtime_local.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_session_resume.test.ts\nNotes:\n- Prefer schema stability first; use policy and mutation guards for finer-grained control before reaching for schema churn.\n- Keep profile switching observable and reviewable rather than implicit."
     },
     {
-      "id": "SPEC-107-cost-primary-gate-and-baseline-schema",
-      "title": "Evaluate baselines with a cost-primary gate and raw-token guardrail",
-      "description": "Maintain the cost gate as a dual-layer contract: a cache-aware primary metric for budget enforcement and a separate raw-token guardrail for prompt-size diagnostics, while preserving backward compatibility with legacy baselines.",
+      "id": "SPEC-108-real-request-prompt-observability",
+      "title": "Measure prompt stability from the actual assembled request",
+      "description": "Update prompt observability so it reflects the exact request shape sent to the provider on each turn. Track the real tool schema, overlay placement, and stable-prefix boundaries from runtime assembly output instead of relying on runner-startup registry snapshots.",
       "acceptanceCriteria": [
-        "Cost baseline schema supports `primary_metric.baselines` for `effective_total_tokens` and `estimated_cost_usd`, with optional `guardrails.total_tokens` thresholds and severity.",
-        "Gate evaluation selects `estimated_cost_usd` when shared derived totals provide it, otherwise `effective_total_tokens`, and only uses plain `totalTokens` as a compatibility path when derived totals are absent.",
-        "Gate output clearly states whether the blocking condition came from the cost-primary gate or the raw-token guardrail and includes observed value, threshold, baseline, and degraded reason when present.",
-        "Legacy baseline entries that only declare `total_tokens` are upgraded into the new contract with backward-compatible defaults.",
-        "The raw-token guardrail remains diagnostic by default and does not become a second default blocking gate."
+        "Prompt observability is recorded from the actual assembled provider request for each turn, including the real tool schema used on that turn rather than a startup-time default-registry estimate.",
+        "Per-turn observability includes `tool_schema_hash`, `schema_change_reason`, `overlay_tokens_estimate`, and stable-prefix metrics whose definition explicitly excludes turn-local overlay tokens.",
+        "When a profile epoch changes, observability can show both that the schema changed and the bounded reason for the change rather than only emitting a new hash.",
+        "Persisted usage or archive records keep prompt observability fields aligned with the real per-turn schema and token estimates instead of mixing initialization estimates with runtime values."
       ],
       "priority": 3,
-      "passes": true,
-      "notes": "Source specs:\n- docs/features/107-cache-aware-cost-gate-and-prefix-stability.md (107 Cache-Aware Cost Gate And Prefix Stability)\nFiles:\n- src/runtime/cost_gate.ts\n- docs/cost-baseline.json\n- tests/cost_gate.test.ts\nVerification:\n- node --experimental-strip-types --test tests/cost_gate.test.ts\nNotes:\n- Keep `docs/cost-baseline.json` readable while preserving the upgrade path from the older `total_tokens` schema."
+      "passes": false,
+      "notes": "Source specs:\n- docs/features/108-prefix-stability-first-context-assembly.md (108 Prefix Stability First Context Assembly)\nFiles:\n- src/runtime/prompt_observability.ts\n- src/runtime/query_engine.ts\n- src/runtime/runner.ts\n- src/runtime/session.ts\n- tests/prompt_observability.test.ts\nVerification:\n- node --experimental-strip-types --test tests/prompt_observability.test.ts\n- node --experimental-strip-types --test tests/query_engine.test.ts\nNotes:\n- This story depends on the layering and sticky-epoch stories so observability can bind to the final request shape.\n- Keep one source of truth for request-shape accounting."
     },
     {
-      "id": "SPEC-107-targeted-e2e-cost-gate-rollout",
-      "title": "Apply the shared gate contract to targeted E2E scenarios and live validation",
-      "description": "Keep the five targeted E2E scenarios on the shared archive and cost-gate path, preserve the narrowed tool-exposure behavior from feature 106, and document live verification for fallback versus USD-primary gating.",
+      "id": "SPEC-108-prefix-stability-regression-coverage",
+      "title": "Lock the stable-prefix contract with local and E2E regressions",
+      "description": "Add regression coverage for the new context assembly rules across same-task follow-ups, tool-call continuations, session resume, and explicit phase/profile switches. The suite should prove that overlays do not leak into transcript state, schema churn is limited to explicit epoch changes, and cache-friendly prefix behavior from feature 107 is preserved.",
       "acceptanceCriteria": [
-        "The `e2e-read`, `e2e-search`, `e2e-edit`, `e2e-multi-tool`, and `e2e-tool-error` scenarios run through the shared archive and cost-gate helpers without reverting to full tool-schema exposure.",
-        "E2E cost-gate reporting includes archive-path diagnostics and preserves the distinction between a cost-primary regression and a raw-token warning.",
-        "Live cache-hit validation covers both repeated follow-up turns and session-resume prefix stability, with assertions tied to stable-prefix and cached-token signals.",
-        "External-key verification covers both no-rate fallback to `effective_total_tokens` and rate-configured switching to `estimated_cost_usd`, with skipped or fallback cases called out explicitly when keys or rates are absent.",
-        "Broad runtime verification still uses `npm run test:all`."
+        "Unit and local runtime tests cover overlay lifetime, overlay exclusion from history and resume state, and stable tool-schema behavior across same-task follow-up turns and tool-call continuations.",
+        "Cache and context-caching E2E tests continue to show a high stable-prefix ratio on follow-up turns and resumed turns after the new layering and epoch behavior lands.",
+        "A dedicated phase or profile switch E2E regression verifies that schema changes happen only at an explicit boundary and observability records the corresponding change reason.",
+        "Subagent local regression verifies that child requests receive stable transcript context plus child-specific regenerated overlay rather than stale parent overlay.",
+        "Feature 106 targeted narrowing and feature 107 cache-aware cost or prefix diagnostics remain covered and do not regress."
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "Source specs:\n- docs/features/107-cache-aware-cost-gate-and-prefix-stability.md (107 Cache-Aware Cost Gate And Prefix Stability)\nFiles:\n- tests/e2e/helpers.ts\n- tests/e2e/e2e_read.test.ts\n- tests/e2e/e2e_search.test.ts\n- tests/e2e/e2e_edit.test.ts\n- tests/e2e/e2e_multi_tool.test.ts\n- tests/e2e/e2e_tool_error.test.ts\n- tests/e2e/e2e_cache_hit_rate.test.ts\n- docs/features/107-cache-aware-cost-gate-and-prefix-stability.md\nVerification:\n- node --experimental-strip-types --test tests/e2e/e2e_cache_hit_rate.test.ts\n- MERLION_COST_GATE=fail node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_cache_hit_rate.test.ts tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts\n- MERLION_COST_GATE=fail MERLION_COST_INPUT_PER_1M=<input> MERLION_COST_OUTPUT_PER_1M=<output> MERLION_COST_CACHED_INPUT_PER_1M=<cached> node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_cache_hit_rate.test.ts tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts\n- npm run test:all\nNotes:\n- Do not add new user-visible blocking gate behavior to CLI, wechat, or other formal runtime paths in this story.\n- This story preserves the shipped E2E-facing contract and validation surface."
+      "passes": false,
+      "notes": "Source specs:\n- docs/features/108-prefix-stability-first-context-assembly.md (108 Prefix Stability First Context Assembly)\nFiles:\n- tests/query_engine.test.ts\n- tests/prompt_observability.test.ts\n- tests/e2e/helpers_registry.test.ts\n- tests/e2e/e2e_cache_hit_rate.test.ts\n- tests/e2e/e2e_context_caching.test.ts\n- tests/e2e/e2e_session_resume.test.ts\n- tests/e2e/e2e_query_engine_local.test.ts\n- tests/e2e/e2e_task_runtime_local.test.ts\n- tests/e2e/e2e_subagent_local.test.ts\n- tests/e2e/e2e_profile_epoch_switch.test.ts\nVerification:\n- node --experimental-strip-types --test tests/query_engine.test.ts\n- node --experimental-strip-types --test tests/prompt_observability.test.ts\n- node --experimental-strip-types --test tests/e2e/helpers_registry.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_query_engine_local.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_task_runtime_local.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_subagent_local.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_cache_hit_rate.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_context_caching.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_session_resume.test.ts\n- npm run test:all\nNotes:\n- Keep the new E2E focused on explicit schema-transition behavior rather than broad end-to-end feature coverage.\n- This story is the final hardening pass after the runtime behavior is in place."
     }
   ]
 }

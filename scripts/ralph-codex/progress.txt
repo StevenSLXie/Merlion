@@ -1,110 +1,30 @@
 # Ralph Codex Progress Log
-Started: Sat Apr 25 13:27:41 +08 2026
----
+Started: Sat Apr 25 18:33:07 +08 2026
 ## Codebase Patterns
-- Use `src/runtime/usage.ts` as the single source of truth for shared cost-rate env parsing; runtime entrypoints should call `resolveUsageRatesFromEnv()` instead of duplicating `MERLION_COST_*` parsing.
-- For E2E usage archives, derive cache-aware top-level totals with `summarizeUsageSamples()` plus `deriveUsageMetrics()` and keep per-turn cache-triage details in `prompt_observability` instead of inventing a second transcript format.
-- When an archive-derived contract also drives gating, compute one `UsageDerivedMetrics` object and pass it to both the archive writer and the gate so review/debug output cannot drift from the persisted evidence.
-- When validating archived cost-gate decisions, compare against the decision’s `observedMetric`: primary-gate outcomes should line up with `derived_totals.primary_metric_value`, while raw-token guardrails must line up with archive `totals.total_tokens`.
-- Live cache validation should keep stable-prefix metrics as the hard requirement and treat provider `cached_tokens` metadata as opportunistic evidence, because some providers surface cache hits inconsistently across identical follow-up turns.
-
-## [2026-04-25 13:43:49 +0800] - SPEC-107-shared-cache-aware-usage-metrics
+- Keep request-local overlays visible in `runLoop()` return state for the active submit, but prune them before storing `QueryEngine` history or resume state.
+---
+## [2026-04-25 19:16:57 +0800] - SPEC-108-prompt-layering-non-persistent-overlay
 - What was implemented
-- Added shared cache-aware usage derivation in `src/runtime/usage.ts` and completed review follow-up by routing `runner.ts` through the shared rate resolver.
+- Independently reviewed the new prompt layering contract, then fixed a follow-up regression so request-local overlays remain visible in the active `runLoop()` result while still staying out of persisted transcript history and resume state.
 - Files changed
-- `src/runtime/runner.ts`
+- `src/runtime/loop.ts`
 - `scripts/ralph-codex/prd.json`
 - `scripts/ralph-codex/progress.txt`
+- `scripts/ralph-codex/current_story.json` (removed)
 - Verification run
-- `node --experimental-strip-types --test tests/usage.test.ts`
+- `node --experimental-strip-types --test tests/runtime_loop.test.ts`
 - `node --experimental-strip-types --test tests/query_engine.test.ts`
-- `node --experimental-strip-types --eval "import('./src/runtime/runner.ts')"`
+- `node --experimental-strip-types --test tests/e2e/e2e_query_engine_local.test.ts`
+- `node --experimental-strip-types --test tests/e2e/e2e_subagent_local.test.ts`
 - Review notes:
-- Checked the shared helper contract against `docs/features/107-cache-aware-cost-gate-and-prefix-stability.md`, the active story in `scripts/ralph-codex/prd.json`, and the runtime consumer path in `src/runtime/runner.ts`.
-- Found one P1 issue: `src/runtime/runner.ts` still had a second `MERLION_COST_*` env parser, which violated the story requirement that rate resolution stay runtime-owned and shared. Fixed by reusing `resolveUsageRatesFromEnv(process.env)`.
-- Re-checked for duplicate runtime cost env parsing after the fix; only `src/runtime/usage.ts` now owns that contract.
+- Checked `docs/features/108-prefix-stability-first-context-assembly.md`, the handoff story, and the runtime changes in `src/runtime/query_engine.ts`, `src/runtime/loop.ts`, `src/runtime/items.ts`, and `src/runtime/subagents.ts`.
+- Found one P1 issue: the new overlay split removed runtime overlays from `RunLoopResult.state.items`, which broke the “visible for the full submit” contract and regressed existing `tests/runtime_loop.test.ts` guardrail coverage even though story-specific tests were green.
+- Resolved it by projecting overlays back into the returned loop state while keeping `QueryEngine` persistence on the pruned item set, so active-run visibility and non-persistent history semantics both hold.
 - Learnings for future iterations:
 - Reusable patterns
-- When a story introduces a shared runtime helper, review adjacent facades like `runner.ts` for legacy env parsing or thin wrappers that quietly duplicate the same contract.
+- When runtime state is split into persistent and non-persistent lanes, keep a separate review check for the returned in-memory state surface; persistence fixes can still regress active-run observability.
 - Gotchas
-- A narrow implementation can satisfy unit tests while still missing the spec’s “single source of truth” requirement, so grep-based duplication checks are useful review coverage.
+- Story-focused tests can miss regressions in shared loop-state contracts, so run adjacent runtime suites when changing `runLoop()` state projection or item assembly.
 - Useful context
-- This story intentionally stops at shared metric derivation and degradation semantics; gate behavior and archive contract changes remain for later SPEC-107 slices.
----
-## [2026-04-25 13:54:23 +0800] - SPEC-107-archive-derived-cost-and-prefix-signals
-- What was implemented
-- Independently reviewed the archive-contract slice that persists `derived_totals` alongside `prompt_observability` for prefix-stability triage.
-- Files changed
-- `scripts/ralph-codex/prd.json`
-- `scripts/ralph-codex/progress.txt`
-- `scripts/ralph-codex/current_story.json` (removed)
-- Verification run
-- `node --experimental-strip-types --test tests/prompt_observability.test.ts`
-- `node --experimental-strip-types --test tests/e2e/helpers_archive.test.ts`
-- `node --experimental-strip-types --test tests/usage.test.ts tests/e2e/helpers_cost_gate.test.ts`
-- Review notes:
-- Checked the active story against `docs/features/107-cache-aware-cost-gate-and-prefix-stability.md`, the PRD acceptance criteria, and the live runtime/archive path in `tests/e2e/helpers.ts` plus `src/runtime/loop.ts`.
-- Confirmed the archive payload now writes a stable top-level `derived_totals` object from the shared usage helper, preserves `prompt_observability` as the per-turn triage surface, and carries degraded-reason state when `cached_tokens` are unavailable.
-- No P0/P1 issues were found in this slice, so no follow-up code patch or review-fix commit was needed.
-- Learnings for future iterations:
-- Reusable patterns
-- Archive-level regression contracts should stay top-level and deterministic; if diagnosis still needs turn detail, reuse `prompt_observability` rather than adding another per-turn archive schema.
-- Gotchas
-- `runLoop()` emits prompt observability twice per turn; archive collectors need turn-keyed replacement semantics so the persisted snapshot keeps response-boundary fields from the later emission.
-- Useful context
-- This story only lands the archive contract and triage signals; cost-gate blocking behavior still remains for later SPEC-107 stories.
----
-## [2026-04-25 14:05:40 +0800] - SPEC-107-cost-primary-gate-and-baseline-schema
-- What was implemented
-- Independently reviewed the cost-primary gate contract, then fixed the live E2E helper path so archived `derived_totals` now drive gate evaluation and failure output preserves the selected metric / degraded detail.
-- Files changed
-- `tests/e2e/helpers.ts`
-- `tests/e2e/helpers_cost_gate.test.ts`
-- `scripts/ralph-codex/prd.json`
-- `scripts/ralph-codex/progress.txt`
-- `scripts/ralph-codex/current_story.json` (removed)
-- Verification run
-- `node --experimental-strip-types --test tests/cost_gate.test.ts`
-- `node --experimental-strip-types --test tests/e2e/helpers_archive.test.ts`
-- `node --experimental-strip-types --test tests/e2e/helpers_cost_gate.test.ts`
-- Review notes:
-- Checked the story commit in `src/runtime/cost_gate.ts`, `docs/cost-baseline.json`, and `tests/cost_gate.test.ts` against `docs/features/107-cache-aware-cost-gate-and-prefix-stability.md`, then traced the only live E2E gate caller in `tests/e2e/helpers.ts`.
-- Found two P1 issues: the runtime test helper still called `evaluateCostGate()` without `derivedMetrics`, which kept the blocking path on the legacy `totalTokens` fallback instead of the new cost-primary metric, and `formatCostGateFailure()` discarded the new gate detail by collapsing failures back to raw-token output.
-- Resolved both by computing one shared `derivedTotals` object, reusing it for archive persistence and gate evaluation, exporting a narrow helper for regression coverage, and updating the helper-path tests so failures keep the primary-metric / guardrail detail plus archive location.
-- Re-ran the unit and helper archive tests after the fix; no remaining P0/P1 issues were found for this story.
-- Learnings for future iterations:
-- Reusable patterns
-- If a story upgrades a contract but leaves its primary caller untouched, review the caller path explicitly; unit coverage on the contract alone can miss a live fallback that negates the feature.
-- Gotchas
-- Post-behavior failure wrappers can quietly erase the very diagnostic fields a feature adds, so review the final thrown message, not just the internal decision object.
-- Useful context
-- The cost-primary gate contract is now exercised through the E2E helper path, but SPEC-107’s final story still owns scenario-level threshold tuning and the full external-key validation matrix.
----
-## [2026-04-25 17:54:38 +0800] - SPEC-107-targeted-e2e-cost-gate-rollout
-- What was implemented
-- Independently reviewed the targeted E2E rollout, fixed the archive-contract assertion for raw-token guardrails, and hardened the live cache-hit validation so it gates on stable-prefix evidence while still reporting provider cache metadata when available.
-- Files changed
-- `tests/e2e/helpers.ts`
-- `tests/e2e/helpers_cost_gate.test.ts`
-- `tests/e2e/e2e_cache_hit_rate.test.ts`
-- `scripts/ralph-codex/prd.json`
-- `scripts/ralph-codex/progress.txt`
-- `scripts/ralph-codex/current_story.json` (removed)
-- Verification run
-- `node --experimental-strip-types --test tests/e2e/helpers_cost_gate.test.ts tests/e2e/helpers_archive.test.ts tests/e2e/helpers_registry.test.ts tests/e2e/e2e_cache_hit_rate.test.ts tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts`
-- `MERLION_COST_GATE=fail node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_cache_hit_rate.test.ts tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts`
-- `MERLION_COST_GATE=fail MERLION_COST_INPUT_PER_1M=1 MERLION_COST_OUTPUT_PER_1M=1 MERLION_COST_CACHED_INPUT_PER_1M=0 node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_cache_hit_rate.test.ts tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts`
-- `npm run test:all`
-- Review notes:
-- Checked the story commit in `tests/e2e/helpers.ts`, the five targeted scenario tests, `tests/e2e/e2e_cache_hit_rate.test.ts`, `docs/cost-baseline.json`, and the live external-key commands against `docs/features/107-cache-aware-cost-gate-and-prefix-stability.md`.
-- Found two P1 issues: `assertArchivedCostGateContract()` incorrectly compared every decision against `derived_totals.primary_metric_value`, so raw-token guardrail decisions failed even when the archive was correct, and the live follow-up cache test treated missing provider `cached_tokens` as a hard failure despite already proving a highly stable prefix.
-- Resolved both by aligning archive assertions with `decision.observedMetric`, adding regression coverage for guardrail-vs-primary comparisons, and making the live follow-up test require strong stable-prefix signals while logging provider cache metadata when it is present.
-- Re-ran both live external-key matrices after the fix: without rates the targeted gate fell back to `effective_total_tokens`, and with `MERLION_COST_INPUT_PER_1M=1`, `MERLION_COST_OUTPUT_PER_1M=1`, and `MERLION_COST_CACHED_INPUT_PER_1M=0` it switched to `estimated_cost_usd`.
-- Learnings for future iterations:
-- Reusable patterns
-- If an archive assertion is meant to validate gate behavior, key it off `observedMetric` rather than assuming the selected primary metric is what actually triggered the decision.
-- Gotchas
-- Provider cache metadata can be transient even when prompt assembly is cache-stable, so live checks should separate “prefix stayed stable” from “provider surfaced cached_tokens on this run”.
-- Useful context
-- SPEC-107 is now fully closed; the remaining cache-efficiency and prefix-stability work moves to SPEC-108.
+- `QueryEngine.submitPrompt()` already prunes non-persistent runtime items before updating stored history, so `runLoop()` can expose overlays in its return value without leaking them into resume state.
 ---
