@@ -31,6 +31,7 @@ import {
   deriveUsageMetrics,
   resolveUsageRatesFromEnv,
   summarizeUsageSamples,
+  type UsageDerivedMetrics,
   type UsageRates,
 } from '../../src/runtime/usage.ts'
 import type { MerlionSandboxConfig } from '../../src/sandbox/policy.ts'
@@ -156,6 +157,7 @@ interface UsageArchiveParams {
   toolSchema: ReturnType<typeof summarizeToolSchema>
   promptObservability: PromptObservabilitySnapshot[]
   usageRates?: UsageRates
+  derivedTotals?: UsageDerivedMetrics
 }
 
 export interface E2ECostGateReport {
@@ -166,7 +168,7 @@ export interface E2ECostGateReport {
 }
 
 export function buildUsageArchivePayload(params: UsageArchiveParams) {
-  const derivedTotals = deriveUsageMetrics(
+  const derivedTotals = params.derivedTotals ?? deriveUsageMetrics(
     summarizeUsageSamples(params.usageSamples),
     params.usageRates,
   )
@@ -211,10 +213,11 @@ async function writeUsageArchive(params: UsageArchiveParams): Promise<string> {
   return path
 }
 
-async function evaluateArchivedCostGate(
+export async function evaluateArchivedCostGate(
   scenario: string,
   totalTokens: number,
   archivePath: string,
+  derivedMetrics: UsageDerivedMetrics,
 ): Promise<E2ECostGateReport> {
   const normalizedScenario = safeScenarioLabel(scenario)
   const mode = parseCostGateMode(process.env.MERLION_COST_GATE)
@@ -223,6 +226,7 @@ async function evaluateArchivedCostGate(
     baseline,
     scenario: normalizedScenario,
     totalTokens,
+    derivedMetrics,
     mode,
   })
 
@@ -242,11 +246,7 @@ export function formatCostGateFailure(report: E2ECostGateReport): string {
   if (report.decision.status !== 'fail') {
     return report.decision.message
   }
-  return (
-    `[cost-gate] regression ${report.scenario} after behavior checks: ` +
-    `total=${report.totalTokens} > threshold=${report.decision.thresholdTokens}; ` +
-    `usage_archive=${report.archivePath}`
-  )
+  return `${report.decision.message}; usage_archive=${report.archivePath}`
 }
 
 export function assertNoCostRegression(report: E2ECostGateReport): void {
@@ -339,6 +339,7 @@ export async function runSandboxedAgent(
     },
   })
 
+  const derivedTotals = usageTracker.getDerivedMetrics(usageRates)
   const archivePath = await writeUsageArchive({
     scenario: options?.scenario ?? 'e2e',
     task,
@@ -351,11 +352,13 @@ export async function runSandboxedAgent(
     toolSchema,
     promptObservability: Array.from(promptObservabilityByTurn.values()),
     usageRates,
+    derivedTotals,
   })
   const costGate = await evaluateArchivedCostGate(
     options?.scenario ?? 'e2e',
     usageTracker.getTotals().total_tokens,
     archivePath,
+    derivedTotals,
   )
   if (!options?.deferCostGateFailure) {
     assertNoCostRegression(costGate)
