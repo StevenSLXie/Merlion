@@ -15,6 +15,7 @@ import {
 } from './prompt_observability.ts'
 import {
   assistantResponseToItems,
+  buildCanonicalRequestAssembly,
   countFunctionCallItems,
   createExternalUserItem,
   createRuntimeUserItem,
@@ -87,6 +88,8 @@ export interface RunLoopOptions {
   systemPrompt: string
   userPrompt: string
   intentContract?: string
+  promptPreludeItems?: ConversationItem[]
+  executionCharterText?: string
   cwd: string
   sessionId?: string
   permissions?: PermissionStore
@@ -97,7 +100,6 @@ export interface RunLoopOptions {
   maxTurns?: number
   stablePrefixItems?: ConversationItem[]
   initialItems?: ConversationItem[]
-  initialOverlayItems?: ConversationItem[]
   persistInitialMessages?: boolean
   onItemAppended?: (entry: TranscriptItemEntry) => Promise<void> | void
   onResponseBoundary?: (boundary: ProviderResponseBoundary) => Promise<void> | void
@@ -148,40 +150,6 @@ export interface RunLoopResult {
   state: LoopState
 }
 
-function assembleRequestMessages(
-  stablePrefixItems: ConversationItem[],
-  overlayItems: ConversationItem[],
-  transcriptItems: ConversationItem[],
-  intentContract?: string,
-): {
-  stablePrefixItems: ConversationItem[]
-  overlayItems: ConversationItem[]
-  transcriptItems: ConversationItem[]
-  requestItems: ConversationItem[]
-} {
-  const contract = intentContract?.trim()
-  const requestOverlayItems = [...overlayItems]
-  if (contract) {
-    requestOverlayItems.push(
-      createSystemItem(
-        'Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\n' +
-          contract,
-        'runtime'
-      ),
-    )
-  }
-  return {
-    stablePrefixItems: [...stablePrefixItems],
-    overlayItems: requestOverlayItems,
-    transcriptItems: [...transcriptItems],
-    requestItems: [
-      ...stablePrefixItems,
-      ...requestOverlayItems,
-      ...transcriptItems,
-    ],
-  }
-}
-
 function ensureBoundary(
   boundary: ProviderResponseBoundary | undefined,
   result: ProviderResult,
@@ -206,6 +174,8 @@ function normalizeInjectedItems(value: ConversationItem[] | void): ConversationI
 interface InternalLoopState {
   stablePrefixItems: ConversationItem[]
   items: ConversationItem[]
+  promptPreludeItems: ConversationItem[]
+  executionCharterText?: string
   overlayItems: ConversationItem[]
   turnCount: number
   maxOutputTokensRecoveryCount: number
@@ -213,11 +183,21 @@ interface InternalLoopState {
   nudgeCount: number
 }
 
+function visibleOverlayItems(state: InternalLoopState): ConversationItem[] {
+  const items = [...state.promptPreludeItems]
+  const charterText = state.executionCharterText?.trim()
+  if (charterText) {
+    items.push(createSystemItem(charterText, 'runtime'))
+  }
+  items.push(...state.overlayItems)
+  return items
+}
+
 function projectLoopState(state: InternalLoopState): LoopState {
   return {
     // Returned loop state should still expose request-local overlays for the
     // active submit, even though they are excluded from persistent transcript state.
-    items: [...state.stablePrefixItems, ...state.items, ...state.overlayItems],
+    items: [...state.stablePrefixItems, ...state.items, ...visibleOverlayItems(state)],
     turnCount: state.turnCount,
     maxOutputTokensRecoveryCount: state.maxOutputTokensRecoveryCount,
     hasAttemptedReactiveCompact: state.hasAttemptedReactiveCompact,
@@ -292,12 +272,14 @@ async function tryGenerateNaturalSummary(
       'Focus on concrete outcomes and mention unfinished parts only if needed. ' +
       'Do not call tools.'
   )
-  const requestAssembly = assembleRequestMessages(
-    state.stablePrefixItems,
-    [...state.overlayItems, summaryRequest],
-    state.items,
-    options.intentContract,
-  )
+  const requestAssembly = buildCanonicalRequestAssembly({
+    stablePrefixItems: state.stablePrefixItems,
+    promptPreludeItems: state.promptPreludeItems,
+    executionCharterText: state.executionCharterText,
+    runtimeOverlayItems: [...state.overlayItems, summaryRequest],
+    transcriptItems: state.items,
+    intentContract: options.intentContract,
+  })
   let promptSnapshot = promptObservabilityTracker.record(state.turnCount + 1, {
     stablePrefixItems: requestAssembly.stablePrefixItems,
     overlayItems: requestAssembly.overlayItems,
@@ -337,7 +319,8 @@ function createState(
   userPrompt: string,
   stablePrefixItems?: ConversationItem[],
   initialItems?: ConversationItem[],
-  initialOverlayItems?: ConversationItem[],
+  promptPreludeItems?: ConversationItem[],
+  executionCharterText?: string,
 ): InternalLoopState {
   const providedStablePrefix = stablePrefixItems ? [...stablePrefixItems] : undefined
   const baseState = initialItems
@@ -359,7 +342,9 @@ function createState(
   return {
     stablePrefixItems: baseState.stablePrefixItems,
     items: baseState.transcriptTailItems,
-    overlayItems: initialOverlayItems ? [...initialOverlayItems] : [],
+    promptPreludeItems: promptPreludeItems ? [...promptPreludeItems] : [],
+    executionCharterText,
+    overlayItems: [],
     turnCount: 0,
     maxOutputTokensRecoveryCount: 0,
     hasAttemptedReactiveCompact: false,
@@ -894,7 +879,8 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     options.userPrompt,
     options.stablePrefixItems,
     options.initialItems,
-    options.initialOverlayItems,
+    options.promptPreludeItems,
+    options.executionCharterText,
   )
   const maxTurns = options.maxTurns ?? 100
   const guardrails = createLoopGuardrailState(options.userPrompt)
@@ -917,12 +903,14 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
     let promptSnapshot: PromptObservabilitySnapshot | undefined
     try {
       applyReactiveCompact(state)
-      const requestAssembly = assembleRequestMessages(
-        state.stablePrefixItems,
-        state.overlayItems,
-        state.items,
-        options.intentContract,
-      )
+      const requestAssembly = buildCanonicalRequestAssembly({
+        stablePrefixItems: state.stablePrefixItems,
+        promptPreludeItems: state.promptPreludeItems,
+        executionCharterText: state.executionCharterText,
+        runtimeOverlayItems: state.overlayItems,
+        transcriptItems: state.items,
+        intentContract: options.intentContract,
+      })
       const schemaChangeReason = state.turnCount === 0
         ? options.schemaChangeReason ?? null
         : null

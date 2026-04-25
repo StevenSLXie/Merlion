@@ -204,14 +204,6 @@ export class QueryEngine {
     await this.options.persistItem?.(item, origin, runtimeResponseId)
   }
 
-  private async createTurnOverlay(prompt: string, charterText?: string): Promise<ConversationItem[]> {
-    const runtimeItems = charterText ? [createSystemItem(charterText, 'runtime')] : []
-    return [
-      ...await this.options.contextService.buildPromptPrelude(prompt),
-      ...runtimeItems,
-    ]
-  }
-
   private async applyPostRunMaintenance(params: {
     changedFiles: Set<string>
     sawSuccessfulGitCommit: boolean
@@ -341,7 +333,7 @@ export class QueryEngine {
       pendingResumeRehydration: false,
     }
     const turnRegistry = buildRegistryFromPool(applyCapabilityProfile(this.options.registry.getAll(), taskControl.capabilityProfile))
-    const overlayItems = await this.createTurnOverlay(prompt, charterText)
+    const promptPreludeItems = await this.options.contextService.buildPromptPrelude(prompt)
 
     const result = await runLoop({
       provider: this.options.provider,
@@ -351,6 +343,8 @@ export class QueryEngine {
       intentContract: this.options.buildIntentContract?.(prompt, {
         primaryObjective: taskControl.taskState.activeObjective,
       }),
+      promptPreludeItems,
+      executionCharterText: charterText,
       cwd: this.options.cwd,
       sessionId: this.options.sessionId,
       maxTurns: this.options.maxTurns ?? 100,
@@ -360,7 +354,6 @@ export class QueryEngine {
       askQuestions: this.options.askQuestions,
       stablePrefixItems: this.stablePrefixItems,
       initialItems: this.transcriptTailItems,
-      initialOverlayItems: overlayItems,
       persistInitialMessages: false,
       taskControl,
       schemaChangeReason: profileResolution.schemaChangeReason,

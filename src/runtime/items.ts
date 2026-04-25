@@ -96,6 +96,22 @@ export interface TranscriptItemEntry {
   runtimeResponseId?: string
 }
 
+export interface CanonicalRequestAssembly {
+  stablePrefixItems: ConversationItem[]
+  overlayItems: ConversationItem[]
+  transcriptItems: ConversationItem[]
+  requestItems: ConversationItem[]
+}
+
+export interface CanonicalRequestAssemblyInput {
+  stablePrefixItems: ConversationItem[]
+  promptPreludeItems?: ConversationItem[]
+  executionCharterText?: string
+  runtimeOverlayItems?: ConversationItem[]
+  transcriptItems: ConversationItem[]
+  intentContract?: string
+}
+
 const LEGACY_RUNTIME_USER_PATTERNS: RegExp[] = [
   /^Output was cut off\. Continue directly from where you stopped\./i,
   /^You just finished tool execution\. Please provide a natural-language final summary/i,
@@ -395,5 +411,39 @@ export function createFunctionCallOutputItem(callId: string, outputText: string,
     callId,
     outputText,
     isError,
+  }
+}
+
+export function buildCanonicalRequestAssembly(input: CanonicalRequestAssemblyInput): CanonicalRequestAssembly {
+  const overlayItems: ConversationItem[] = []
+  if (Array.isArray(input.promptPreludeItems) && input.promptPreludeItems.length > 0) {
+    overlayItems.push(...input.promptPreludeItems)
+  }
+  const charterText = input.executionCharterText?.trim()
+  if (charterText) {
+    overlayItems.push(createSystemItem(charterText, 'runtime'))
+  }
+  if (Array.isArray(input.runtimeOverlayItems) && input.runtimeOverlayItems.length > 0) {
+    overlayItems.push(...input.runtimeOverlayItems)
+  }
+  const intentContract = input.intentContract?.trim()
+  if (intentContract) {
+    overlayItems.push(
+      createSystemItem(
+        'Execution contract for the current request. Treat these constraints as mandatory unless the user explicitly changes them.\n\n' +
+          intentContract,
+        'runtime',
+      ),
+    )
+  }
+  return {
+    stablePrefixItems: [...input.stablePrefixItems],
+    overlayItems,
+    transcriptItems: [...input.transcriptItems],
+    requestItems: [
+      ...input.stablePrefixItems,
+      ...overlayItems,
+      ...input.transcriptItems,
+    ],
   }
 }

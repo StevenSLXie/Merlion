@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../src/types.ts'
 import type { ConversationItem, ProviderCapabilities, ProviderResult } from '../src/runtime/items.ts'
-import { itemsToMessages, messagesToItems } from '../src/runtime/items.ts'
+import { createSystemItem, itemsToMessages, messagesToItems } from '../src/runtime/items.ts'
 import { ToolRegistry } from '../src/tools/registry.ts'
 import type { ToolDefinition } from '../src/tools/types.ts'
 import { runLoop, shouldNudge } from '../src/runtime/loop.ts'
@@ -30,6 +30,15 @@ class StubProvider implements ModelProvider {
     if (!response) throw new Error(`unexpected provider call at index=${this.index}`)
     this.index += 1
     return response
+  }
+}
+
+class RecordingStubProvider extends StubProvider {
+  readonly seenMessages: ChatMessage[][] = []
+
+  async complete(messages: ChatMessage[]): Promise<AssistantResponse> {
+    this.seenMessages.push(messages.map((message) => ({ ...message })))
+    return await super.complete(messages)
   }
 }
 
@@ -506,6 +515,66 @@ test('loop records prompt observability for synthetic natural-summary fallback t
   assert.equal((promptObservability['overlay_tokens_estimate'] as number) > 0, true)
   assert.equal(typeof promptObservability['tool_schema_hash'], 'string')
   assert.equal((promptObservability['stable_prefix_tokens'] as number) > 0, true)
+})
+
+test('loop uses the canonical request builder for tool follow-up and natural-summary fallback turns', async () => {
+  const provider = new RecordingStubProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('echo_tool', { value: 'ok' })],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: '',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+    {
+      role: 'assistant',
+      content: 'Final summary after recovery.',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    },
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeEchoTool())
+
+  await runLoop({
+    provider,
+    registry,
+    systemPrompt: 'system',
+    userPrompt: 'test',
+    promptPreludeItems: [createSystemItem('Prompt-derived path guidance.\n\nfocus: src/runtime/loop.ts', 'runtime')],
+    executionCharterText: 'Execution charter for this turn:\n- stay focused',
+    intentContract: 'Mention only concrete outcomes.',
+    cwd: process.cwd(),
+    maxTurns: 8,
+    onToolBatchComplete: async () => [
+      createSystemItem('Path guidance update.\n\n- src/runtime/query_engine.ts', 'runtime'),
+    ],
+  })
+
+  const toolFollowUpSystems = provider.seenMessages[1]!.filter((message) => message.role === 'system').map((message) => message.content ?? '')
+  const fallbackSystems = provider.seenMessages[2]!.filter((message) => message.role === 'system').map((message) => message.content ?? '')
+  const toolFollowUpPreludeIndex = toolFollowUpSystems.findIndex((content) => content.startsWith('Prompt-derived path guidance.'))
+  const toolFollowUpCharterIndex = toolFollowUpSystems.findIndex((content) => content.startsWith('Execution charter for this turn:'))
+  const toolFollowUpGuidanceIndex = toolFollowUpSystems.findIndex((content) => content.startsWith('Path guidance update.'))
+  const toolFollowUpContractIndex = toolFollowUpSystems.findIndex((content) => content.startsWith('Execution contract for the current request.'))
+  const fallbackPreludeIndex = fallbackSystems.findIndex((content) => content.startsWith('Prompt-derived path guidance.'))
+  const fallbackCharterIndex = fallbackSystems.findIndex((content) => content.startsWith('Execution charter for this turn:'))
+  const fallbackGuidanceIndex = fallbackSystems.findIndex((content) => content.startsWith('Path guidance update.'))
+  const fallbackContractIndex = fallbackSystems.findIndex((content) => content.startsWith('Execution contract for the current request.'))
+
+  assert.equal(toolFollowUpPreludeIndex < toolFollowUpCharterIndex, true)
+  assert.equal(toolFollowUpCharterIndex < toolFollowUpGuidanceIndex, true)
+  assert.equal(toolFollowUpGuidanceIndex < toolFollowUpContractIndex, true)
+  assert.equal(fallbackPreludeIndex < fallbackCharterIndex, true)
+  assert.equal(fallbackCharterIndex < fallbackGuidanceIndex, true)
+  assert.equal(fallbackGuidanceIndex < fallbackContractIndex, true)
 })
 
 test('item-native loop recovers empty stop after tool calls by requesting final summary', async () => {
