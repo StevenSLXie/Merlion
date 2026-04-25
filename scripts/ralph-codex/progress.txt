@@ -3,6 +3,32 @@ Started: Sat Apr 25 18:33:07 +08 2026
 ## Codebase Patterns
 - Keep request-local overlays visible in `runLoop()` return state for the active submit, but prune them before storing `QueryEngine` history or resume state.
 - Keep sticky capability-profile epochs stable on lightweight follow-up prompts; only rotate schema when the user makes an explicit correction or phase switch rather than inferring it from a task-kind change alone.
+- Emit per-turn observability change reasons only on the provider turn where the schema epoch actually changes; tool-follow-up turns in the same submit should keep the schema hash but clear the change reason.
+---
+## [2026-04-25 19:21:16 +0800] - SPEC-108-real-request-prompt-observability
+- What was implemented
+- Independently reviewed real-request prompt observability, found a per-turn schema-change attribution bug on tool-follow-up turns, and fixed the loop so schema change reasons are only emitted on the turn where the epoch actually changes.
+- Files changed
+- `src/runtime/loop.ts`
+- `tests/query_engine.test.ts`
+- `scripts/ralph-codex/prd.json`
+- `scripts/ralph-codex/progress.txt`
+- `scripts/ralph-codex/current_story.json` (removed)
+- Verification run
+- `node --experimental-strip-types --test tests/query_engine.test.ts`
+- `node --experimental-strip-types --test tests/prompt_observability.test.ts`
+- `node --experimental-strip-types --test tests/session.test.ts`
+- Review notes:
+- Checked `docs/features/108-prefix-stability-first-context-assembly.md`, the handoff story, and the observability wiring in `src/runtime/prompt_observability.ts`, `src/runtime/query_engine.ts`, `src/runtime/loop.ts`, `src/runtime/runner.ts`, and `src/runtime/session.ts`.
+- Found one P1 issue: `runLoop()` reused the epoch-level `schema_change_reason` for every provider turn inside the same `submitPrompt()` run, so tool-follow-up turns incorrectly looked like repeated schema changes even when the real request shape and tool schema were unchanged.
+- Resolved it by scoping `schema_change_reason` to the first provider turn of the submit, then adding a regression that proves tool-follow-up usage entries keep the same schema hash while clearing the change reason back to `null`.
+- Learnings for future iterations:
+- Reusable patterns
+- Per-turn observability fields need turn-boundary semantics, not submit-boundary semantics; otherwise multi-turn tool continuations will silently over-report state changes.
+- Gotchas
+- A single `submitPrompt()` can emit multiple persisted usage rows, so review observability fields against tool-call continuations, not just one-request-per-row scenarios.
+- Useful context
+- `PromptObservabilityTracker.record()` already computes hashes from the actual assembled request each turn, so the fix belongs at the loop callsite that decides when a schema transition should be attributed.
 ---
 ## [2026-04-25 19:16:57 +0800] - SPEC-108-prompt-layering-non-persistent-overlay
 - What was implemented

@@ -495,6 +495,75 @@ test('QueryEngine persists prompt observability from the actual per-turn request
   }
 })
 
+test('QueryEngine records schema change reason only on the turn where the epoch changes', async () => {
+  const usageEntries: Array<{
+    toolSchemaHash: string | null
+    schemaChangeReason: string | null
+  }> = []
+  const provider = new RecordingProvider([
+    {
+      role: 'assistant',
+      content: null,
+      finish_reason: 'tool_calls',
+      tool_calls: [call('probe', { target: 'src/runtime/query_engine.ts' })],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+    {
+      role: 'assistant',
+      content: 'Finished the request.',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+  ])
+
+  const registry = new ToolRegistry()
+  registry.register(makeReadOnlyProbeTool())
+  const engine = new QueryEngine({
+    cwd: process.cwd(),
+    provider,
+    registry,
+    permissions: { ask: async () => 'allow' },
+    contextService: {
+      getTrustLevel: () => 'trusted',
+      getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+      getGeneratedMapMode: () => false,
+      setGeneratedMapMode() {},
+      async prefetchIfSafe() {
+        return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+      },
+      async getSystemPrompt() {
+        return 'system prompt'
+      },
+      async buildPromptPrelude() {
+        return []
+      },
+      async buildPathGuidanceItems() {
+        return { items: [], loadedFiles: [] }
+      },
+      async extractCandidatePathsFromText() {
+        return []
+      },
+      async extractCandidatePathsFromToolEvent() {
+        return []
+      },
+    },
+    persistUsage: async (entry) => {
+      usageEntries.push({
+        toolSchemaHash: entry.promptObservability?.tool_schema_hash ?? null,
+        schemaChangeReason: entry.promptObservability?.schema_change_reason ?? null,
+      })
+    },
+    model: 'test-model',
+  })
+
+  await engine.submitPrompt('Inspect src/runtime/query_engine.ts and summarize what you find.')
+
+  assert.equal(usageEntries.length, 2)
+  assert.equal(usageEntries[0]?.schemaChangeReason, 'initial_epoch')
+  assert.equal(usageEntries[1]?.schemaChangeReason, null)
+  assert.equal(usageEntries[1]?.toolSchemaHash, usageEntries[0]?.toolSchemaHash)
+})
+
 test('QueryEngine records user_correction when a correction changes the active profile epoch', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'merlion-correction-switch-'))
   try {

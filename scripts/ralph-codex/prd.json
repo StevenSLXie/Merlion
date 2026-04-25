@@ -46,7 +46,7 @@
         "Persisted usage or archive records keep prompt observability fields aligned with the real per-turn schema and token estimates instead of mixing initialization estimates with runtime values."
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Source specs:\n- docs/features/108-prefix-stability-first-context-assembly.md (108 Prefix Stability First Context Assembly)\nFiles:\n- src/runtime/prompt_observability.ts\n- src/runtime/query_engine.ts\n- src/runtime/runner.ts\n- src/runtime/session.ts\n- tests/prompt_observability.test.ts\nVerification:\n- node --experimental-strip-types --test tests/prompt_observability.test.ts\n- node --experimental-strip-types --test tests/query_engine.test.ts\nNotes:\n- This story depends on the layering and sticky-epoch stories so observability can bind to the final request shape.\n- Keep one source of truth for request-shape accounting."
     },
     {

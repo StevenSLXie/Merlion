@@ -915,12 +915,15 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
         state.items,
         options.intentContract,
       )
+      const schemaChangeReason = state.turnCount === 0
+        ? options.schemaChangeReason ?? null
+        : null
       promptSnapshot = promptObservability.record(state.turnCount + 1, {
         stablePrefixItems: requestAssembly.stablePrefixItems,
         overlayItems: requestAssembly.overlayItems,
         transcriptItems: requestAssembly.transcriptItems,
         tools: options.registry.getAll(),
-        schemaChangeReason: options.schemaChangeReason ?? null,
+        schemaChangeReason,
       })
       await options.onPromptObservability?.(promptSnapshot)
       await options.onTurnStart?.({ turn: state.turnCount + 1 })
