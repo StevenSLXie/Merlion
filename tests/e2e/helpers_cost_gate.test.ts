@@ -379,4 +379,35 @@ test('assertArchivedCostGateContract validates fallback and USD-primary archive 
       },
     )
   )
+
+  await assert.doesNotReject(() =>
+    assertArchivedCostGateContract(
+      {
+        scenario: 'e2e-read',
+        totalTokens: 1000,
+        archivePath: usdArchivePath,
+        decision: {
+          status: 'warn',
+          selectedPrimaryMetric: 'estimated_cost_usd',
+          primaryMetricDegradedReason: null,
+          triggeredGate: 'guardrail',
+          observedMetric: 'total_tokens',
+          observedValue: 1000,
+          thresholdValue: 900,
+          thresholdTokens: 900,
+          message:
+            '[cost-gate] raw-token guardrail warn e2e-read: total_tokens observed=1000 > threshold=900 ' +
+            '(baseline=450, threshold_pct=100, primary_metric=estimated_cost_usd)',
+        },
+      },
+      'e2e-read',
+      {
+        env: {
+          MERLION_COST_INPUT_PER_1M: '1',
+          MERLION_COST_OUTPUT_PER_1M: '1',
+          MERLION_COST_CACHED_INPUT_PER_1M: '0',
+        },
+      },
+    )
+  )
 })

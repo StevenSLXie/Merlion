@@ -315,9 +315,16 @@ export async function assertArchivedCostGateContract(
     archive.derived_totals.primary_metric_degraded_reason,
     report.decision.primaryMetricDegradedReason,
   )
+  const expectedObservedMetric = report.decision.triggeredGate === 'guardrail'
+    ? 'total_tokens'
+    : expectedPrimaryMetric
+  assert.equal(report.decision.observedMetric, expectedObservedMetric)
+  const archivedObservedValue = expectedObservedMetric === 'total_tokens'
+    ? archive.totals.total_tokens
+    : archive.derived_totals.primary_metric_value
   assert.ok(
-    Math.abs(archive.derived_totals.primary_metric_value - report.decision.observedValue) < 1e-12,
-    'expected archive-derived totals to match the gate observed value',
+    Math.abs(archivedObservedValue - report.decision.observedValue) < 1e-12,
+    'expected archive totals to match the gate observed value',
   )
   if (expectedPrimaryMetric === 'estimated_cost_usd') {
     assert.equal(typeof archive.derived_totals.estimated_cost_usd, 'number')

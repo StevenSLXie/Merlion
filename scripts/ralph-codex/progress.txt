@@ -1,43 +1,110 @@
 # Ralph Codex Progress Log
-Started: Fri Apr 24 08:18:09 +08 2026
+Started: Sat Apr 25 13:27:41 +08 2026
+---
 ## Codebase Patterns
-- When budget-observability changes land in `tests/e2e/helpers.ts`, keep the archive payload assembly in a pure helper and cover it with a local test so the contract stays verified even when keyed E2E runs are skipped.
-- When helper-only E2E tool narrowing is driven by scenario names, add a local `runLoop()` regression with a stub provider for each distinct narrowed registry shape so review can verify behavior even if keyed E2Es skip.
-- When a keyed E2E scenario requires a specific tool path for its behavioral assertion, narrow that scenario to the exact tool chain in `tests/e2e/helpers.ts`; broader readonly profiles can leave alternate tools that make provider-backed runs flaky and more expensive.
----
-## [2026-04-24 08:32:47 +0800] - SPEC-106-e2e-budget-observability-archive
-- What was implemented: reviewed the tool-schema and prompt-floor archive slice, then added a follow-up regression testable archive-payload seam in `tests/e2e/helpers.ts` plus local coverage for the archived cost-triage fields and turn ordering.
-- Files changed: `tests/e2e/helpers.ts`, `tests/e2e/helpers_archive.test.ts`, `scripts/ralph-codex/prd.json`, `scripts/ralph-codex/progress.txt`, `scripts/ralph-codex/current_story.json`.
-- Verification run: `node --experimental-strip-types --test tests/prompt_observability.test.ts tests/e2e/helpers_archive.test.ts`; `MERLION_COST_GATE=warn node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts` (skipped because `OPENROUTER_API_KEY` is not set).
+- Use `src/runtime/usage.ts` as the single source of truth for shared cost-rate env parsing; runtime entrypoints should call `resolveUsageRatesFromEnv()` instead of duplicating `MERLION_COST_*` parsing.
+- For E2E usage archives, derive cache-aware top-level totals with `summarizeUsageSamples()` plus `deriveUsageMetrics()` and keep per-turn cache-triage details in `prompt_observability` instead of inventing a second transcript format.
+- When an archive-derived contract also drives gating, compute one `UsageDerivedMetrics` object and pass it to both the archive writer and the gate so review/debug output cannot drift from the persisted evidence.
+- When validating archived cost-gate decisions, compare against the decision’s `observedMetric`: primary-gate outcomes should line up with `derived_totals.primary_metric_value`, while raw-token guardrails must line up with archive `totals.total_tokens`.
+- Live cache validation should keep stable-prefix metrics as the hard requirement and treat provider `cached_tokens` metadata as opportunistic evidence, because some providers surface cache hits inconsistently across identical follow-up turns.
+
+## [2026-04-25 13:43:49 +0800] - SPEC-107-shared-cache-aware-usage-metrics
+- What was implemented
+- Added shared cache-aware usage derivation in `src/runtime/usage.ts` and completed review follow-up by routing `runner.ts` through the shared rate resolver.
+- Files changed
+- `src/runtime/runner.ts`
+- `scripts/ralph-codex/prd.json`
+- `scripts/ralph-codex/progress.txt`
+- Verification run
+- `node --experimental-strip-types --test tests/usage.test.ts`
+- `node --experimental-strip-types --test tests/query_engine.test.ts`
+- `node --experimental-strip-types --eval "import('./src/runtime/runner.ts')"`
 - Review notes:
-- What was checked: source-spec alignment for `tests/e2e/helpers.ts`, reuse of prompt observability plumbing, archive field names required for budget triage, and whether the slice changed generic CLI or `runLoop()` default registry behavior.
-- P0/P1 issues found and how they were resolved: found a P1 verification gap because the helper/archive seam had no local regression test and the keyed E2E verification can skip without credentials; resolved it by extracting `buildUsageArchivePayload()` and adding `tests/e2e/helpers_archive.test.ts` to assert the archived tool-schema metrics and prompt observability fields.
+- Checked the shared helper contract against `docs/features/107-cache-aware-cost-gate-and-prefix-stability.md`, the active story in `scripts/ralph-codex/prd.json`, and the runtime consumer path in `src/runtime/runner.ts`.
+- Found one P1 issue: `src/runtime/runner.ts` still had a second `MERLION_COST_*` env parser, which violated the story requirement that rate resolution stay runtime-owned and shared. Fixed by reusing `resolveUsageRatesFromEnv(process.env)`.
+- Re-checked for duplicate runtime cost env parsing after the fix; only `src/runtime/usage.ts` now owns that contract.
 - Learnings for future iterations:
-- Reusable patterns: when a story depends on external-key E2E coverage, add a narrow local contract test for the archive or helper seam so review can still prove the change without network credentials.
-- Gotchas: `runLoop()` emits prompt observability twice per successful turn, so archive code should normalize the final per-turn snapshot rather than assuming the callback fires once.
-- Useful context: the follow-up review fix was committed as `fe80d40` with message `fix: SPEC-106-e2e-budget-observability-archive - review follow-up`.
+- Reusable patterns
+- When a story introduces a shared runtime helper, review adjacent facades like `runner.ts` for legacy env parsing or thin wrappers that quietly duplicate the same contract.
+- Gotchas
+- A narrow implementation can satisfy unit tests while still missing the spec’s “single source of truth” requirement, so grep-based duplication checks are useful review coverage.
+- Useful context
+- This story intentionally stops at shared metric derivation and degradation semantics; gate behavior and archive contract changes remain for later SPEC-107 slices.
 ---
-## [2026-04-24 08:42:13 +0800] - SPEC-106-profile-targeted-e2e-tool-registry
-- What was implemented: reviewed the targeted E2E registry narrowing against the spec, then added helper-level local `runLoop()` regression coverage for the readonly, readonly-plus-edit, and readonly-plus-create registry shapes used by the five budget-regression scenarios.
-- Files changed: `tests/e2e/helpers_registry.test.ts`, `scripts/ralph-codex/prd.json`, `scripts/ralph-codex/progress.txt`, `scripts/ralph-codex/current_story.json`.
-- Verification run: `node --experimental-strip-types --test tests/tool_pool.test.ts tests/e2e/helpers_registry.test.ts tests/e2e/e2e_query_engine_local.test.ts tests/e2e/e2e_task_runtime_local.test.ts`; `MERLION_COST_GATE=warn node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts` (skipped because `OPENROUTER_API_KEY` is not set).
+## [2026-04-25 13:54:23 +0800] - SPEC-107-archive-derived-cost-and-prefix-signals
+- What was implemented
+- Independently reviewed the archive-contract slice that persists `derived_totals` alongside `prompt_observability` for prefix-stability triage.
+- Files changed
+- `scripts/ralph-codex/prd.json`
+- `scripts/ralph-codex/progress.txt`
+- `scripts/ralph-codex/current_story.json` (removed)
+- Verification run
+- `node --experimental-strip-types --test tests/prompt_observability.test.ts`
+- `node --experimental-strip-types --test tests/e2e/helpers_archive.test.ts`
+- `node --experimental-strip-types --test tests/usage.test.ts tests/e2e/helpers_cost_gate.test.ts`
 - Review notes:
-- What was checked: source-spec alignment for the five targeted scenarios, bounded scenario-to-registry mapping in `tests/e2e/helpers.ts`, reuse of `CapabilityProfileName` and tool-pool assembly, preservation of default behavior for non-targeted scenarios, and local behavioral viability of each narrowed registry shape.
-- P0/P1 issues found and how they were resolved: found a P1 verification gap because the story only asserted registry composition while the keyed scenario tests can all skip without credentials; resolved it by adding deterministic local helper-registry tests that drive `runLoop()` with stubbed tool-call sequences for the readonly, edit, and multi-tool targeted registries. The follow-up review fix was committed as `bad5264` with message `fix: SPEC-106-profile-targeted-e2e-tool-registry - review follow-up`.
+- Checked the active story against `docs/features/107-cache-aware-cost-gate-and-prefix-stability.md`, the PRD acceptance criteria, and the live runtime/archive path in `tests/e2e/helpers.ts` plus `src/runtime/loop.ts`.
+- Confirmed the archive payload now writes a stable top-level `derived_totals` object from the shared usage helper, preserves `prompt_observability` as the per-turn triage surface, and carries degraded-reason state when `cached_tokens` are unavailable.
+- No P0/P1 issues were found in this slice, so no follow-up code patch or review-fix commit was needed.
 - Learnings for future iterations:
-- Reusable patterns: when direct `runLoop()` helper wiring changes tool exposure, pair the name-level registry assertions with a local loop test that exercises the actual tool calls expected from each narrowed shape.
-- Gotchas: code-mutating local loop tests may trigger the runtime validation nudge, so stubbed providers need one additional terminal response instead of assuming the first post-edit assistant message ends the loop.
-- Useful context: the readonly-question profile path currently produces the same 15-tool registry seen in cost triage, while edit and multi-tool scenarios stay narrow by adding only `edit_file` or `create_file` on top of that base set.
+- Reusable patterns
+- Archive-level regression contracts should stay top-level and deterministic; if diagnosis still needs turn detail, reuse `prompt_observability` rather than adding another per-turn archive schema.
+- Gotchas
+- `runLoop()` emits prompt observability twice per turn; archive collectors need turn-keyed replacement semantics so the persisted snapshot keeps response-boundary fields from the later emission.
+- Useful context
+- This story only lands the archive contract and triage signals; cost-gate blocking behavior still remains for later SPEC-107 stories.
 ---
-## [2026-04-24 08:59:04 +0800] - SPEC-106-separate-budget-failures-and-finalize-gates
-- What was implemented: independently reviewed the budget-failure deferral slice, then fixed two follow-up gaps by narrowing `e2e-search` to the `search` tool only and `e2e-edit` to the `read_file` + `edit_file` path so the real fail-mode keyed suite stays behaviorally correct and under the existing gate without changing `docs/cost-baseline.json`.
-- Files changed: `tests/e2e/helpers.ts`, `tests/e2e/helpers_registry.test.ts`, `scripts/ralph-codex/prd.json`, `scripts/ralph-codex/progress.txt`, `scripts/ralph-codex/current_story.json`.
-- Verification run: `node --experimental-strip-types --test tests/cost_gate.test.ts tests/e2e/helpers_archive.test.ts tests/e2e/helpers_registry.test.ts tests/e2e/helpers_cost_gate.test.ts`; `set -a && source .env && set +a && MERLION_COST_GATE=fail node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts`; `npm run test:all`.
+## [2026-04-25 14:05:40 +0800] - SPEC-107-cost-primary-gate-and-baseline-schema
+- What was implemented
+- Independently reviewed the cost-primary gate contract, then fixed the live E2E helper path so archived `derived_totals` now drive gate evaluation and failure output preserves the selected metric / degraded detail.
+- Files changed
+- `tests/e2e/helpers.ts`
+- `tests/e2e/helpers_cost_gate.test.ts`
+- `scripts/ralph-codex/prd.json`
+- `scripts/ralph-codex/progress.txt`
+- `scripts/ralph-codex/current_story.json` (removed)
+- Verification run
+- `node --experimental-strip-types --test tests/cost_gate.test.ts`
+- `node --experimental-strip-types --test tests/e2e/helpers_archive.test.ts`
+- `node --experimental-strip-types --test tests/e2e/helpers_cost_gate.test.ts`
 - Review notes:
-- What was checked: source-spec alignment for deferred cost-gate failure ordering, failure-message clarity, keyed fail-mode validation for the five targeted scenarios, and whether any remaining budget miss still required a baseline change.
-- P0/P1 issues found and how they were resolved: found a P1 behavioral regression because `e2e-search` still exposed alternate readonly tools and a real keyed run failed its `search`-tool assertion; resolved it by constraining that scenario to `search` only. Found a second P1 completeness issue because `e2e-edit` still exceeded the fail-mode gate in a real keyed run; resolved it by narrowing the edit scenario to the exact `read_file` + `edit_file` tool chain, which removed the remaining over-budget path and made the keyed five-scenario suite pass without relaxing the baseline.
+- Checked the story commit in `src/runtime/cost_gate.ts`, `docs/cost-baseline.json`, and `tests/cost_gate.test.ts` against `docs/features/107-cache-aware-cost-gate-and-prefix-stability.md`, then traced the only live E2E gate caller in `tests/e2e/helpers.ts`.
+- Found two P1 issues: the runtime test helper still called `evaluateCostGate()` without `derivedMetrics`, which kept the blocking path on the legacy `totalTokens` fallback instead of the new cost-primary metric, and `formatCostGateFailure()` discarded the new gate detail by collapsing failures back to raw-token output.
+- Resolved both by computing one shared `derivedTotals` object, reusing it for archive persistence and gate evaluation, exporting a narrow helper for regression coverage, and updating the helper-path tests so failures keep the primary-metric / guardrail detail plus archive location.
+- Re-ran the unit and helper archive tests after the fix; no remaining P0/P1 issues were found for this story.
 - Learnings for future iterations:
-- Reusable patterns: when a scenario’s behavioral assertion names a tool, keep the helper registry aligned to that exact tool path instead of assuming a broader readonly profile will remain behaviorally stable with live providers.
-- Gotchas: provider-backed E2Es can pass or fail on the same prompt depending on which tool path the model sees first, so scenario-specific cost work should treat alternate exposed tools as a correctness risk, not just a token-cost concern.
-- Useful context: after the follow-up narrowing, the keyed `MERLION_COST_GATE=fail` suite passed for `e2e-read`, `e2e-search`, `e2e-edit`, `e2e-multi-tool`, and `e2e-tool-error` without any `docs/cost-baseline.json` change.
+- Reusable patterns
+- If a story upgrades a contract but leaves its primary caller untouched, review the caller path explicitly; unit coverage on the contract alone can miss a live fallback that negates the feature.
+- Gotchas
+- Post-behavior failure wrappers can quietly erase the very diagnostic fields a feature adds, so review the final thrown message, not just the internal decision object.
+- Useful context
+- The cost-primary gate contract is now exercised through the E2E helper path, but SPEC-107’s final story still owns scenario-level threshold tuning and the full external-key validation matrix.
+---
+## [2026-04-25 17:54:38 +0800] - SPEC-107-targeted-e2e-cost-gate-rollout
+- What was implemented
+- Independently reviewed the targeted E2E rollout, fixed the archive-contract assertion for raw-token guardrails, and hardened the live cache-hit validation so it gates on stable-prefix evidence while still reporting provider cache metadata when available.
+- Files changed
+- `tests/e2e/helpers.ts`
+- `tests/e2e/helpers_cost_gate.test.ts`
+- `tests/e2e/e2e_cache_hit_rate.test.ts`
+- `scripts/ralph-codex/prd.json`
+- `scripts/ralph-codex/progress.txt`
+- `scripts/ralph-codex/current_story.json` (removed)
+- Verification run
+- `node --experimental-strip-types --test tests/e2e/helpers_cost_gate.test.ts tests/e2e/helpers_archive.test.ts tests/e2e/helpers_registry.test.ts tests/e2e/e2e_cache_hit_rate.test.ts tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts`
+- `MERLION_COST_GATE=fail node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_cache_hit_rate.test.ts tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts`
+- `MERLION_COST_GATE=fail MERLION_COST_INPUT_PER_1M=1 MERLION_COST_OUTPUT_PER_1M=1 MERLION_COST_CACHED_INPUT_PER_1M=0 node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_cache_hit_rate.test.ts tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts`
+- `npm run test:all`
+- Review notes:
+- Checked the story commit in `tests/e2e/helpers.ts`, the five targeted scenario tests, `tests/e2e/e2e_cache_hit_rate.test.ts`, `docs/cost-baseline.json`, and the live external-key commands against `docs/features/107-cache-aware-cost-gate-and-prefix-stability.md`.
+- Found two P1 issues: `assertArchivedCostGateContract()` incorrectly compared every decision against `derived_totals.primary_metric_value`, so raw-token guardrail decisions failed even when the archive was correct, and the live follow-up cache test treated missing provider `cached_tokens` as a hard failure despite already proving a highly stable prefix.
+- Resolved both by aligning archive assertions with `decision.observedMetric`, adding regression coverage for guardrail-vs-primary comparisons, and making the live follow-up test require strong stable-prefix signals while logging provider cache metadata when it is present.
+- Re-ran both live external-key matrices after the fix: without rates the targeted gate fell back to `effective_total_tokens`, and with `MERLION_COST_INPUT_PER_1M=1`, `MERLION_COST_OUTPUT_PER_1M=1`, and `MERLION_COST_CACHED_INPUT_PER_1M=0` it switched to `estimated_cost_usd`.
+- Learnings for future iterations:
+- Reusable patterns
+- If an archive assertion is meant to validate gate behavior, key it off `observedMetric` rather than assuming the selected primary metric is what actually triggered the decision.
+- Gotchas
+- Provider cache metadata can be transient even when prompt assembly is cache-stable, so live checks should separate “prefix stayed stable” from “provider surfaced cached_tokens on this run”.
+- Useful context
+- SPEC-107 is now fully closed; the remaining cache-efficiency and prefix-stability work moves to SPEC-108.
 ---

@@ -1,52 +1,68 @@
 {
   "project": "Merlion",
-  "branchName": "ralph/spec-106",
-  "description": "Recover the budget-regression E2E scenarios by making the helper path observable and profile-aware, then finish with explicit budget-regression reporting and only the smallest evidence-backed baseline change if narrowing alone is insufficient.",
+  "branchName": "ralph/spec-107",
+  "description": "Preserve the shipped cache-aware E2E cost-gate and prefix-stability contract by keeping shared usage math, archive fields, gate behavior, and targeted validations aligned.",
   "generatedFromSpecs": [
-    "docs/features/106-tool-schema-cost-regression-and-e2e-budget-recovery.md"
+    "docs/features/107-cache-aware-cost-gate-and-prefix-stability.md"
   ],
   "userStories": [
     {
-      "id": "SPEC-106-e2e-budget-observability-archive",
-      "title": "Archive Tool Schema And Prompt Floor Budget Data",
-      "description": "Extend the budget-regression E2E helper path to persist the cost-triage fields that are currently missing from `.merlion/e2e-usage`. Reuse the existing prompt observability hook and current schema-token estimation approach so each targeted run records registry size and turn-level prompt-floor signals without introducing a separate E2E-only accounting model.",
+      "id": "SPEC-107-shared-usage-derived-metrics",
+      "title": "Centralize cache-aware usage rates and derived metrics",
+      "description": "Keep a single runtime source of truth for usage aggregation, rate resolution, cache-aware cost calculation, and primary-metric selection so E2E helpers and runtime observability consume the same billing semantics.",
       "acceptanceCriteria": [
-        "Runs launched through `tests/e2e/helpers.ts` for the budget-regression scenarios write usage archives that include at least `tool_count`, serialized tool-schema char size, tool-schema token estimate, and per-turn prompt observability snapshots.",
-        "The archived prompt observability data preserves the existing runtime field names needed for budget triage, including `estimated_input_tokens`, `tool_schema_tokens_estimate`, and `stable_prefix_tokens`.",
-        "The implementation reuses existing prompt observability and tool-schema estimation plumbing instead of inventing a second E2E-only token tracker.",
-        "This slice does not change generic CLI or `runLoop()` default tool exposure semantics."
+        "A shared runtime helper resolves `MERLION_COST_INPUT_PER_1M`, `MERLION_COST_OUTPUT_PER_1M`, and optional `MERLION_COST_CACHED_INPUT_PER_1M` without duplicating env parsing in E2E helpers.",
+        "Derived usage metrics include `uncached_prompt_tokens`, `cached_prompt_ratio`, `effective_input_tokens`, `effective_total_tokens`, `primary_metric`, `primary_metric_value`, and `primary_metric_degraded_reason`, plus `estimated_cost_usd` when shared rates are available.",
+        "When any usage sample lacks `cached_tokens`, derived metrics record `primary_metric_degraded_reason = \"cached_tokens_unavailable\"`, stop applying cached-input discount for missing samples, and keep `estimated_cost_usd` as the primary metric when rates exist or fall back to `effective_total_tokens` when they do not.",
+        "Usage tracker aggregation and cost math are covered by unit tests for cached, uncached, and degraded cases."
       ],
       "priority": 1,
       "passes": true,
-      "notes": "Source specs:\n- docs/features/106-tool-schema-cost-regression-and-e2e-budget-recovery.md (106 Tool Schema Cost Regression And E2E Budget Recovery)\nFiles:\n- tests/e2e/helpers.ts\n- src/runtime/prompt_observability.ts\n- src/runtime/runner.ts\nVerification:\n- node --experimental-strip-types --test tests/prompt_observability.test.ts\n- MERLION_COST_GATE=warn node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts\nNotes:\n- A shared helper extraction is acceptable only if it leaves current CLI/runtime behavior unchanged.\n- Keep the scope on the helper/archive seam; this story is observability only, not registry narrowing."
+      "notes": "Source specs:\n- docs/features/107-cache-aware-cost-gate-and-prefix-stability.md (107 Cache-Aware Cost Gate And Prefix Stability)\nFiles:\n- src/runtime/usage.ts\n- tests/usage.test.ts\nVerification:\n- node --experimental-strip-types --test tests/usage.test.ts\nNotes:\n- The source spec is marked implemented; this story preserves the existing shared contract rather than adding new scope.\n- Do not introduce a second pricing table or E2E-only cost formula."
     },
     {
-      "id": "SPEC-106-profile-targeted-e2e-tool-registry",
-      "title": "Narrow Budget E2E Tool Exposure With Existing Profiles",
-      "description": "Replace the unconditional full-registry wiring in `tests/e2e/helpers.ts` for the five budget-regression scenarios with profile-aware or same-source tool-pool assembly. Keep the mapping bounded to `e2e-read`, `e2e-search`, `e2e-edit`, `e2e-multi-tool`, and `e2e-tool-error`, and reuse `CapabilityProfileName`, `buildDefaultRegistry({ profile })`, and current pool filters rather than adding a new general runtime policy layer.",
+      "id": "SPEC-107-archive-derived-totals-and-prefix-diagnostics",
+      "title": "Persist derived totals and prefix-stability diagnostics in archives",
+      "description": "Wire E2E archive payloads to the shared derived metrics and preserve prompt observability snapshots so reviewers can distinguish raw prompt growth from cache-hit regression without digging through free-form logs.",
       "acceptanceCriteria": [
-        "`tests/e2e/helpers.ts` no longer passes `buildDefaultRegistry({ mode: 'default' })` unconditionally for `e2e-read`, `e2e-search`, `e2e-edit`, `e2e-multi-tool`, and `e2e-tool-error`.",
-        "The narrowing logic is explicitly limited to the five regression scenarios and reuses the existing capability-profile or tool-pool mechanism instead of creating a third long-lived exposure ruleset.",
-        "Non-targeted E2E scenarios and normal CLI/direct `runLoop()` defaults keep their current behavior.",
-        "The five targeted scenarios still satisfy their existing behavioral assertions after the narrower registry is applied."
+        "Archive payloads keep raw provider `usage_samples` and add top-level `derived_totals` with stable field names for `uncached_prompt_tokens`, `cached_prompt_ratio`, `effective_input_tokens`, `effective_total_tokens`, `primary_metric`, `primary_metric_value`, and `primary_metric_degraded_reason`, plus `estimated_cost_usd` when rates are configured.",
+        "Archive `derived_totals` come from shared runtime usage helpers instead of an E2E-local billing implementation.",
+        "Archive `prompt_observability` remains a per-turn sorted snapshot stream containing prefix-stability signals such as `stable_prefix_tokens`, `stable_prefix_ratio`, and tool-schema token estimates.",
+        "Archive tests cover both the normal cache-aware case and the degraded `cached_tokens_unavailable` case while preserving prefix-stability triage data."
       ],
       "priority": 2,
       "passes": true,
-      "notes": "Source specs:\n- docs/features/106-tool-schema-cost-regression-and-e2e-budget-recovery.md (106 Tool Schema Cost Regression And E2E Budget Recovery)\nFiles:\n- tests/e2e/helpers.ts\n- src/tools/pool.ts\n- src/tools/builtin/index.ts\nVerification:\n- node --experimental-strip-types --test tests/tool_pool.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_query_engine_local.test.ts\n- node --experimental-strip-types --test tests/e2e/e2e_task_runtime_local.test.ts\n- MERLION_COST_GATE=warn node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts\nNotes:\n- If `multi-tool` or `edit` need finer-grained exposure than a stock profile provides, keep the customization inside the helper by composing existing pool/profile primitives rather than expanding runtime policy.\n- This story should materially reduce prompt-floor cost before any baseline discussion."
+      "notes": "Source specs:\n- docs/features/107-cache-aware-cost-gate-and-prefix-stability.md (107 Cache-Aware Cost Gate And Prefix Stability)\nFiles:\n- tests/e2e/helpers.ts\n- tests/e2e/helpers_archive.test.ts\n- src/runtime/prompt_observability.ts\n- tests/prompt_observability.test.ts\nVerification:\n- node --experimental-strip-types --test tests/e2e/helpers_archive.test.ts\n- node --experimental-strip-types --test tests/prompt_observability.test.ts\nNotes:\n- Do not invent a second per-turn cost archive; keep per-turn detail in `prompt_observability` and top-level billing decisions in `derived_totals`."
     },
     {
-      "id": "SPEC-106-separate-budget-failures-and-finalize-gates",
-      "title": "Separate Behavior Failures From Budget Regressions",
-      "description": "Refactor the targeted E2E flow so functional assertions complete before the cost gate is enforced, and make budget overruns surface as explicit regressions with threshold and archive context. After the archive and registry-narrowing work lands, run the keyed five-scenario gate in fail mode and only update `docs/cost-baseline.json` if the post-narrowing evidence shows a remaining justified gap.",
+      "id": "SPEC-107-cost-primary-gate-and-baseline-schema",
+      "title": "Evaluate baselines with a cost-primary gate and raw-token guardrail",
+      "description": "Maintain the cost gate as a dual-layer contract: a cache-aware primary metric for budget enforcement and a separate raw-token guardrail for prompt-size diagnostics, while preserving backward compatibility with legacy baselines.",
       "acceptanceCriteria": [
-        "The five targeted E2E tests can distinguish behavioral failures from budget-regression failures instead of failing the helper before assertions run.",
-        "When a targeted scenario exceeds budget after behavior passes, the failure clearly reports it as a cost regression and includes the threshold comparison needed for triage.",
-        "The keyed validation command for the five regression scenarios passes with `MERLION_COST_GATE=fail`, or any remaining baseline change is limited to the affected scenarios and justified by newly archived post-narrowing evidence.",
-        "If `docs/cost-baseline.json` changes, the repo records why narrowing was insufficient and keeps the adjustment to the minimum necessary scope."
+        "Cost baseline schema supports `primary_metric.baselines` for `effective_total_tokens` and `estimated_cost_usd`, with optional `guardrails.total_tokens` thresholds and severity.",
+        "Gate evaluation selects `estimated_cost_usd` when shared derived totals provide it, otherwise `effective_total_tokens`, and only uses plain `totalTokens` as a compatibility path when derived totals are absent.",
+        "Gate output clearly states whether the blocking condition came from the cost-primary gate or the raw-token guardrail and includes observed value, threshold, baseline, and degraded reason when present.",
+        "Legacy baseline entries that only declare `total_tokens` are upgraded into the new contract with backward-compatible defaults.",
+        "The raw-token guardrail remains diagnostic by default and does not become a second default blocking gate."
       ],
       "priority": 3,
       "passes": true,
-      "notes": "Source specs:\n- docs/features/106-tool-schema-cost-regression-and-e2e-budget-recovery.md (106 Tool Schema Cost Regression And E2E Budget Recovery)\nFiles:\n- tests/e2e/helpers.ts\n- tests/e2e/e2e_read.test.ts\n- tests/e2e/e2e_search.test.ts\n- tests/e2e/e2e_edit.test.ts\n- tests/e2e/e2e_multi_tool.test.ts\n- tests/e2e/e2e_tool_error.test.ts\n- src/runtime/cost_gate.ts\n- docs/cost-baseline.json\nVerification:\n- MERLION_COST_GATE=fail node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts\n- npm run test:all\nNotes:\n- Keep cost-gate evaluation after archive write so failures always leave inspectable evidence.\n- Do not relax generic cost-gate semantics for unrelated scenarios or non-E2E runtime paths."
+      "notes": "Source specs:\n- docs/features/107-cache-aware-cost-gate-and-prefix-stability.md (107 Cache-Aware Cost Gate And Prefix Stability)\nFiles:\n- src/runtime/cost_gate.ts\n- docs/cost-baseline.json\n- tests/cost_gate.test.ts\nVerification:\n- node --experimental-strip-types --test tests/cost_gate.test.ts\nNotes:\n- Keep `docs/cost-baseline.json` readable while preserving the upgrade path from the older `total_tokens` schema."
+    },
+    {
+      "id": "SPEC-107-targeted-e2e-cost-gate-rollout",
+      "title": "Apply the shared gate contract to targeted E2E scenarios and live validation",
+      "description": "Keep the five targeted E2E scenarios on the shared archive and cost-gate path, preserve the narrowed tool-exposure behavior from feature 106, and document live verification for fallback versus USD-primary gating.",
+      "acceptanceCriteria": [
+        "The `e2e-read`, `e2e-search`, `e2e-edit`, `e2e-multi-tool`, and `e2e-tool-error` scenarios run through the shared archive and cost-gate helpers without reverting to full tool-schema exposure.",
+        "E2E cost-gate reporting includes archive-path diagnostics and preserves the distinction between a cost-primary regression and a raw-token warning.",
+        "Live cache-hit validation covers both repeated follow-up turns and session-resume prefix stability, with assertions tied to stable-prefix and cached-token signals.",
+        "External-key verification covers both no-rate fallback to `effective_total_tokens` and rate-configured switching to `estimated_cost_usd`, with skipped or fallback cases called out explicitly when keys or rates are absent.",
+        "Broad runtime verification still uses `npm run test:all`."
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Source specs:\n- docs/features/107-cache-aware-cost-gate-and-prefix-stability.md (107 Cache-Aware Cost Gate And Prefix Stability)\nFiles:\n- tests/e2e/helpers.ts\n- tests/e2e/e2e_read.test.ts\n- tests/e2e/e2e_search.test.ts\n- tests/e2e/e2e_edit.test.ts\n- tests/e2e/e2e_multi_tool.test.ts\n- tests/e2e/e2e_tool_error.test.ts\n- tests/e2e/e2e_cache_hit_rate.test.ts\n- docs/features/107-cache-aware-cost-gate-and-prefix-stability.md\nVerification:\n- node --experimental-strip-types --test tests/e2e/e2e_cache_hit_rate.test.ts\n- MERLION_COST_GATE=fail node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_cache_hit_rate.test.ts tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts\n- MERLION_COST_GATE=fail MERLION_COST_INPUT_PER_1M=<input> MERLION_COST_OUTPUT_PER_1M=<output> MERLION_COST_CACHED_INPUT_PER_1M=<cached> node --experimental-strip-types --test --test-concurrency=1 tests/e2e/e2e_cache_hit_rate.test.ts tests/e2e/e2e_read.test.ts tests/e2e/e2e_search.test.ts tests/e2e/e2e_edit.test.ts tests/e2e/e2e_multi_tool.test.ts tests/e2e/e2e_tool_error.test.ts\n- npm run test:all\nNotes:\n- Do not add new user-visible blocking gate behavior to CLI, wechat, or other formal runtime paths in this story.\n- This story preserves the shipped E2E-facing contract and validation surface."
     }
   ]
 }
