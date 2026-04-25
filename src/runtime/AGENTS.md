@@ -21,6 +21,7 @@
 - Overlay canonicalization and overlay non-persistent classification share one owner in `items.ts`; when adding new path-guidance, guardrail, recovery, or intent-contract templates, update the shared overlay descriptor tables there instead of introducing new ordering or pruning logic elsewhere.
 - Reactive compaction projects only `transcriptTailItems`: preserve the last external user anchor plus the latest `function_call -> function_call_output` trace, and replace omitted gaps with in-band compact summary items rather than introducing sidecar state.
 - When re-creating a `QueryEngine` in-process, resume from `QueryEngineSnapshot` rather than only `items` so sticky capability-profile epochs survive provider or runtime rebuilds.
+- Child runtimes should inherit only the parent persisted projection contract: reuse the parent `transcriptTailItems`, regenerate child overlay/bootstrap locally, and do not carry parent stable-prefix system prompt or request-local overlay into the child request.
 - Subagent role semantics are runtime-bound: workers must stay in implementation mode, explorers/verifiers stay read-only even if prompt wording is vague.
 <!-- END MANUAL -->
 

@@ -88,14 +88,14 @@ if (SKIP) {
             permissionMode: 'auto_allow',
           }),
           model: process.env.MERLION_E2E_MODEL ?? process.env.MERLION_MODEL ?? 'moonshotai/kimi-k2.5',
-          createSubagentRuntime: ({ prompt, history, runtimeState, depth }) => createSubagentRuntime({
+          createSubagentRuntime: ({ prompt, historyProjection, runtimeState, depth }) => createSubagentRuntime({
             cwd: sandbox,
             session,
             model: process.env.MERLION_E2E_MODEL ?? process.env.MERLION_MODEL ?? 'moonshotai/kimi-k2.5',
             parentRegistry: registry,
             permissions: { ask: async () => 'allow_session' },
             runtimeState: runtimeState ?? createRuntimeState(),
-            history,
+            historyProjection,
             prompt,
             depth,
             createProvider: () => makeProvider(),
@@ -151,14 +151,14 @@ if (SKIP) {
             permissionMode: 'auto_allow',
           }),
           model: process.env.MERLION_E2E_MODEL ?? process.env.MERLION_MODEL ?? 'moonshotai/kimi-k2.5',
-          createSubagentRuntime: ({ prompt, history, runtimeState, depth }) => createSubagentRuntime({
+          createSubagentRuntime: ({ prompt, historyProjection, runtimeState, depth }) => createSubagentRuntime({
             cwd: sandbox,
             session,
             model: process.env.MERLION_E2E_MODEL ?? process.env.MERLION_MODEL ?? 'moonshotai/kimi-k2.5',
             parentRegistry: registry,
             permissions: { ask: async () => 'allow_session' },
             runtimeState: runtimeState ?? createRuntimeState(),
-            history,
+            historyProjection,
             prompt,
             depth,
             createProvider: () => makeProvider(),

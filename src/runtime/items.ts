@@ -112,6 +112,12 @@ export interface CanonicalRequestAssemblyInput {
   intentContract?: string
 }
 
+export interface PersistedConversationProjection {
+  stablePrefixItems: ConversationItem[]
+  transcriptTailItems: ConversationItem[]
+  items: ConversationItem[]
+}
+
 type CanonicalOverlayKind =
   | 'target_paths'
   | 'prompt_path_guidance'
@@ -464,6 +470,16 @@ export function splitStablePrefixItems(items: ConversationItem[]): {
   return {
     stablePrefixItems: items.slice(0, splitIndex),
     transcriptTailItems: items.slice(splitIndex),
+  }
+}
+
+export function projectPersistentConversationItems(items: ConversationItem[]): PersistedConversationProjection {
+  const persistentItems = pruneNonPersistentRuntimeItems(items)
+  const split = splitStablePrefixItems(persistentItems)
+  return {
+    stablePrefixItems: split.stablePrefixItems,
+    transcriptTailItems: split.transcriptTailItems,
+    items: [...split.stablePrefixItems, ...split.transcriptTailItems],
   }
 }
 

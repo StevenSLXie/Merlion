@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../../src/types.ts'
 import { QueryEngine } from '../../src/runtime/query_engine.ts'
-import { createSystemItem, itemsToMessages } from '../../src/runtime/items.ts'
+import { createAssistantItem, createExternalUserItem, createSystemItem, itemsToMessages } from '../../src/runtime/items.ts'
 import { buildDefaultRegistry } from '../../src/tools/builtin/index.ts'
 import { createSessionFiles } from '../../src/runtime/session.ts'
 import { createRuntimeState } from '../../src/runtime/state/types.ts'
@@ -193,14 +193,14 @@ test('e2e local loop can spawn and wait for a background worker subagent', async
           },
         }
       },
-      createSubagentRuntime: ({ prompt, history, runtimeState, depth }) => createSubagentRuntime({
+      createSubagentRuntime: ({ prompt, historyProjection, runtimeState, depth }) => createSubagentRuntime({
         cwd,
         session,
         model: 'parent-model',
         parentRegistry: buildDefaultRegistry({ mode: 'default' }),
         permissions: { ask: async () => 'allow_session' },
         runtimeState: runtimeState ?? createRuntimeState(),
-        history,
+        historyProjection,
         prompt,
         depth,
         createProvider: () => new ChildWorkerProvider(),
@@ -232,6 +232,11 @@ test('e2e local subagent request regenerates child overlay instead of inheriting
       permissions: { ask: async () => 'allow_session' },
       contextService: makeContextService('parent overlay'),
       model: 'parent-model',
+      initialItems: [
+        createSystemItem('system prompt', 'static'),
+        createExternalUserItem('Earlier parent task.'),
+        createAssistantItem('Earlier parent result.'),
+      ],
       deriveTaskControl: (prompt, previousTask) => {
         const base = deriveTaskControl(prompt, previousTask)
         return {
@@ -252,14 +257,14 @@ test('e2e local subagent request regenerates child overlay instead of inheriting
           },
         }
       },
-      createSubagentRuntime: ({ prompt, history, runtimeState, depth }) => createSubagentRuntime({
+      createSubagentRuntime: ({ prompt, historyProjection, runtimeState, depth }) => createSubagentRuntime({
         cwd,
         session,
         model: 'parent-model',
         parentRegistry: buildDefaultRegistry({ mode: 'default' }),
         permissions: { ask: async () => 'allow_session' },
         runtimeState: runtimeState ?? createRuntimeState(),
-        history,
+        historyProjection,
         prompt,
         depth,
         createProvider: () => childProvider,
@@ -275,8 +280,14 @@ test('e2e local subagent request regenerates child overlay instead of inheriting
       .filter((message) => message.role === 'system')
       .map((message) => message.content ?? '')
       .join('\n')
+    const childTranscriptMessages = childProvider.seenMessages[0]!
+      .filter((message) => message.role !== 'system')
+      .map((message) => message.content ?? '')
+      .join('\n')
     assert.match(childSystemMessages, /child overlay: Inspect src\/runtime\/query_engine\.ts/i)
     assert.doesNotMatch(childSystemMessages, /parent overlay: Parent overlay prompt should stay local/i)
+    assert.match(childTranscriptMessages, /Earlier parent task\./)
+    assert.match(childTranscriptMessages, /Earlier parent result\./)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

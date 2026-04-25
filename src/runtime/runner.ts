@@ -225,7 +225,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     usageTracker,
     usageRates,
     buildIntentContract: (prompt, contractOptions) => buildIntentContract(prompt, contractOptions) ?? undefined,
-    createSubagentRuntime: ({ prompt, history, runtimeState, depth }) => createChildSubagentRuntime({
+    createSubagentRuntime: ({ prompt, historyProjection, runtimeState, depth }) => createChildSubagentRuntime({
       cwd: options.cwd,
       session,
       model: options.model,
@@ -237,7 +237,7 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
       buildIntentContract: (subPrompt, contractOptions) => buildIntentContract(subPrompt, contractOptions) ?? undefined,
       sink,
       runtimeState,
-      history,
+      historyProjection,
       prompt,
       depth,
       createProvider,

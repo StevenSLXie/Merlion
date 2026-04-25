@@ -8,6 +8,12 @@ import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '..
 import { createRuntimeState } from '../src/runtime/state/types.ts'
 import { createSessionFiles } from '../src/runtime/session.ts'
 import { createSubagentRuntime, deriveChildSandboxPolicy } from '../src/runtime/subagents.ts'
+import {
+  createAssistantItem,
+  createExternalUserItem,
+  createSystemItem,
+  type PersistedConversationProjection,
+} from '../src/runtime/items.ts'
 import { resolveSandboxPolicy } from '../src/sandbox/policy.ts'
 import { buildDefaultRegistry } from '../src/tools/builtin/index.ts'
 
@@ -65,6 +71,14 @@ function makeContextService() {
   }
 }
 
+function emptyProjection(): PersistedConversationProjection {
+  return {
+    stablePrefixItems: [],
+    transcriptTailItems: [],
+    items: [],
+  }
+}
+
 async function makeSandbox(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'merlion-subagents-'))
   await mkdir(join(dir, '.git'), { recursive: true })
@@ -82,7 +96,7 @@ test('foreground explorer returns terminal result and cached wait result', async
       parentRegistry: buildDefaultRegistry({ mode: 'default' }),
       permissions: { ask: async () => 'allow_session' },
       runtimeState: createRuntimeState(),
-      history: [],
+      historyProjection: emptyProjection(),
       prompt: 'inspect the login flow',
       createProvider: () =>
         new StubProvider([
@@ -106,7 +120,10 @@ test('foreground explorer returns terminal result and cached wait result', async
     assert.equal('agentId' in result, true)
     assert.equal(typeof result.summary, 'string')
     assert.match(result.summary, /login/i)
-    assert.equal(await readFile(result.transcriptPath, 'utf8').then((text) => text.includes('Subagent briefing:')), true)
+    assert.equal(
+      await readFile(result.transcriptPath, 'utf8').then((text) => text.includes('I found the relevant login files and tests.')),
+      true,
+    )
 
     const waited = await runtime.waitAgent(result.agentId)
     assert.equal(waited.status, 'completed')
@@ -127,7 +144,7 @@ test('explorer child is runtime-enforced read-only', async () => {
       parentRegistry: buildDefaultRegistry({ mode: 'default' }),
       permissions: { ask: async () => 'allow_session' },
       runtimeState: createRuntimeState(),
-      history: [],
+      historyProjection: emptyProjection(),
       prompt: 'inspect without editing',
       createProvider: () =>
         new StubProvider([
@@ -174,7 +191,7 @@ test('background worker can be waited to completion', async () => {
       parentRegistry: buildDefaultRegistry({ mode: 'default' }),
       permissions: { ask: async () => 'allow_session' },
       runtimeState: createRuntimeState(),
-      history: [],
+      historyProjection: emptyProjection(),
       prompt: 'make a longer change',
       createProvider: () =>
         new StubProvider([
@@ -214,6 +231,91 @@ test('background worker can be waited to completion', async () => {
     const registryText = await readFile(session.childRegistryPath, 'utf8')
     assert.match(registryText, /"status":"running"/)
     assert.match(registryText, /"status":"completed"/)
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test('child runtime reuses projected parent history without inheriting stale parent overlays', async () => {
+  const cwd = await makeSandbox()
+  try {
+    const session = await createSessionFiles(cwd)
+    const projection: PersistedConversationProjection = {
+      stablePrefixItems: [createSystemItem('parent system prompt', 'static')],
+      transcriptTailItems: [
+        createSystemItem(
+          'Conversation compact summary (older context compressed; verify with tools before editing):\n\n- earlier findings',
+          'runtime',
+        ),
+        createExternalUserItem('Earlier parent task.'),
+        createAssistantItem('Earlier parent result.'),
+      ],
+      items: [
+        createSystemItem('parent system prompt', 'static'),
+        createSystemItem(
+          'Conversation compact summary (older context compressed; verify with tools before editing):\n\n- earlier findings',
+          'runtime',
+        ),
+        createExternalUserItem('Earlier parent task.'),
+        createAssistantItem('Earlier parent result.'),
+      ],
+    }
+    const childProvider = new (class implements ModelProvider {
+      readonly seenMessages: ChatMessage[][] = []
+
+      async complete(messages: ChatMessage[]): Promise<AssistantResponse> {
+        this.seenMessages.push(messages.map((message) => ({ ...message })))
+        return {
+          role: 'assistant',
+          content: 'Child finished with projected history.',
+          finish_reason: 'stop',
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }
+      }
+    })()
+
+    const runtime = createSubagentRuntime({
+      cwd,
+      session,
+      model: 'parent-model',
+      parentRegistry: buildDefaultRegistry({ mode: 'default' }),
+      permissions: { ask: async () => 'allow_session' },
+      runtimeState: createRuntimeState(),
+      historyProjection: projection,
+      prompt: 'parent overlay prompt should stay local',
+      createProvider: () => childProvider,
+      createContextService: () => ({
+        ...makeContextService(),
+        async buildPromptPrelude(prompt: string) {
+          return [
+            createSystemItem(`Prompt-derived path guidance.\n\nchild overlay: ${prompt}`, 'runtime'),
+          ]
+        },
+      }),
+    })
+
+    const result = await runtime.spawnAgent({
+      role: 'explorer',
+      task: 'Inspect src/runtime/query_engine.ts and summarize the relevant context.',
+      execution: 'foreground',
+    })
+
+    assert.equal(result.status, 'completed')
+    const childMessages = childProvider.seenMessages[0] ?? []
+    const childSystemMessages = childMessages
+      .filter((message) => message.role === 'system')
+      .map((message) => message.content ?? '')
+      .join('\n')
+    const childTranscriptMessages = childMessages
+      .filter((message) => message.role !== 'system')
+      .map((message) => message.content ?? '')
+      .join('\n')
+    assert.match(childSystemMessages, /Subagent briefing:/)
+    assert.match(childSystemMessages, /Conversation compact summary/)
+    assert.match(childSystemMessages, /child overlay: Inspect src\/runtime\/query_engine\.ts/)
+    assert.doesNotMatch(childSystemMessages, /Prompt-derived path guidance\.\s+parent overlay:/i)
+    assert.match(childTranscriptMessages, /Earlier parent task\./)
+    assert.match(childTranscriptMessages, /Earlier parent result\./)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

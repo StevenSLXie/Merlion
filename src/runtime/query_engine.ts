@@ -1,6 +1,6 @@
 import type { ModelProvider } from '../types.js'
-import type { ConversationItem, ProviderResponseBoundary } from './items.ts'
-import { createSystemItem, pruneNonPersistentRuntimeItems, splitStablePrefixItems } from './items.ts'
+import type { ConversationItem, PersistedConversationProjection, ProviderResponseBoundary } from './items.ts'
+import { createSystemItem, projectPersistentConversationItems } from './items.ts'
 import type { AskUserQuestionItem, PermissionStore } from '../tools/types.js'
 import type { SubagentToolRuntime } from './subagent_types.ts'
 import { ToolRegistry } from '../tools/registry.ts'
@@ -62,6 +62,7 @@ export interface QueryEngineOptions {
   sessionId?: string
   maxTurns?: number
   initialItems?: ConversationItem[]
+  initialProjection?: Omit<PersistedConversationProjection, 'items'>
   askQuestions?: (questions: AskUserQuestionItem[]) => Promise<Record<string, string>>
   buildIntentContract?: (prompt: string, options?: { primaryObjective?: string }) => string | undefined
   deriveTaskControl?: (prompt: string, previousTask?: TaskState | null) => TaskControlDecision
@@ -98,7 +99,7 @@ export interface QueryEngineOptions {
   toolSchemaTokensEstimate?: number
   createSubagentRuntime?: (context: {
     prompt: string
-    history: ConversationItem[]
+    historyProjection: PersistedConversationProjection
     runtimeState: RuntimeState
     sessionId?: string
     model?: string
@@ -108,6 +109,8 @@ export interface QueryEngineOptions {
 
 export interface QueryEngineSnapshot {
   items: ConversationItem[]
+  stablePrefixItems: ConversationItem[]
+  transcriptTailItems: ConversationItem[]
   runtimeState: RuntimeStateSnapshot
   generatedMapMode: boolean
 }
@@ -136,8 +139,12 @@ export class QueryEngine {
     this.options = options
     this.runtimeState = createRuntimeState()
     this.trackedPermissions = createTrackingPermissionStore(options.permissions, this.runtimeState.permissions)
-    const initialItems = options.initialItems ? pruneNonPersistentRuntimeItems(options.initialItems) : []
-    const initialState = splitStablePrefixItems(initialItems)
+    const initialState = options.initialProjection
+      ? projectPersistentConversationItems([
+          ...options.initialProjection.stablePrefixItems,
+          ...options.initialProjection.transcriptTailItems,
+        ])
+      : projectPersistentConversationItems(options.initialItems ?? [])
     this.stablePrefixItems = initialState.stablePrefixItems
     this.transcriptTailItems = initialState.transcriptTailItems
   }
@@ -157,30 +164,42 @@ export class QueryEngine {
     ]
   }
 
+  getPersistedProjection(): PersistedConversationProjection {
+    return {
+      stablePrefixItems: [...this.stablePrefixItems],
+      transcriptTailItems: [...this.transcriptTailItems],
+      items: this.getItems(),
+    }
+  }
+
   getRuntimeState(): RuntimeState {
     return this.runtimeState
   }
 
   async resumeFromTranscript(items: ConversationItem[]): Promise<void> {
-    const persistentItems = pruneNonPersistentRuntimeItems(items)
-    const persistentState = splitStablePrefixItems(persistentItems)
+    const persistentState = projectPersistentConversationItems(items)
     this.stablePrefixItems = persistentState.stablePrefixItems
     this.transcriptTailItems = persistentState.transcriptTailItems
     this.runtimeState.task.currentTask = null
     this.runtimeState.task.mutationPolicy = null
     this.runtimeState.task.charter = null
-    this.runtimeState.task.capabilityProfile = inferCapabilityProfileFromToolNames(collectObservedToolNames(persistentItems))
+    this.runtimeState.task.capabilityProfile = inferCapabilityProfileFromToolNames(
+      collectObservedToolNames(persistentState.items)
+    )
     this.runtimeState.task.profileEpoch = {
       epoch: 0,
       lastSchemaChangeReason: null,
-      pendingResumeRehydration: persistentItems.length > 0,
+      pendingResumeRehydration: persistentState.items.length > 0,
     }
     this.initialized = true
   }
 
   async resumeFromSnapshot(snapshot: QueryEngineSnapshot): Promise<void> {
-    const persistentItems = pruneNonPersistentRuntimeItems(snapshot.items)
-    const persistentState = splitStablePrefixItems(persistentItems)
+    const persistentState = projectPersistentConversationItems(
+      snapshot.stablePrefixItems && snapshot.transcriptTailItems
+        ? [...snapshot.stablePrefixItems, ...snapshot.transcriptTailItems]
+        : snapshot.items
+    )
     this.stablePrefixItems = persistentState.stablePrefixItems
     this.transcriptTailItems = persistentState.transcriptTailItems
     restoreRuntimeState(this.runtimeState, snapshot.runtimeState)
@@ -189,8 +208,11 @@ export class QueryEngine {
   }
 
   getSnapshot(): QueryEngineSnapshot {
+    const projection = this.getPersistedProjection()
     return {
-      items: this.getItems(),
+      items: projection.items,
+      stablePrefixItems: projection.stablePrefixItems,
+      transcriptTailItems: projection.transcriptTailItems,
       runtimeState: snapshotRuntimeState(this.runtimeState),
       generatedMapMode: this.options.contextService.getGeneratedMapMode(),
     }
@@ -359,7 +381,7 @@ export class QueryEngine {
       schemaChangeReason: profileResolution.schemaChangeReason,
       subagents: this.options.createSubagentRuntime?.({
         prompt,
-        history: this.getItems(),
+        historyProjection: this.getPersistedProjection(),
         runtimeState: this.runtimeState,
         sessionId: this.options.sessionId,
         model: this.options.model,
@@ -486,7 +508,7 @@ export class QueryEngine {
       sawWorkspaceMutationSignal: execution.sawWorkspaceMutationSignal,
     })
 
-    const persistentState = splitStablePrefixItems(pruneNonPersistentRuntimeItems(execution.result.state.items))
+    const persistentState = projectPersistentConversationItems(execution.result.state.items)
     this.stablePrefixItems = persistentState.stablePrefixItems
     this.transcriptTailItems = persistentState.transcriptTailItems
     syncCompactStateFromLoopState(this.runtimeState.compact, execution.result.state)

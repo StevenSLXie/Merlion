@@ -1161,3 +1161,108 @@ test('QueryEngine resumeFromSnapshot preserves the active profile epoch across e
     await rm(cwd, { recursive: true, force: true })
   }
 })
+
+test('QueryEngine resumeFromSnapshot prefers the persisted projection over stale flat snapshot items', async () => {
+  const provider = new RecordingProvider([
+    {
+      role: 'assistant',
+      content: 'Resumed from the projected history only.',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+  ])
+
+  const firstEngine = new QueryEngine({
+    cwd: process.cwd(),
+    provider: new RecordingProvider([
+      {
+        role: 'assistant',
+        content: 'Initial answer.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ]),
+    registry: buildDefaultRegistry({ mode: 'default' }),
+    permissions: { ask: async () => 'allow' },
+    contextService: {
+      getTrustLevel: () => 'trusted',
+      getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+      getGeneratedMapMode: () => false,
+      setGeneratedMapMode() {},
+      async prefetchIfSafe() {
+        return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+      },
+      async getSystemPrompt() {
+        return 'system prompt'
+      },
+      async buildPromptPrelude() {
+        return []
+      },
+      async buildPathGuidanceItems() {
+        return { items: [], loadedFiles: [] }
+      },
+      async extractCandidatePathsFromText() {
+        return []
+      },
+      async extractCandidatePathsFromToolEvent() {
+        return []
+      },
+    },
+    model: 'test-model',
+  })
+
+  await firstEngine.submitPrompt('Keep this parent history.')
+  const snapshot = firstEngine.getSnapshot()
+  snapshot.items = [
+    ...snapshot.items,
+    createSystemItem('Prompt-derived path guidance.\n\nstale snapshot overlay', 'runtime'),
+  ]
+
+  const secondEngine = new QueryEngine({
+    cwd: process.cwd(),
+    provider,
+    registry: buildDefaultRegistry({ mode: 'default' }),
+    permissions: { ask: async () => 'allow' },
+    contextService: {
+      getTrustLevel: () => 'trusted',
+      getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+      getGeneratedMapMode: () => false,
+      setGeneratedMapMode() {},
+      async prefetchIfSafe() {
+        return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+      },
+      async getSystemPrompt() {
+        return 'system prompt'
+      },
+      async buildPromptPrelude() {
+        return []
+      },
+      async buildPathGuidanceItems() {
+        return { items: [], loadedFiles: [] }
+      },
+      async extractCandidatePathsFromText() {
+        return []
+      },
+      async extractCandidatePathsFromToolEvent() {
+        return []
+      },
+    },
+    model: 'test-model',
+  })
+
+  await secondEngine.resumeFromSnapshot(snapshot)
+  await secondEngine.submitPrompt('Continue from the resumed state.')
+
+  const resumedMessages = provider.seenMessages[0] ?? []
+  const resumedSystems = resumedMessages
+    .filter((message) => message.role === 'system')
+    .map((message) => message.content ?? '')
+    .join('\n')
+  const resumedTranscript = resumedMessages
+    .filter((message) => message.role !== 'system')
+    .map((message) => message.content ?? '')
+    .join('\n')
+
+  assert.doesNotMatch(resumedSystems, /stale snapshot overlay/i)
+  assert.match(resumedTranscript, /Keep this parent history\./)
+})

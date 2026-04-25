@@ -6,7 +6,7 @@ import type { ContextService } from '../context/service.ts'
 import type { AskUserQuestionItem, PermissionDecision, PermissionStore, ToolDefinition } from '../tools/types.js'
 import { ToolRegistry } from '../tools/registry.ts'
 import { QueryEngine } from './query_engine.ts'
-import type { ConversationItem } from './items.ts'
+import type { ConversationItem, PersistedConversationProjection } from './items.ts'
 import { createSystemItem } from './items.ts'
 import {
   appendSessionMeta,
@@ -73,7 +73,7 @@ interface CreateSubagentRuntimeOptions {
   buildIntentContract?: (prompt: string, options?: { primaryObjective?: string }) => string | undefined
   sink?: RuntimeSink
   runtimeState: RuntimeState
-  history: ConversationItem[]
+  historyProjection: PersistedConversationProjection
   prompt: string
   createProvider: (model?: string) => ModelProvider
   createContextService: () => ContextService
@@ -659,11 +659,12 @@ async function buildBriefing(
   }
 }> {
   const baseContext = options.createContextService()
-  const parentChangedFiles = collectChangedFilesFromItems(options.history)
+  const parentHistory = options.historyProjection.items
+  const parentChangedFiles = collectChangedFilesFromItems(parentHistory)
   const derivedRelevantPaths = trimArray([
     ...(input.writeScope ?? []),
     ...(await baseContext.extractCandidatePathsFromText(options.prompt)),
-    ...collectRelevantPathsFromItems(options.history),
+    ...collectRelevantPathsFromItems(parentHistory),
     ...parentChangedFiles,
   ])
 
@@ -678,7 +679,7 @@ async function buildBriefing(
     parentSessionId: options.session.sessionId,
     role: input.role,
     originalUserRequest: options.prompt,
-    rootUserRequest: findRootExternalUserRequest(options.history, options.prompt),
+    rootUserRequest: findRootExternalUserRequest(parentHistory, options.prompt),
     task: input.task,
     purpose: input.purpose,
     parentSummary: options.runtimeState.compact.lastSummaryText ?? undefined,
@@ -723,6 +724,9 @@ async function runChildAgent(
 
   await appendSessionMeta(childSession.transcriptPath, childSession.sessionId, input.model ?? options.model ?? 'unknown', options.cwd)
 
+  const childBootstrap = await childContext.prefetchIfSafe()
+  const childSystemPrompt = await childContext.getSystemPrompt()
+
   const engine = new QueryEngine({
     cwd: options.cwd,
     provider: childProvider,
@@ -734,6 +738,13 @@ async function runChildAgent(
     model: input.model ?? options.model,
     sessionId: childSession.sessionId,
     maxTurns: 100,
+    initialProjection: {
+      stablePrefixItems: [
+        createSystemItem(childSystemPrompt, 'static'),
+        ...childBootstrap.initialItems,
+      ],
+      transcriptTailItems: options.historyProjection.transcriptTailItems,
+    },
     askQuestions: execution === 'background' ? undefined : options.askQuestions,
     buildIntentContract: options.buildIntentContract,
     deriveTaskControl: (childPrompt, previousTask) => deriveRoleBoundTaskControl(
