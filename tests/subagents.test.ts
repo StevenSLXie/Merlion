@@ -120,10 +120,9 @@ test('foreground explorer returns terminal result and cached wait result', async
     assert.equal('agentId' in result, true)
     assert.equal(typeof result.summary, 'string')
     assert.match(result.summary, /login/i)
-    assert.equal(
-      await readFile(result.transcriptPath, 'utf8').then((text) => text.includes('I found the relevant login files and tests.')),
-      true,
-    )
+    const transcript = await readFile(result.transcriptPath, 'utf8')
+    assert.match(transcript, /Subagent briefing:/)
+    assert.match(transcript, /I found the relevant login files and tests\./)
 
     const waited = await runtime.waitAgent(result.agentId)
     assert.equal(waited.status, 'completed')
@@ -316,6 +315,12 @@ test('child runtime reuses projected parent history without inheriting stale par
     assert.doesNotMatch(childSystemMessages, /Prompt-derived path guidance\.\s+parent overlay:/i)
     assert.match(childTranscriptMessages, /Earlier parent task\./)
     assert.match(childTranscriptMessages, /Earlier parent result\./)
+
+    const transcript = await readFile(result.transcriptPath, 'utf8')
+    assert.match(transcript, /Subagent briefing:/)
+    assert.match(transcript, /Conversation compact summary/)
+    assert.match(transcript, /Earlier parent task\./)
+    assert.match(transcript, /Earlier parent result\./)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

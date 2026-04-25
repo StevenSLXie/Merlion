@@ -726,6 +726,22 @@ async function runChildAgent(
 
   const childBootstrap = await childContext.prefetchIfSafe()
   const childSystemPrompt = await childContext.getSystemPrompt()
+  const childInitialProjection: Omit<PersistedConversationProjection, 'items'> = {
+    stablePrefixItems: [
+      createSystemItem(childSystemPrompt, 'static'),
+      ...childBootstrap.initialItems,
+    ],
+    transcriptTailItems: options.historyProjection.transcriptTailItems,
+  }
+
+  // Persist the child's reconstructed bootstrap and inherited parent projection
+  // so the child transcript can be audited against the actual request context.
+  for (const item of childInitialProjection.stablePrefixItems) {
+    await appendTranscriptItem(childSession.transcriptPath, item, 'local_runtime')
+  }
+  for (const item of childInitialProjection.transcriptTailItems) {
+    await appendTranscriptItem(childSession.transcriptPath, item, 'local_runtime')
+  }
 
   const engine = new QueryEngine({
     cwd: options.cwd,
@@ -738,13 +754,7 @@ async function runChildAgent(
     model: input.model ?? options.model,
     sessionId: childSession.sessionId,
     maxTurns: 100,
-    initialProjection: {
-      stablePrefixItems: [
-        createSystemItem(childSystemPrompt, 'static'),
-        ...childBootstrap.initialItems,
-      ],
-      transcriptTailItems: options.historyProjection.transcriptTailItems,
-    },
+    initialProjection: childInitialProjection,
     askQuestions: execution === 'background' ? undefined : options.askQuestions,
     buildIntentContract: options.buildIntentContract,
     deriveTaskControl: (childPrompt, previousTask) => deriveRoleBoundTaskControl(

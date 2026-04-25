@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -288,6 +288,16 @@ test('e2e local subagent request regenerates child overlay instead of inheriting
     assert.doesNotMatch(childSystemMessages, /parent overlay: Parent overlay prompt should stay local/i)
     assert.match(childTranscriptMessages, /Earlier parent task\./)
     assert.match(childTranscriptMessages, /Earlier parent result\./)
+
+    const childResultMessage = itemsToMessages(result.state.items)
+      .find((message) => message.role === 'tool' && /"transcriptPath":/.test(message.content ?? ''))
+    assert.ok(childResultMessage?.content, 'expected child result payload with transcript path')
+    const childResult = JSON.parse(childResultMessage.content ?? '{}') as { transcriptPath?: string }
+    assert.ok(childResult.transcriptPath, 'expected child transcript path')
+    const childTranscript = await readFile(childResult.transcriptPath!, 'utf8')
+    assert.match(childTranscript, /Subagent briefing:/)
+    assert.match(childTranscript, /Earlier parent task\./)
+    assert.match(childTranscript, /Earlier parent result\./)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }
