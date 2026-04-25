@@ -1,21 +1,198 @@
 {
   "default_threshold_pct": 100,
+  "default_guardrail_severity": "warn",
   "scenarios": {
-    "e2e-read":             { "total_tokens":  2000 },
-    "e2e-bash":             { "total_tokens":  2000 },
-    "e2e-bash-pipeline":    { "total_tokens":  2000 },
-    "e2e-search":           { "total_tokens":  2000 },
-    "e2e-create":           { "total_tokens":  2000 },
-    "e2e-tool-error":       { "total_tokens":  2000 },
-    "e2e-concurrent":       { "total_tokens":  2000 },
-    "e2e-max-turns":        { "total_tokens":  2000 },
-    "e2e-multi-tool":       { "total_tokens":  3000 },
-    "e2e-edit":             { "total_tokens":  4000 },
-    "e2e-context-caching":  { "total_tokens":  8000 },
-    "e2e-session-resume":      { "total_tokens": 10000 },
-    "e2e-budget-truncation":   { "total_tokens":  4000 },
-    "e2e-compact":             { "total_tokens":  4000 },
-    "e2e-orientation-inject":  { "total_tokens":  4000 },
-    "e2e-verify-fix-round":    { "total_tokens":  8000 }
+    "e2e-read": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 2000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 2000
+        }
+      }
+    },
+    "e2e-bash": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 2000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 2000
+        }
+      }
+    },
+    "e2e-bash-pipeline": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 2000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 2000
+        }
+      }
+    },
+    "e2e-search": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 2000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 2000
+        }
+      }
+    },
+    "e2e-create": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 2000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 2000
+        }
+      }
+    },
+    "e2e-tool-error": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 2000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 2000
+        }
+      }
+    },
+    "e2e-concurrent": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 2000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 2000
+        }
+      }
+    },
+    "e2e-max-turns": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 2000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 2000
+        }
+      }
+    },
+    "e2e-multi-tool": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 3000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 3000
+        }
+      }
+    },
+    "e2e-edit": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 4000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 4000
+        }
+      }
+    },
+    "e2e-context-caching": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 8000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 8000
+        }
+      }
+    },
+    "e2e-session-resume": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 10000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 10000
+        }
+      }
+    },
+    "e2e-budget-truncation": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 4000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 4000
+        }
+      }
+    },
+    "e2e-compact": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 4000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 4000
+        }
+      }
+    },
+    "e2e-orientation-inject": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 4000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 4000
+        }
+      }
+    },
+    "e2e-verify-fix-round": {
+      "primary_metric": {
+        "baselines": {
+          "effective_total_tokens": 8000
+        }
+      },
+      "guardrails": {
+        "total_tokens": {
+          "baseline": 8000
+        }
+      }
+    }
   }
 }
