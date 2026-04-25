@@ -10,6 +10,11 @@ export interface CompactItemsResult {
   compacted: boolean
 }
 
+interface PreservedInterval {
+  start: number
+  end: number
+}
+
 function summarizeItem(item: ConversationItem, maxChars = 120): string {
   if (item.kind === 'message') {
     const clipped = item.content.length > maxChars ? `${item.content.slice(0, maxChars)}...` : item.content
@@ -36,18 +41,56 @@ export function estimateItemsChars(items: ConversationItem[]): number {
   }, 0)
 }
 
-export function compactItems(items: ConversationItem[], options?: CompactOptions): CompactItemsResult {
-  if (items.length === 0) return { items, compacted: false }
-  const keepRecent = Math.max(2, Math.floor(options?.keepRecent ?? 10))
-  let anchorIndex = -1
-
+function findLastExternalUserAnchorIndex(items: ConversationItem[]): number {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]!
     if (item.kind === 'message' && item.role === 'user' && item.source === 'external') {
-      anchorIndex = index
-      break
+      return index
     }
   }
+  return -1
+}
+
+function findLatestActionObservationTrace(items: ConversationItem[]): PreservedInterval | null {
+  for (let outputIndex = items.length - 1; outputIndex >= 0; outputIndex -= 1) {
+    const outputItem = items[outputIndex]
+    if (!outputItem || outputItem.kind !== 'function_call_output') continue
+    for (let callIndex = outputIndex - 1; callIndex >= 0; callIndex -= 1) {
+      const callItem = items[callIndex]
+      if (!callItem || callItem.kind !== 'function_call') continue
+      if (callItem.callId !== outputItem.callId) continue
+      return { start: callIndex, end: outputIndex + 1 }
+    }
+  }
+  return null
+}
+
+function mergeIntervals(intervals: PreservedInterval[]): PreservedInterval[] {
+  if (intervals.length === 0) return []
+  const sorted = [...intervals].sort((left, right) => left.start - right.start || left.end - right.end)
+  const merged: PreservedInterval[] = [{ ...sorted[0]! }]
+  for (const interval of sorted.slice(1)) {
+    const current = merged[merged.length - 1]!
+    if (interval.start <= current.end) {
+      current.end = Math.max(current.end, interval.end)
+      continue
+    }
+    merged.push({ ...interval })
+  }
+  return merged
+}
+
+function createCompactSummaryItem(items: ConversationItem[]): ConversationItem {
+  return createSystemItem(
+    'Conversation compact summary (older context compressed; verify with tools before editing):\n' +
+      items.slice(-60).map((item) => summarizeItem(item)).join('\n'),
+    'runtime'
+  )
+}
+
+export function compactItems(items: ConversationItem[], options?: CompactOptions): CompactItemsResult {
+  if (items.length === 0) return { items, compacted: false }
+  const keepRecent = Math.max(2, Math.floor(options?.keepRecent ?? 10))
 
   const staticPrefix: ConversationItem[] = []
   let prefixEnd = 0
@@ -61,24 +104,45 @@ export function compactItems(items: ConversationItem[], options?: CompactOptions
     break
   }
 
-  const tailStart = anchorIndex >= 0 ? anchorIndex : Math.max(prefixEnd, items.length - keepRecent)
-  if (tailStart <= prefixEnd) {
+  const transcriptTailItems = items.slice(prefixEnd)
+  if (transcriptTailItems.length === 0) {
     return { items, compacted: false }
   }
 
-  const middle = items.slice(prefixEnd, tailStart)
-  if (middle.length === 0) {
+  const preservedIntervals: PreservedInterval[] = [{
+    start: Math.max(0, transcriptTailItems.length - keepRecent),
+    end: transcriptTailItems.length,
+  }]
+  const anchorIndex = findLastExternalUserAnchorIndex(transcriptTailItems)
+  if (anchorIndex >= 0) {
+    preservedIntervals.push({ start: anchorIndex, end: anchorIndex + 1 })
+  }
+  const latestTrace = findLatestActionObservationTrace(transcriptTailItems)
+  if (latestTrace) preservedIntervals.push(latestTrace)
+
+  const mergedIntervals = mergeIntervals(preservedIntervals)
+  if (mergedIntervals.length === 1 && mergedIntervals[0]!.start === 0 && mergedIntervals[0]!.end === transcriptTailItems.length) {
     return { items, compacted: false }
   }
 
-  const summaryItem = createSystemItem(
-    'Conversation compact summary (older context compressed; verify with tools before editing):\n' +
-      middle.slice(-60).map((item) => summarizeItem(item)).join('\n'),
-    'runtime'
-  )
+  const projectedTailItems: ConversationItem[] = []
+  let previousEnd = 0
+  for (const interval of mergedIntervals) {
+    const droppedSegment = transcriptTailItems.slice(previousEnd, interval.start)
+    if (droppedSegment.length > 0) {
+      projectedTailItems.push(createCompactSummaryItem(droppedSegment))
+    }
+    projectedTailItems.push(...transcriptTailItems.slice(interval.start, interval.end))
+    previousEnd = interval.end
+  }
+
+  const trailingDroppedSegment = transcriptTailItems.slice(previousEnd)
+  if (trailingDroppedSegment.length > 0) {
+    projectedTailItems.push(createCompactSummaryItem(trailingDroppedSegment))
+  }
 
   return {
-    items: [...staticPrefix, summaryItem, ...items.slice(tailStart)],
+    items: [...staticPrefix, ...projectedTailItems],
     compacted: true,
   }
 }

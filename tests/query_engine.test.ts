@@ -7,7 +7,13 @@ import { tmpdir } from 'node:os'
 
 import type { AssistantResponse, ChatMessage, ModelProvider, ToolCall } from '../src/types.ts'
 import type { ConversationItem } from '../src/runtime/items.ts'
-import { createExternalUserItem, createRuntimeUserItem, createSystemItem } from '../src/runtime/items.ts'
+import {
+  createAssistantItem,
+  createExternalUserItem,
+  createFunctionCallOutputItem,
+  createRuntimeUserItem,
+  createSystemItem,
+} from '../src/runtime/items.ts'
 import { ToolRegistry } from '../src/tools/registry.ts'
 import type { ToolDefinition } from '../src/tools/types.ts'
 import { QueryEngine } from '../src/runtime/query_engine.ts'
@@ -882,6 +888,135 @@ test('QueryEngine resumeFromTranscript strips legacy overlay items before the ne
   const requestSystems = provider.seenMessages[0]!.filter((message) => message.role === 'system').map((message) => message.content ?? '')
   assert.equal(requestSystems.some((content) => content.includes('legacy overlay')), false)
   assert.equal(requestSystems.some((content) => content.includes('legacy guidance')), false)
+})
+
+test('QueryEngine persists projected compact tail into the next canonical request', async () => {
+  const previousTrigger = process.env.MERLION_COMPACT_TRIGGER_CHARS
+  const previousKeepRecent = process.env.MERLION_COMPACT_KEEP_RECENT
+  process.env.MERLION_COMPACT_TRIGGER_CHARS = '120'
+  process.env.MERLION_COMPACT_KEEP_RECENT = '2'
+
+  try {
+    const provider = new RecordingProvider([
+      {
+        role: 'assistant',
+        content: 'First pass complete.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+      {
+        role: 'assistant',
+        content: 'Second pass complete.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+
+    const initialItems: ConversationItem[] = [
+      createSystemItem('system prompt', 'static'),
+      createExternalUserItem('older request'),
+      createAssistantItem('older response'),
+      createExternalUserItem('current task'),
+      createAssistantItem('pre-tool detail A'),
+      createAssistantItem('pre-tool detail B'),
+      {
+        kind: 'function_call',
+        callId: 'call_1',
+        name: 'read_file',
+        argumentsText: '{"path":"src/runtime/loop.ts"}',
+      },
+      createFunctionCallOutputItem('call_1', 'loop contents'),
+      createAssistantItem('latest tool explanation'),
+    ]
+
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      provider,
+      registry: new ToolRegistry(),
+      permissions: { ask: async () => 'allow' },
+      initialItems,
+      contextService: {
+        getTrustLevel: () => 'trusted',
+        getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+        getGeneratedMapMode: () => false,
+        setGeneratedMapMode() {},
+        async prefetchIfSafe() {
+          return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+        },
+        async getSystemPrompt() {
+          return 'system prompt'
+        },
+        async buildPromptPrelude() {
+          return []
+        },
+        async buildPathGuidanceItems() {
+          return { items: [], loadedFiles: [] }
+        },
+        async extractCandidatePathsFromText() {
+          return []
+        },
+        async extractCandidatePathsFromToolEvent() {
+          return []
+        },
+      },
+      model: 'test-model',
+    })
+
+    await engine.submitPrompt('continue the investigation')
+
+    const snapshotAfterFirstTurn = engine.getSnapshot().items
+    const compactSummaries = snapshotAfterFirstTurn.filter((item) =>
+      item.kind === 'message' &&
+      item.role === 'system' &&
+      item.source === 'runtime' &&
+      item.content.includes('Conversation compact summary')
+    )
+    assert.equal(compactSummaries.length >= 1, true)
+    assert.equal(
+      snapshotAfterFirstTurn.some((item) =>
+        item.kind === 'message' &&
+        item.role === 'user' &&
+        item.source === 'external' &&
+        item.content === 'continue the investigation'
+      ),
+      true,
+    )
+    assert.equal(snapshotAfterFirstTurn.some((item) => item.kind === 'function_call' && item.callId === 'call_1'), true)
+    assert.equal(snapshotAfterFirstTurn.some((item) => item.kind === 'function_call_output' && item.callId === 'call_1'), true)
+    assert.equal(
+      snapshotAfterFirstTurn.some((item) => item.kind === 'message' && item.role === 'assistant' && item.content === 'pre-tool detail A'),
+      false,
+    )
+
+    await engine.submitPrompt('wrap up')
+
+    const secondRequestMessages = provider.seenMessages[1] ?? []
+    assert.equal(
+      secondRequestMessages.some((message) =>
+        message.role === 'system' &&
+        typeof message.content === 'string' &&
+        message.content.includes('Conversation compact summary') &&
+        message.content.includes('older request')
+      ),
+      true,
+    )
+    assert.equal(
+      secondRequestMessages.some((message) =>
+        Array.isArray(message.tool_calls) &&
+        message.tool_calls.some((toolCall) => toolCall.id === 'call_1' && toolCall.function.name === 'read_file')
+      ),
+      true,
+    )
+    assert.equal(
+      secondRequestMessages.some((message) => message.role === 'tool' && message.tool_call_id === 'call_1' && message.content === 'loop contents'),
+      true,
+    )
+  } finally {
+    if (previousTrigger === undefined) delete process.env.MERLION_COMPACT_TRIGGER_CHARS
+    else process.env.MERLION_COMPACT_TRIGGER_CHARS = previousTrigger
+    if (previousKeepRecent === undefined) delete process.env.MERLION_COMPACT_KEEP_RECENT
+    else process.env.MERLION_COMPACT_KEEP_RECENT = previousKeepRecent
+  }
 })
 
 test('QueryEngine rehydrates the sticky profile epoch on transcript resume before the next request', async () => {

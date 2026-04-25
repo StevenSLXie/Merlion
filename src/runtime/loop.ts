@@ -498,6 +498,7 @@ function applyReactiveCompact(state: InternalLoopState): void {
   const keepRecent = parsePositiveInt(process.env.MERLION_COMPACT_KEEP_RECENT, 10)
   const chars = estimateItemsChars(state.items)
   if (chars <= compactTriggerChars || state.hasAttemptedReactiveCompact) return
+  // Compaction projects only the transcript tail; stablePrefixItems stay intact.
   const compacted = compactItems(state.items, { keepRecent })
   if (!compacted.compacted) return
   state.items = compacted.items
