@@ -103,7 +103,7 @@ The cleanest public description of modern agent context handling is still OpenAI
 
 The key idea is not only that the agent keeps appending actions and observations. It is that the old prompt should stay an exact prefix of the new one whenever possible. OpenAI says this explicitly in the Codex article, and for good reason: prompt caching only works on exact prefix matches. If the front of the prompt stays stable, later turns get cheaper and faster. If the runtime keeps mutating the prefix, cache reuse disappears.
 
-This also changes how you think about prompt assembly. Static instructions belong near the front. Tool definitions should be stable and consistently ordered. The variable parts, fresh user input, new tool outputs, recovery hints that are truly needed for this turn, belong later. In a long-running agent, "how do I keep this prompt understandable?" and "how do I keep this prompt cacheable?" are often the same question.
+This also changes how you think about prompt assembly. Static instructions belong near the front. Tool definitions should be stable, deterministic, and consistently ordered. The variable parts, fresh user input, new tool outputs, recovery hints that are truly needed for this turn, belong later. In a long-running agent, "how do I keep this prompt understandable?" and "how do I keep this prompt cacheable?" are often the same question.
 
 The Responses API formalizes this further by making the transcript item-based instead of message-only. A `message` is just one item type. `function_call`, `function_call_output`, and `reasoning` are items too. That matters because tool use is not really "assistant text with some extra fields." It is a structured trace. Once the runtime treats those steps as first-class items, it becomes easier to preserve the shape of the conversation across turns.
 
@@ -183,22 +183,49 @@ There are already agent systems that solve context with a lot of product machine
 
 The split is deliberate.
 
-- [`src/context/service.ts`](../../src/context/service.ts): builds the stable prompt pieces and path-guided additions
-- [`src/runtime/query_engine.ts`](../../src/runtime/query_engine.ts): owns transcript state across turns
-- [`src/runtime/items.ts`](../../src/runtime/items.ts): defines the item-native transcript model and item/message projection rules
+- [`src/context/service.ts`](../../src/context/service.ts): produces slow-changing system context and path-guided prompt prelude items
+- [`src/runtime/query_engine.ts`](../../src/runtime/query_engine.ts): owns persisted conversation state across turns and applies task control before each run
+- [`src/runtime/items.ts`](../../src/runtime/items.ts): defines the item-native transcript model, canonical overlay builder, non-persistent overlay pruning, and stable-prefix split rules
 - [`src/context/compact.ts`](../../src/context/compact.ts): compacts old history when the item transcript gets too large
-- [`src/runtime/prompt_observability.ts`](../../src/runtime/prompt_observability.ts): measures stable-prefix behavior and cache-related prompt shape
+- [`src/runtime/loop.ts`](../../src/runtime/loop.ts): assembles the exact provider-visible request and runs the turn loop
+- [`src/runtime/prompt_observability.ts`](../../src/runtime/prompt_observability.ts): measures stable-prefix behavior and cache-related prompt shape from the actual assembled request
 - [`src/runtime/session.ts`](../../src/runtime/session.ts): persists transcript items and response boundaries for replay and resume
 
-The design starts with a fixed base and only then gets more selective.
+The current design is easier to explain if you picture every request as three layers:
 
-On startup, Merlion builds a stable orientation layer: system prompt, repository guidance, and a small amount of generated workspace context. During the turn, it adds path guidance based on what the user asked for and on which paths later appear in tool calls or tool results. That means the runtime does not begin by searching the whole repository blindly. It tries to narrow the working set first.
+1. `stable_prefix`
+2. `canonical_overlay`
+3. `projected_tail`
 
-The transcript itself is now item-native. Instead of pretending the whole conversation is just a list of chat messages, Merlion keeps distinct items for messages, reasoning, function calls, and function-call outputs. That is closer to the Codex and Responses model, and it makes resume and compaction less lossy.
+That is the real shape Merlion now optimizes for.
 
-Compaction is intentionally conservative. Merlion keeps the static system prefix, preserves the recent working chain starting from the latest external user request, and compresses the older middle into one runtime-authored summary item only when the transcript has crossed a threshold. In other words: do not summarize the hot path unless you have to.
+The stable prefix is the boring part on purpose: system prompt, orientation, and other slow-changing system items that should survive many turns. The canonical overlay is everything the runtime needs right now but should not normally persist forever: prompt-derived path guidance, tool-derived path guidance, execution charter text, recovery hints, verification hints, and the intent contract for the current request. The projected tail is the durable recent working chain: real user requests, assistant outputs, tool calls, tool outputs, and any compact summary item that deliberately stands in for older history.
 
-The observability layer exists for the same reason. Merlion tracks stable-prefix tokens, stable-prefix ratio, cached tokens, and response boundaries not because dashboards are fashionable, but because context work is otherwise too easy to guess at. If a runtime claims to care about caching but cannot tell you how stable its prefix actually was, it is mostly operating on vibes.
+This is the first big cache improvement Merlion made: it stopped treating "whatever the runtime just authored" as part of the same long-lived transcript. Overlay items still matter for the current turn, but they are now classified, ordered, deduplicated, and then pruned before persistence. In plain English: the runtime is allowed to speak to the model, but not every runtime-authored reminder gets to become permanent history.
+
+The second improvement is that request assembly now has one canonical owner. `QueryEngine` still decides task control and gathers prompt-prelude inputs, but `runLoop()` assembles the provider-visible request from the same parts every time, and `items.ts` defines the canonical ordering rules. That matters because cache misses often come from accidental drift: a hint moves up, two path-guidance items swap places, or the same contract text appears twice in a different order. Merlion now normalizes those cases instead of hoping they stay stable by convention.
+
+The third improvement is tool-schema stability. Merlion does not expose the same tools for every task anymore, but it also does not want tool schema churn on every follow-up. The runtime first derives task control, then selects a capability profile, and then keeps that tool schema stable for the current epoch unless there is an explicit reason to switch. On top of that, the registry serializer now canonicalizes tool order and schema JSON before hashing or sending it to the provider. The practical idea is simple: changing tools only when the task actually changed is good; reordering equivalent schemas for no reason is just wasted cache.
+
+The fourth improvement is compaction boundary discipline. Merlion still compacts conservatively, but the rule is sharper now. Compaction rewrites only the transcript tail. It keeps the stable prefix intact, preserves the last external user anchor plus the recent action-observation chain, and replaces older omitted spans with an in-band compact summary item. That summary stays in the tail. It does not get promoted into the stable prefix on the next turn. This sounds small, but it is exactly the sort of boundary bug that can quietly poison cache reuse.
+
+The fifth improvement is observability that matches the real request. Merlion does not just estimate from startup configuration anymore. It records prompt observability from the actual assembled request, including the current tool schema hash, overlay token estimate, stable-prefix tokens, stable-prefix ratio, and schema change reason when one exists. That is how you tell the difference between two very different situations:
+
+- the prefix really stayed stable but the provider did not report a cache hit this time
+- the prefix itself drifted, so a cache miss was expected
+
+That distinction matters. Provider-reported `cached_tokens` is useful, but it is not the only signal and it is not always stable across models or routes. Merlion treats prompt-shape stability as the hard invariant and provider cache hits as an important but weaker observation on top.
+
+If you want the short version of Merlion's cache strategy, it is this:
+
+- keep the stable prefix genuinely stable
+- make turn-local runtime help deterministic but non-persistent
+- keep the durable tail exact enough to continue work
+- compact only across an explicit boundary
+- change tool schemas only at explicit task boundaries
+- measure prompt stability from the exact request that was sent
+
+That is a much more concrete policy than "do retrieval" or "add memory." It is closer to how production systems actually win on caching: not by one magic feature, but by removing small sources of prompt drift until the request shape becomes predictable.
 
 ## The shape I think is worth aiming for
 
@@ -208,11 +235,19 @@ Keep the front of the prompt boring. Keep the middle sparse. Keep the tail exact
 
 The boring front is what makes the model predictable and the cache useful. The sparse middle is what stops old work from turning into clutter. The exact tail is what lets the model continue the current thread without losing local structure.
 
+In Merlion's current shape, that rule turns into something even more operational:
+
+- boring front = `stablePrefixItems`
+- sparse middle = `canonical_overlay`
+- exact tail = `transcriptTailItems`
+
+That is also why "improve cache" is not one isolated optimization task. It touches request assembly, runtime hints, tool-schema selection, compaction boundaries, and observability all at once. If any one of those pieces drifts, the cache story degrades even when every individual feature still looks reasonable in isolation.
+
 That rule is simple enough for an MVP and still true in production. The differences are mostly in how much engineering it takes to maintain it under pressure.
 
 That is also why context management is such a revealing part of an agent runtime. It tells you what the system thinks is stable, what it thinks is important, and what kinds of mess it expects from the world. A coding agent's context policy is really a theory of how work unfolds over time.
 
-If you want to see one concrete version of that theory in code, Merlion is the follow-up. It does not solve context by pretending the problem is elegant. It solves it by keeping the main moves visible: stable prefix, path-guided additions, item-native transcript, conservative compaction, and explicit cache observability.
+If you want to see one concrete version of that theory in code, Merlion is the follow-up. It does not solve context by pretending the problem is elegant. It solves it by keeping the main moves visible: stable prefix, deterministic non-persistent overlays, item-native transcript, explicit compaction boundaries, sticky tool-schema epochs, and cache observability taken from the real request shape.
 
 ## References
 
