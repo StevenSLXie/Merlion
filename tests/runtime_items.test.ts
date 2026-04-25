@@ -13,6 +13,7 @@ import {
   legacyMessageToItems,
   messagesToItems,
   pruneNonPersistentRuntimeItems,
+  splitStablePrefixItems,
 } from '../src/runtime/items.ts'
 
 test('legacy assistant message with content and tool calls canonicalizes to message then function calls', () => {
@@ -178,4 +179,30 @@ test('pruneNonPersistentRuntimeItems also strips legacy runtime user overlays fr
     createSystemItem('system prompt', 'static'),
     createExternalUserItem('real user prompt'),
   ])
+})
+
+test('splitStablePrefixItems keeps persistent compact summaries in the transcript tail', () => {
+  const items = [
+    createSystemItem('system prompt', 'static'),
+    createSystemItem('Project orientation context.\n\nfocus: src/runtime', 'runtime'),
+    createSystemItem(
+      'Conversation compact summary (older context compressed; verify with tools before editing):\n- user/external: older request',
+      'runtime',
+    ),
+    createExternalUserItem('current task'),
+  ]
+
+  assert.deepEqual(splitStablePrefixItems(items), {
+    stablePrefixItems: [
+      createSystemItem('system prompt', 'static'),
+      createSystemItem('Project orientation context.\n\nfocus: src/runtime', 'runtime'),
+    ],
+    transcriptTailItems: [
+      createSystemItem(
+        'Conversation compact summary (older context compressed; verify with tools before editing):\n- user/external: older request',
+        'runtime',
+      ),
+      createExternalUserItem('current task'),
+    ],
+  })
 })

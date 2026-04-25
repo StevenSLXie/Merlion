@@ -221,6 +221,15 @@ function isNonPersistentRuntimeSystemMessage(content: string): boolean {
   return matchOverlayDescriptor(content, RUNTIME_SYSTEM_OVERLAY_DESCRIPTORS) !== null
 }
 
+function isPersistentTranscriptRuntimeSystemMessage(item: ConversationItem): boolean {
+  return (
+    item.kind === 'message' &&
+    item.role === 'system' &&
+    item.source === 'runtime' &&
+    normalizeItemContent(item.content).startsWith('Conversation compact summary (older context compressed; verify with tools before editing):')
+  )
+}
+
 function normalizeItemContent(content: string | null | undefined): string {
   return normalizeContent(content).replace(/\r\n/g, '\n').trim()
 }
@@ -449,6 +458,7 @@ export function splitStablePrefixItems(items: ConversationItem[]): {
   while (splitIndex < items.length) {
     const item = items[splitIndex]
     if (!item || item.kind !== 'message' || item.role !== 'system') break
+    if (isPersistentTranscriptRuntimeSystemMessage(item)) break
     splitIndex += 1
   }
   return {

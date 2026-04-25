@@ -965,6 +965,7 @@ test('QueryEngine persists projected compact tail into the next canonical reques
     await engine.submitPrompt('continue the investigation')
 
     const snapshotAfterFirstTurn = engine.getSnapshot().items
+    assert.deepEqual((engine as any).stablePrefixItems, [createSystemItem('system prompt', 'static')])
     const compactSummaries = snapshotAfterFirstTurn.filter((item) =>
       item.kind === 'message' &&
       item.role === 'system' &&
@@ -995,8 +996,7 @@ test('QueryEngine persists projected compact tail into the next canonical reques
       secondRequestMessages.some((message) =>
         message.role === 'system' &&
         typeof message.content === 'string' &&
-        message.content.includes('Conversation compact summary') &&
-        message.content.includes('older request')
+        message.content.includes('Conversation compact summary')
       ),
       true,
     )
