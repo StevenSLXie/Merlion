@@ -285,7 +285,7 @@ async function appendItems(
 async function tryGenerateNaturalSummary(
   options: RunLoopOptions,
   state: InternalLoopState,
-  promptObservability: NonNullable<RunLoopOptions['promptObservabilityTracker']>,
+  promptObservabilityTracker: NonNullable<RunLoopOptions['promptObservabilityTracker']>,
 ): Promise<string | null> {
   const summaryRequest = createRuntimeUserItem(
     'Write a natural-language summary of what you completed in this run. ' +
@@ -298,7 +298,7 @@ async function tryGenerateNaturalSummary(
     state.items,
     options.intentContract,
   )
-  let promptSnapshot = promptObservability.record(state.turnCount + 1, {
+  let promptSnapshot = promptObservabilityTracker.record(state.turnCount + 1, {
     stablePrefixItems: requestAssembly.stablePrefixItems,
     overlayItems: requestAssembly.overlayItems,
     transcriptItems: requestAssembly.transcriptItems,
@@ -789,9 +789,16 @@ async function handleTerminalPhase(params: {
   state: InternalLoopState
   guardrails: LoopGuardrailState
   lastSignificantItemBeforeAssistant: ConversationItem | undefined
-  promptObservability: NonNullable<RunLoopOptions['promptObservabilityTracker']>
+  promptObservabilityTracker: NonNullable<RunLoopOptions['promptObservabilityTracker']>
 }): Promise<'continue' | RunLoopResult> {
-  const { assistant, options, state, guardrails, lastSignificantItemBeforeAssistant, promptObservability } = params
+  const {
+    assistant,
+    options,
+    state,
+    guardrails,
+    lastSignificantItemBeforeAssistant,
+    promptObservabilityTracker,
+  } = params
 
   if (assistant.finishReason === 'length' && state.maxOutputTokensRecoveryCount < 3) {
     state.maxOutputTokensRecoveryCount += 1
@@ -833,7 +840,7 @@ async function handleTerminalPhase(params: {
       return 'continue'
     }
     guardrails.finalText =
-      (await tryGenerateNaturalSummary(options, state, promptObservability)) ??
+      (await tryGenerateNaturalSummary(options, state, promptObservabilityTracker)) ??
       'Task completed via tool execution, but the model returned no final summary.'
     return { terminal: 'completed', finalText: guardrails.finalText, state: projectLoopState(state) }
   }
@@ -970,7 +977,7 @@ export async function runLoop(options: RunLoopOptions): Promise<RunLoopResult> {
       state,
       guardrails,
       lastSignificantItemBeforeAssistant,
-      promptObservability,
+      promptObservabilityTracker: promptObservability,
     })
     if (terminal === 'continue') continue
     return terminal
