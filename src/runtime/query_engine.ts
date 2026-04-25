@@ -17,13 +17,24 @@ import { ensureGeneratedAgentsMaps } from '../artifacts/agents_bootstrap.ts'
 import type { ContextService } from '../context/service.ts'
 import { createTrackingPermissionStore } from './state/permissions.ts'
 import { recordFinalSummary, syncCompactStateFromLoopState } from './state/compact.ts'
-import { createRuntimeState, snapshotRuntimeState, type RuntimeState, type RuntimeStateSnapshot } from './state/types.ts'
+import {
+  createRuntimeState,
+  restoreRuntimeState,
+  snapshotRuntimeState,
+  type RuntimeState,
+  type RuntimeStateSnapshot,
+} from './state/types.ts'
 import { buildExecutionCharter, renderExecutionCharter } from './execution_charter.ts'
-import { deriveTaskControl, type TaskControlDecision, type TaskState } from './task_state.ts'
+import {
+  deriveTaskControl,
+  resolveCapabilityProfileEpoch,
+  type TaskControlDecision,
+  type TaskState,
+} from './task_state.ts'
 import type { SandboxBackend } from '../sandbox/backend.ts'
 import type { ResolvedSandboxPolicy } from '../sandbox/policy.ts'
 import { buildRegistryFromPool } from '../tools/builtin/index.ts'
-import { applyCapabilityProfile } from '../tools/pool.ts'
+import { applyCapabilityProfile, inferCapabilityProfileFromToolNames } from '../tools/pool.ts'
 import {
   collectGitWorkingTreePaths,
   collectLatestCommitPaths,
@@ -91,6 +102,16 @@ export interface QueryEngineSnapshot {
   generatedMapMode: boolean
 }
 
+function collectObservedToolNames(items: ConversationItem[]): string[] {
+  const names = new Set<string>()
+  for (const item of items) {
+    if (item.kind !== 'function_call') continue
+    const name = item.name.trim()
+    if (name !== '') names.add(name)
+  }
+  return [...names]
+}
+
 export class QueryEngine {
   private readonly options: QueryEngineOptions
   private readonly runtimeState: RuntimeState
@@ -135,6 +156,25 @@ export class QueryEngine {
     const persistentState = splitStablePrefixItems(persistentItems)
     this.stablePrefixItems = persistentState.stablePrefixItems
     this.transcriptTailItems = persistentState.transcriptTailItems
+    this.runtimeState.task.currentTask = null
+    this.runtimeState.task.mutationPolicy = null
+    this.runtimeState.task.charter = null
+    this.runtimeState.task.capabilityProfile = inferCapabilityProfileFromToolNames(collectObservedToolNames(persistentItems))
+    this.runtimeState.task.profileEpoch = {
+      epoch: 0,
+      lastSchemaChangeReason: null,
+      pendingResumeRehydration: persistentItems.length > 0,
+    }
+    this.initialized = true
+  }
+
+  async resumeFromSnapshot(snapshot: QueryEngineSnapshot): Promise<void> {
+    const persistentItems = pruneNonPersistentRuntimeItems(snapshot.items)
+    const persistentState = splitStablePrefixItems(persistentItems)
+    this.stablePrefixItems = persistentState.stablePrefixItems
+    this.transcriptTailItems = persistentState.transcriptTailItems
+    restoreRuntimeState(this.runtimeState, snapshot.runtimeState)
+    this.options.contextService.setGeneratedMapMode(snapshot.generatedMapMode)
     this.initialized = true
   }
 
@@ -247,7 +287,21 @@ export class QueryEngine {
     let sawSuccessfulGitCommit = false
     let sawWorkspaceMutationSignal = false
     let latestPromptObservability: PromptObservabilitySnapshot | undefined
-    const taskControl = (this.options.deriveTaskControl ?? deriveTaskControl)(prompt, this.runtimeState.task.currentTask)
+    const candidateTaskControl = (this.options.deriveTaskControl ?? deriveTaskControl)(
+      prompt,
+      this.runtimeState.task.currentTask,
+    )
+    const profileResolution = resolveCapabilityProfileEpoch({
+      prompt,
+      previousTask: this.runtimeState.task.currentTask,
+      previousCapabilityProfile: this.runtimeState.task.capabilityProfile,
+      candidateTaskState: candidateTaskControl.taskState,
+      pendingResumeRehydration: this.runtimeState.task.profileEpoch.pendingResumeRehydration,
+    })
+    const taskControl: TaskControlDecision = {
+      ...candidateTaskControl,
+      capabilityProfile: profileResolution.capabilityProfile,
+    }
     const charter = buildExecutionCharter(
       taskControl.taskState,
       taskControl.capabilityProfile,
@@ -269,6 +323,13 @@ export class QueryEngine {
       ...charter,
       nonGoals: [...charter.nonGoals],
       correctionNotes: charter.correctionNotes ? [...charter.correctionNotes] : undefined,
+    }
+    this.runtimeState.task.profileEpoch = {
+      epoch: profileResolution.schemaChangeReason
+        ? this.runtimeState.task.profileEpoch.epoch + 1
+        : Math.max(1, this.runtimeState.task.profileEpoch.epoch),
+      lastSchemaChangeReason: profileResolution.schemaChangeReason,
+      pendingResumeRehydration: false,
     }
     const turnRegistry = buildRegistryFromPool(applyCapabilityProfile(this.options.registry.getAll(), taskControl.capabilityProfile))
     const overlayItems = await this.createTurnOverlay(prompt, charterText)

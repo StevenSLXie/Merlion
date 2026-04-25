@@ -292,9 +292,9 @@ export async function runCliRuntime(options: CliRuntimeOptions): Promise<number>
     if (typeof result.config.baseURL === 'string') options.baseURL = result.config.baseURL
 
     provider = createProvider()
-    const currentItems = engine.getItems()
-    engine = createEngine(currentItems)
-    await engine.resumeFromTranscript(currentItems)
+    const currentSnapshot = engine.getSnapshot()
+    engine = createEngine()
+    await engine.resumeFromSnapshot(currentSnapshot)
     return true
   }
 

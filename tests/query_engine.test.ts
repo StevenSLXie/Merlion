@@ -236,6 +236,206 @@ test('QueryEngine narrows analysis turns to read-only tools and records correcti
   }
 })
 
+test('QueryEngine keeps the active tool schema sticky across lightweight follow-up prompts', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'merlion-sticky-profile-'))
+  try {
+    const provider = new RecordingProvider([
+      {
+        role: 'assistant',
+        content: 'Initial analysis.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+      {
+        role: 'assistant',
+        content: 'Follow-up answer.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+
+    const engine = new QueryEngine({
+      cwd,
+      provider,
+      registry: buildDefaultRegistry({ mode: 'default' }),
+      permissions: { ask: async () => 'allow' },
+      contextService: {
+        getTrustLevel: () => 'trusted',
+        getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+        getGeneratedMapMode: () => false,
+        setGeneratedMapMode() {},
+        async prefetchIfSafe() {
+          return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+        },
+        async getSystemPrompt() {
+          return 'system prompt'
+        },
+        async buildPromptPrelude() {
+          return []
+        },
+        async buildPathGuidanceItems() {
+          return { items: [], loadedFiles: [] }
+        },
+        async extractCandidatePathsFromText() {
+          return []
+        },
+        async extractCandidatePathsFromToolEvent() {
+          return []
+        },
+      },
+      model: 'test-model',
+    })
+
+    await engine.submitPrompt('Analyze this module and summarize its weaknesses.')
+    await engine.submitPrompt('What else should I inspect next?')
+
+    assert.deepEqual(provider.seenToolNames[1], provider.seenToolNames[0])
+    assert.equal(provider.seenToolNames[1]?.includes('spawn_agent'), true)
+
+    const snapshot = engine.getSnapshot()
+    assert.equal(snapshot.runtimeState.task.capabilityProfile, 'readonly_analysis')
+    assert.equal(snapshot.runtimeState.task.profileEpoch.epoch, 1)
+    assert.equal(snapshot.runtimeState.task.profileEpoch.lastSchemaChangeReason, null)
+    assert.equal(snapshot.runtimeState.task.currentTask?.kind, 'question')
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test('QueryEngine changes tool schema only on explicit phase switches', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'merlion-phase-switch-'))
+  try {
+    const provider = new RecordingProvider([
+      {
+        role: 'assistant',
+        content: 'Initial analysis.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+      {
+        role: 'assistant',
+        content: 'Verification plan.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+
+    const engine = new QueryEngine({
+      cwd,
+      provider,
+      registry: buildDefaultRegistry({ mode: 'default' }),
+      permissions: { ask: async () => 'allow' },
+      contextService: {
+        getTrustLevel: () => 'trusted',
+        getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+        getGeneratedMapMode: () => false,
+        setGeneratedMapMode() {},
+        async prefetchIfSafe() {
+          return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+        },
+        async getSystemPrompt() {
+          return 'system prompt'
+        },
+        async buildPromptPrelude() {
+          return []
+        },
+        async buildPathGuidanceItems() {
+          return { items: [], loadedFiles: [] }
+        },
+        async extractCandidatePathsFromText() {
+          return []
+        },
+        async extractCandidatePathsFromToolEvent() {
+          return []
+        },
+      },
+      model: 'test-model',
+    })
+
+    await engine.submitPrompt('Analyze this module and summarize its weaknesses.')
+    await engine.submitPrompt('Verify the fix by running the relevant tests now.')
+
+    assert.equal(provider.seenToolNames[0]?.includes('bash'), false)
+    assert.equal(provider.seenToolNames[1]?.includes('bash'), true)
+    assert.equal(provider.seenToolNames[1]?.includes('run_script'), true)
+
+    const snapshot = engine.getSnapshot()
+    assert.equal(snapshot.runtimeState.task.capabilityProfile, 'verification_readonly')
+    assert.equal(snapshot.runtimeState.task.profileEpoch.epoch, 2)
+    assert.equal(snapshot.runtimeState.task.profileEpoch.lastSchemaChangeReason, 'phase_switch')
+    assert.equal(snapshot.runtimeState.task.currentTask?.kind, 'verification')
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test('QueryEngine records user_correction when a correction changes the active profile epoch', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'merlion-correction-switch-'))
+  try {
+    const provider = new RecordingProvider([
+      {
+        role: 'assistant',
+        content: 'Initial analysis.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+      {
+        role: 'assistant',
+        content: 'Applied the fix.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+
+    const engine = new QueryEngine({
+      cwd,
+      provider,
+      registry: buildDefaultRegistry({ mode: 'default' }),
+      permissions: { ask: async () => 'allow' },
+      contextService: {
+        getTrustLevel: () => 'trusted',
+        getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+        getGeneratedMapMode: () => false,
+        setGeneratedMapMode() {},
+        async prefetchIfSafe() {
+          return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+        },
+        async getSystemPrompt() {
+          return 'system prompt'
+        },
+        async buildPromptPrelude() {
+          return []
+        },
+        async buildPathGuidanceItems() {
+          return { items: [], loadedFiles: [] }
+        },
+        async extractCandidatePathsFromText() {
+          return []
+        },
+        async extractCandidatePathsFromToolEvent() {
+          return []
+        },
+      },
+      model: 'test-model',
+    })
+
+    await engine.submitPrompt('Analyze this module and summarize its weaknesses.')
+    await engine.submitPrompt('I mean fix the bug in src/index.ts instead.')
+
+    assert.equal(provider.seenToolNames[0]?.includes('edit_file'), false)
+    assert.equal(provider.seenToolNames[1]?.includes('edit_file'), true)
+
+    const snapshot = engine.getSnapshot()
+    assert.equal(snapshot.runtimeState.task.capabilityProfile, 'implementation_scoped')
+    assert.equal(snapshot.runtimeState.task.profileEpoch.epoch, 2)
+    assert.equal(snapshot.runtimeState.task.profileEpoch.lastSchemaChangeReason, 'user_correction')
+    assert.equal(snapshot.runtimeState.task.currentTask?.kind, 'implementation')
+    assert.equal(snapshot.runtimeState.task.currentTask?.correctionOfPreviousTurn, true)
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
 test('QueryEngine keeps turn overlays within one submit and excludes them from persisted history', async () => {
   const provider = new RecordingProvider([
     {
@@ -394,4 +594,147 @@ test('QueryEngine resumeFromTranscript strips legacy overlay items before the ne
   const requestSystems = provider.seenMessages[0]!.filter((message) => message.role === 'system').map((message) => message.content ?? '')
   assert.equal(requestSystems.some((content) => content.includes('legacy overlay')), false)
   assert.equal(requestSystems.some((content) => content.includes('legacy guidance')), false)
+})
+
+test('QueryEngine rehydrates the sticky profile epoch on transcript resume before the next request', async () => {
+  const provider = new RecordingProvider([
+    {
+      role: 'assistant',
+      content: 'Resumed with the prior implementation schema.',
+      finish_reason: 'stop',
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+  ])
+
+  const engine = new QueryEngine({
+    cwd: process.cwd(),
+    provider,
+    registry: buildDefaultRegistry({ mode: 'default' }),
+    permissions: { ask: async () => 'allow' },
+    contextService: {
+      getTrustLevel: () => 'trusted',
+      getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+      getGeneratedMapMode: () => false,
+      setGeneratedMapMode() {},
+      async prefetchIfSafe() {
+        return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+      },
+      async getSystemPrompt() {
+        return 'system prompt'
+      },
+      async buildPromptPrelude() {
+        return []
+      },
+      async buildPathGuidanceItems() {
+        return { items: [], loadedFiles: [] }
+      },
+      async extractCandidatePathsFromText() {
+        return []
+      },
+      async extractCandidatePathsFromToolEvent() {
+        return []
+      },
+    },
+    model: 'test-model',
+  })
+
+  await engine.resumeFromTranscript([
+    createSystemItem('system prompt', 'static'),
+    createExternalUserItem('Implement the requested change.'),
+    {
+      kind: 'function_call',
+      callId: 'call_edit',
+      name: 'edit_file',
+      argumentsText: '{"path":"src/index.ts"}',
+    },
+  ])
+
+  await engine.submitPrompt('What else changed?')
+
+  assert.equal(provider.seenToolNames[0]?.includes('edit_file'), true)
+
+  const snapshot = engine.getSnapshot()
+  assert.equal(snapshot.runtimeState.task.capabilityProfile, 'implementation_scoped')
+  assert.equal(snapshot.runtimeState.task.profileEpoch.epoch, 1)
+  assert.equal(snapshot.runtimeState.task.profileEpoch.lastSchemaChangeReason, 'resume_rehydration')
+  assert.equal(snapshot.runtimeState.task.profileEpoch.pendingResumeRehydration, false)
+})
+
+test('QueryEngine resumeFromSnapshot preserves the active profile epoch across engine replacement', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'merlion-snapshot-resume-'))
+  try {
+    const firstProvider = new RecordingProvider([
+      {
+        role: 'assistant',
+        content: 'Initial analysis.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+    const contextService = {
+      getTrustLevel: () => 'trusted' as const,
+      getPathGuidanceState: () => ({ loadedAgentFiles: new Set<string>() }),
+      getGeneratedMapMode: () => false,
+      setGeneratedMapMode() {},
+      async prefetchIfSafe() {
+        return { startupMapSummary: null, generatedMapMode: false, initialItems: [] }
+      },
+      async getSystemPrompt() {
+        return 'system prompt'
+      },
+      async buildPromptPrelude() {
+        return []
+      },
+      async buildPathGuidanceItems() {
+        return { items: [], loadedFiles: [] }
+      },
+      async extractCandidatePathsFromText() {
+        return []
+      },
+      async extractCandidatePathsFromToolEvent() {
+        return []
+      },
+    }
+
+    const firstEngine = new QueryEngine({
+      cwd,
+      provider: firstProvider,
+      registry: buildDefaultRegistry({ mode: 'default' }),
+      permissions: { ask: async () => 'allow' },
+      contextService,
+      model: 'test-model',
+    })
+
+    await firstEngine.submitPrompt('Analyze this module and summarize its weaknesses.')
+    const snapshot = firstEngine.getSnapshot()
+
+    const secondProvider = new RecordingProvider([
+      {
+        role: 'assistant',
+        content: 'Follow-up answer.',
+        finish_reason: 'stop',
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+    ])
+    const secondEngine = new QueryEngine({
+      cwd,
+      provider: secondProvider,
+      registry: buildDefaultRegistry({ mode: 'default' }),
+      permissions: { ask: async () => 'allow' },
+      contextService,
+      model: 'test-model',
+    })
+
+    await secondEngine.resumeFromSnapshot(snapshot)
+    await secondEngine.submitPrompt('What else should I inspect next?')
+
+    assert.equal(secondProvider.seenToolNames[0]?.includes('spawn_agent'), true)
+
+    const secondSnapshot = secondEngine.getSnapshot()
+    assert.equal(secondSnapshot.runtimeState.task.capabilityProfile, 'readonly_analysis')
+    assert.equal(secondSnapshot.runtimeState.task.profileEpoch.epoch, 1)
+    assert.equal(secondSnapshot.runtimeState.task.profileEpoch.lastSchemaChangeReason, null)
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
 })

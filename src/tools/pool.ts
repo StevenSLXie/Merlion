@@ -36,7 +36,7 @@ function passesMode(tool: ToolDefinition, mode: ToolPoolMode): boolean {
   return true
 }
 
-function toolNamesForProfile(profile: CapabilityProfileName): Set<string> {
+export function toolNamesForProfile(profile: CapabilityProfileName): Set<string> {
   switch (profile) {
     case 'readonly_question':
       return new Set([
@@ -106,6 +106,34 @@ function toolNamesForProfile(profile: CapabilityProfileName): Set<string> {
     default:
       return new Set(getBuiltinToolCatalog().map((tool) => tool.name))
   }
+}
+
+const PROFILE_INFERENCE_ORDER: CapabilityProfileName[] = [
+  'readonly_question',
+  'readonly_analysis',
+  'readonly_review',
+  'verification_readonly',
+  'implementation_scoped',
+  'meta_control',
+]
+
+export function inferCapabilityProfileFromToolNames(toolNames: Iterable<string>): CapabilityProfileName | null {
+  const observed = new Set<string>()
+  for (const rawName of toolNames) {
+    const name = rawName.trim()
+    if (name !== '') observed.add(name)
+  }
+  if (observed.size === 0) return null
+
+  const matches = PROFILE_INFERENCE_ORDER.filter((profile) => {
+    const allowed = toolNamesForProfile(profile)
+    for (const name of observed) {
+      if (!allowed.has(name)) return false
+    }
+    return true
+  })
+
+  return matches.length === 1 ? matches[0]! : null
 }
 
 function wrapToolForProfile(tool: ToolDefinition, profile: CapabilityProfileName): ToolDefinition {

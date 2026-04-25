@@ -5,6 +5,7 @@ import {
   commandLooksDestructiveForReadonly,
   deriveTaskControl,
   profileAllowsSubagentRole,
+  resolveCapabilityProfileEpoch,
   scriptAllowedForReadonlyVerification,
 } from '../src/runtime/task_state.ts'
 
@@ -26,6 +27,22 @@ test('deriveTaskControl rewrites correction prompts against the previous objecti
   assert.equal(corrected.taskState.inheritedObjective, firstTurn.taskState.activeObjective)
   assert.match(corrected.taskState.activeObjective, /whole repository/i)
   assert.equal(corrected.taskState.requiredEvidence, 'codebacked')
+})
+
+test('correction prompts may explicitly switch into an implementation epoch', () => {
+  const firstTurn = deriveTaskControl('Analyze this module and tell me its weaknesses.')
+  const corrected = deriveTaskControl('I mean fix the bug in src/index.ts instead.', firstTurn.taskState)
+  const resolution = resolveCapabilityProfileEpoch({
+    prompt: 'I mean fix the bug in src/index.ts instead.',
+    previousTask: firstTurn.taskState,
+    previousCapabilityProfile: firstTurn.capabilityProfile,
+    candidateTaskState: corrected.taskState,
+  })
+
+  assert.equal(corrected.taskState.kind, 'implementation')
+  assert.equal(corrected.taskState.correctionOfPreviousTurn, true)
+  assert.equal(corrected.capabilityProfile, 'implementation_scoped')
+  assert.equal(resolution.schemaChangeReason, 'user_correction')
 })
 
 test('readonly and implementation profiles derive the expected mutation policy', () => {

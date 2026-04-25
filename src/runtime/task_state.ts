@@ -48,6 +48,18 @@ export interface TaskControlDecision {
   mutationPolicy: MutationPolicy
 }
 
+export type SchemaChangeReason =
+  | 'initial_epoch'
+  | 'user_correction'
+  | 'phase_switch'
+  | 'resume_rehydration'
+  | 'safety_override'
+
+export interface CapabilityProfileEpochResolution {
+  capabilityProfile: CapabilityProfileName
+  schemaChangeReason: SchemaChangeReason | null
+}
+
 const IMPLEMENTATION_PATTERNS: RegExp[] = [
   /\b(?:fix|implement|add|create|update|modify|change|refactor|patch|write|edit|rename|remove|delete)\b/i,
   /(修复|实现|新增|添加|创建|更新|修改|改成|重构|补上|删除)/,
@@ -71,6 +83,11 @@ const ANALYSIS_PATTERNS: RegExp[] = [
 const QUESTION_PATTERNS: RegExp[] = [
   /\b(?:what|why|how|which|when|where|explain|help me understand)\b/i,
   /(什么|为什么|怎么|如何|解释|介绍|说明)/,
+]
+
+const EXPLICIT_PHASE_SWITCH_PATTERNS: RegExp[] = [
+  /\b(?:instead|switch|move on|phase|step|for this turn|for this phase|review\b|verify\b|implement\b|fix\b)\b/i,
+  /(改为|切换|转到|这一轮|这个阶段|评审|验证|实现|修复)/,
 ]
 
 const WHOLE_PROJECT_PATTERNS: RegExp[] = [
@@ -241,12 +258,16 @@ function baseTaskState(prompt: string): TaskState {
 export function deriveTaskState(prompt: string, previousTask?: TaskState | null): TaskState {
   const correction = detectCorrection(prompt, previousTask)
   if (correction && previousTask) {
+    const correctedKind = classifyTaskKind(prompt)
+    const nextKind = correctedKind !== 'question' ? correctedKind : previousTask.kind
     return {
       ...previousTask,
+      kind: nextKind,
       activeObjective: correction.objective,
-      expectedDeliverable: correction.deliverable ?? previousTask.expectedDeliverable,
-      mayMutateFiles: mayMutate(previousTask.kind),
-      requiredEvidence: correction.requiredEvidence ?? previousTask.requiredEvidence,
+      expectedDeliverable: correction.deliverable ?? defaultDeliverable(nextKind),
+      mayMutateFiles: mayMutate(nextKind),
+      requiredEvidence: correction.requiredEvidence ?? defaultEvidence(nextKind),
+      reviewScope: nextKind === 'review' ? detectReviewScope(prompt) : undefined,
       correctionOfPreviousTurn: true,
       replacesPreviousObjective: true,
       inheritedObjective: correction.inheritedObjective,
@@ -287,4 +308,78 @@ export function allowedSubagentRolesForProfile(profile: CapabilityProfileName): 
 
 export function profileAllowsSubagentRole(profile: CapabilityProfileName, role: SubagentRole): boolean {
   return allowedSubagentRolesForProfile(profile).has(role)
+}
+
+function isExplicitPhaseSwitch(params: {
+  prompt: string
+  previousTask?: TaskState | null
+  candidateTaskState: TaskState
+}): boolean {
+  const { prompt, previousTask, candidateTaskState } = params
+  if (!previousTask) return true
+  if (previousTask.kind === candidateTaskState.kind) return false
+  if (candidateTaskState.correctionOfPreviousTurn) return false
+
+  const involvesHighLeveragePhase =
+    previousTask.kind === 'implementation' ||
+    candidateTaskState.kind === 'implementation' ||
+    previousTask.kind === 'verification' ||
+    candidateTaskState.kind === 'verification' ||
+    previousTask.kind === 'review' ||
+    candidateTaskState.kind === 'review' ||
+    previousTask.kind === 'meta_correction' ||
+    candidateTaskState.kind === 'meta_correction'
+
+  if (involvesHighLeveragePhase) return true
+  return EXPLICIT_PHASE_SWITCH_PATTERNS.some((pattern) => pattern.test(prompt.trim()))
+}
+
+export function resolveCapabilityProfileEpoch(params: {
+  prompt: string
+  previousTask?: TaskState | null
+  previousCapabilityProfile?: CapabilityProfileName | null
+  candidateTaskState: TaskState
+  pendingResumeRehydration?: boolean
+}): CapabilityProfileEpochResolution {
+  const candidateProfile = selectCapabilityProfile(params.candidateTaskState)
+
+  if (params.pendingResumeRehydration) {
+    return {
+      capabilityProfile: params.previousCapabilityProfile ?? candidateProfile,
+      schemaChangeReason: 'resume_rehydration',
+    }
+  }
+
+  if (!params.previousCapabilityProfile) {
+    return {
+      capabilityProfile: candidateProfile,
+      schemaChangeReason: 'initial_epoch',
+    }
+  }
+
+  if (candidateProfile === params.previousCapabilityProfile) {
+    return {
+      capabilityProfile: params.previousCapabilityProfile,
+      schemaChangeReason: null,
+    }
+  }
+
+  if (params.candidateTaskState.correctionOfPreviousTurn) {
+    return {
+      capabilityProfile: candidateProfile,
+      schemaChangeReason: 'user_correction',
+    }
+  }
+
+  if (isExplicitPhaseSwitch(params)) {
+    return {
+      capabilityProfile: candidateProfile,
+      schemaChangeReason: 'phase_switch',
+    }
+  }
+
+  return {
+    capabilityProfile: params.previousCapabilityProfile,
+    schemaChangeReason: null,
+  }
 }
