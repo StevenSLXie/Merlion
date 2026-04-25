@@ -20,6 +20,7 @@ import { QueryEngine } from '../../src/runtime/query_engine.ts'
 import { appendTranscriptItem, appendTranscriptResponse, createSessionFiles, loadSessionTranscript } from '../../src/runtime/session.ts'
 import type { PromptObservabilitySnapshot } from '../../src/runtime/prompt_observability.ts'
 import type { ConversationItem, ProviderResponseBoundary } from '../../src/runtime/items.ts'
+import { ToolRegistry } from '../../src/tools/registry.ts'
 import {
   assertArchivedCostGateContract,
   makeProvider,
@@ -51,18 +52,69 @@ function stableTokens(entry: UsageProbe): number {
   return entry.promptObservability?.stable_prefix_tokens ?? 0
 }
 
+function maxCacheRatio(entries: UsageProbe[]): number {
+  return Math.max(0, ...entries.map(cacheRatio))
+}
+
+function maxStableRatio(entries: UsageProbe[]): number {
+  return Math.max(0, ...entries.map(stableRatio))
+}
+
+function maxStableTokens(entries: UsageProbe[]): number {
+  return Math.max(0, ...entries.map(stableTokens))
+}
+
+function totalCachedTokens(entries: UsageProbe[]): number {
+  return entries.reduce((sum, entry) => sum + Math.max(0, entry.cached_tokens ?? 0), 0)
+}
+
+function phaseEntries(usage: UsageProbe[], phase: string): UsageProbe[] {
+  return usage.filter((entry) => entry.phase === phase)
+}
+
+function buildLargeChatSeed(): string {
+  const lines = Array.from({ length: 80 }, (_, index) => {
+    const id = String(index + 1).padStart(2, '0')
+    return `Record ${id}: cache-anchor-${id} | owner=runtime | status=stable | note=remember this exact token.`
+  })
+
+  return [
+    'Read the following records carefully and remember the exact cache-anchor token for each record number.',
+    'Do not summarize them. After reading, reply with only READY.',
+    '',
+    ...lines,
+  ].join('\n')
+}
+
+function summarizePhase(usage: UsageProbe[], phase: string): {
+  phase: string
+  maxStableRatio: number
+  maxCacheRatio: number
+  totalCachedTokens: number
+} {
+  const entries = phaseEntries(usage, phase)
+  assert.ok(entries.length >= 1, `expected usage samples for phase ${phase}`)
+  return {
+    phase,
+    maxStableRatio: maxStableRatio(entries),
+    maxCacheRatio: maxCacheRatio(entries),
+    totalCachedTokens: totalCachedTokens(entries),
+  }
+}
+
 function buildLiveEngine(params: {
   cwd: string
   tracker: ReturnType<typeof createPromptObservabilityTracker>
   usage: UsageProbe[]
   phaseRef: { current: string }
+  registry?: ReturnType<typeof makeRegistry> | ToolRegistry
   persistItem?: (item: ConversationItem, origin: 'provider_output' | 'local_tool_output' | 'local_runtime', runtimeResponseId?: string) => Promise<void>
   persistResponseBoundary?: (boundary: ProviderResponseBoundary) => Promise<void>
 }) {
   return new QueryEngine({
     cwd: params.cwd,
     provider: makeProvider(),
-    registry: makeRegistry(),
+    registry: params.registry ?? makeRegistry(),
     permissions: { ask: async () => 'allow_session' },
     contextService: createContextService({
       cwd: params.cwd,
@@ -114,21 +166,21 @@ if (SKIP) {
         const followUps = usage.filter((entry) => entry.phase === 'turn2' || entry.phase === 'turn3')
         assert.ok(followUps.length >= 2, 'expected usage samples from follow-up turns')
 
-        const maxStableRatio = Math.max(...followUps.map(stableRatio))
-        const maxStableTokens = Math.max(...followUps.map(stableTokens))
-        const totalCached = followUps.reduce((sum, entry) => sum + Math.max(0, entry.cached_tokens ?? 0), 0)
-        const maxCacheRatio = Math.max(...followUps.map(cacheRatio))
+        const stableRatioValue = maxStableRatio(followUps)
+        const stableTokensValue = maxStableTokens(followUps)
+        const totalCached = totalCachedTokens(followUps)
+        const cacheRatioValue = maxCacheRatio(followUps)
 
         process.stderr.write(
-          `[cache-hit-rate] follow-up turns: max stable ratio=${maxStableRatio.toFixed(3)}, ` +
-            `max stable tokens=${maxStableTokens}, total cached=${totalCached}, ` +
-            `max cache ratio=${maxCacheRatio.toFixed(3)}\n`
+          `[cache-hit-rate] follow-up turns: max stable ratio=${stableRatioValue.toFixed(3)}, ` +
+            `max stable tokens=${stableTokensValue}, total cached=${totalCached}, ` +
+            `max cache ratio=${cacheRatioValue.toFixed(3)}\n`
         )
 
-        assert.ok(maxStableRatio >= 0.9, `expected stable_prefix_ratio >= 0.9, got ${maxStableRatio}`)
-        assert.ok(maxStableTokens >= 750, `expected stable_prefix_tokens >= 750, got ${maxStableTokens}`)
+        assert.ok(stableRatioValue >= 0.9, `expected stable_prefix_ratio >= 0.9, got ${stableRatioValue}`)
+        assert.ok(stableTokensValue >= 750, `expected stable_prefix_tokens >= 750, got ${stableTokensValue}`)
         if (totalCached > 0) {
-          assert.ok(maxCacheRatio >= 0.1, `expected cached/prompt ratio >= 0.1, got ${maxCacheRatio}`)
+          assert.ok(cacheRatioValue >= 0.1, `expected cached/prompt ratio >= 0.1, got ${cacheRatioValue}`)
         } else {
           process.stderr.write(
             '[cache-hit-rate] follow-up turns kept a highly stable prefix, but the provider reported no cached_tokens; ' +
@@ -182,23 +234,181 @@ if (SKIP) {
         const resumedUsage = usage.filter((entry) => entry.phase === 'resumed')
         assert.ok(resumedUsage.length >= 1, 'expected usage samples from resumed turn')
 
-        const maxStableRatio = Math.max(...resumedUsage.map(stableRatio))
-        const maxStableTokens = Math.max(...resumedUsage.map(stableTokens))
-        const totalCached = resumedUsage.reduce((sum, entry) => sum + Math.max(0, entry.cached_tokens ?? 0), 0)
+        const stableRatioValue = maxStableRatio(resumedUsage)
+        const stableTokensValue = maxStableTokens(resumedUsage)
+        const totalCached = totalCachedTokens(resumedUsage)
 
         process.stderr.write(
-          `[cache-hit-rate] resumed turn: max stable ratio=${maxStableRatio.toFixed(3)}, ` +
-            `max stable tokens=${maxStableTokens}, total cached=${totalCached}\n`
+          `[cache-hit-rate] resumed turn: max stable ratio=${stableRatioValue.toFixed(3)}, ` +
+            `max stable tokens=${stableTokensValue}, total cached=${totalCached}\n`
         )
 
-        assert.ok(maxStableRatio >= 0.8, `expected resumed stable_prefix_ratio >= 0.8, got ${maxStableRatio}`)
-        assert.ok(maxStableTokens >= 750, `expected resumed stable_prefix_tokens >= 750, got ${maxStableTokens}`)
+        assert.ok(stableRatioValue >= 0.8, `expected resumed stable_prefix_ratio >= 0.8, got ${stableRatioValue}`)
+        assert.ok(stableTokensValue >= 750, `expected resumed stable_prefix_tokens >= 750, got ${stableTokensValue}`)
         if (totalCached > 0) {
           process.stderr.write(`[cache-hit-rate] resumed turn also reported ${totalCached} cached tokens.\n`)
         } else {
           process.stderr.write(
             '[cache-hit-rate] resumed turn kept a highly stable prefix, but the provider reported no cache hit ' +
               '(this can happen across a fresh engine/process boundary).\n'
+          )
+        }
+      } finally {
+        await rmSandbox(sandbox)
+      }
+    },
+  )
+
+  test(
+    'pure chat follow-ups drive stable-prefix reuse into the 80-95% range',
+    { timeout: 300_000 },
+    async () => {
+      const sandbox = await makeSandbox()
+      try {
+        const tracker = createPromptObservabilityTracker()
+        const usage: UsageProbe[] = []
+        const phaseRef = { current: 'seed' }
+        const engine = buildLiveEngine({
+          cwd: sandbox,
+          tracker,
+          usage,
+          phaseRef,
+          registry: new ToolRegistry(),
+        })
+
+        await engine.initialize()
+
+        phaseRef.current = 'seed'
+        const seed = await engine.submitPrompt(buildLargeChatSeed())
+        assert.equal(seed.terminal, 'completed')
+        assert.match(seed.finalText.trim(), /^READY\b/i)
+
+        phaseRef.current = 'chat2'
+        assert.equal(
+          (await engine.submitPrompt('Reply with only the cache-anchor token for record 14.')).terminal,
+          'completed',
+        )
+
+        phaseRef.current = 'chat3'
+        assert.equal(
+          (await engine.submitPrompt('Reply with only the cache-anchor token for record 27.')).terminal,
+          'completed',
+        )
+
+        phaseRef.current = 'chat4'
+        assert.equal(
+          (await engine.submitPrompt('Reply with only the cache-anchor token for record 39.')).terminal,
+          'completed',
+        )
+
+        const phases = ['chat2', 'chat3', 'chat4'].map((phase) => summarizePhase(usage, phase))
+        const stableSeries = phases.map((phase) => phase.maxStableRatio)
+        const cacheSeries = phases.map((phase) => phase.maxCacheRatio)
+        const minStableRatio = Math.min(...stableSeries)
+        const maxStableRatioValue = Math.max(...stableSeries)
+
+        process.stderr.write(
+          '[cache-hit-rate] pure-chat progression: ' +
+            phases
+              .map(
+                (phase) =>
+                  `${phase.phase}{stable=${phase.maxStableRatio.toFixed(3)},cache=${phase.maxCacheRatio.toFixed(3)},cached=${phase.totalCachedTokens}}`,
+              )
+              .join(' -> ') +
+            '\n'
+        )
+
+        assert.ok(minStableRatio >= 0.8, `expected all pure-chat follow-up stable ratios >= 0.8, got ${stableSeries.join(', ')}`)
+        assert.ok(
+          maxStableRatioValue - minStableRatio <= 0.03,
+          `expected pure-chat stable ratios to stay within a narrow high band, got ${stableSeries.join(', ')}`,
+        )
+        assert.ok(stableSeries[2] >= 0.8, `expected final pure-chat stable ratio >= 0.8, got ${stableSeries[2]}`)
+
+        if (phases.some((phase) => phase.totalCachedTokens > 0)) {
+          process.stderr.write(
+            `[cache-hit-rate] pure-chat provider cache ratios observed: ${cacheSeries.map((value) => value.toFixed(3)).join(', ')}.\n`,
+          )
+        } else {
+          process.stderr.write(
+            '[cache-hit-rate] pure-chat progression had no provider-reported cached_tokens; relying on stable-prefix progression as the hard assertion.\n',
+          )
+        }
+      } finally {
+        await rmSandbox(sandbox)
+      }
+    },
+  )
+
+  test(
+    'tool-assisted follow-ups keep a high cache-friendly prefix even after repeated file reads',
+    { timeout: 300_000 },
+    async () => {
+      const sandbox = await makeSandbox()
+      try {
+        const tracker = createPromptObservabilityTracker()
+        const usage: UsageProbe[] = []
+        const phaseRef = { current: 'tool1' }
+        const engine = buildLiveEngine({
+          cwd: sandbox,
+          tracker,
+          usage,
+          phaseRef,
+          registry: makeRegistry({ scenario: 'e2e-read' }),
+        })
+
+        await engine.initialize()
+
+        phaseRef.current = 'tool1'
+        assert.equal(
+          (await engine.submitPrompt('Use read_file on hello.txt and answer with only the first line.')).terminal,
+          'completed',
+        )
+
+        phaseRef.current = 'tool2'
+        assert.equal(
+          (await engine.submitPrompt('Use read_file on hello.txt again and answer with only the second line.')).terminal,
+          'completed',
+        )
+
+        phaseRef.current = 'tool3'
+        assert.equal(
+          (await engine.submitPrompt('Use read_file on hello.txt again and answer with only the third line.')).terminal,
+          'completed',
+        )
+
+        phaseRef.current = 'tool4'
+        assert.equal(
+          (await engine.submitPrompt('Use read_file on hello.txt again and answer with only the line count.')).terminal,
+          'completed',
+        )
+
+        const phases = ['tool2', 'tool3', 'tool4'].map((phase) => summarizePhase(usage, phase))
+        const stableSeries = phases.map((phase) => phase.maxStableRatio)
+        const cacheSeries = phases.map((phase) => phase.maxCacheRatio)
+
+        process.stderr.write(
+          '[cache-hit-rate] tool progression: ' +
+            phases
+              .map(
+                (phase) =>
+                  `${phase.phase}{stable=${phase.maxStableRatio.toFixed(3)},cache=${phase.maxCacheRatio.toFixed(3)},cached=${phase.totalCachedTokens}}`,
+              )
+              .join(' -> ') +
+            '\n'
+        )
+
+        assert.ok(stableSeries[0] >= 0.65, `expected tool follow-up stable ratio >= 0.65, got ${stableSeries[0]}`)
+        assert.ok(stableSeries[2] >= 0.75, `expected final tool stable ratio >= 0.75, got ${stableSeries[2]}`)
+
+        if (phases.some((phase) => phase.totalCachedTokens > 0)) {
+          assert.ok(
+            Math.max(...cacheSeries) >= 0.15,
+            `expected tool-assisted cached/prompt ratio >= 0.15 when provider cache metadata is available, got ${Math.max(...cacheSeries)}`,
+          )
+        } else {
+          process.stderr.write(
+            '[cache-hit-rate] tool progression had no provider-reported cached_tokens; relying on stable-prefix floors as the hard assertion.\n',
           )
         }
       } finally {
